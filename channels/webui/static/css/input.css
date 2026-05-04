@@ -110,12 +110,17 @@ body.token-bar-hidden .input-area {
     justify-content: center;
     box-sizing: border-box;
     vertical-align: middle;
+    color: var(--text-secondary);
 }
 
 #send {
-    background: var(--button-bg);
-    border: 1px solid var(--accent);
-    color: var(--bg-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+}
+#send:hover {
+    background: var(--bg-secondary);
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 #send.hidden { display: none; }
@@ -123,6 +128,8 @@ body.token-bar-hidden .input-area {
 #stop:hover {
     background: var(--button-stop-hover);
     box-shadow: 0 0 15px var(--button-stop-glow);
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 #send:active { transform: scale(0.96); }
