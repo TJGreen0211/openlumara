@@ -277,7 +277,7 @@ body.token-bar-hidden .input-area {
     color: var(--text-muted);
     transition: color 0.2s ease;
     text-align: right;
-    margin-right: 10px;
+    margin-right: 15px;
     bottom: 0.45rem;
 }
 
