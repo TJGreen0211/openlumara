@@ -4,6 +4,7 @@ import re
 import inspect
 import json
 import asyncio
+import copy
 
 class ModuleConfig:
     def __init__(self, module_obj, settings_structure: dict, module_config):
@@ -15,11 +16,26 @@ class ModuleConfig:
         # the live config, loaded from the config file
         self.config = module_config
 
-    def get(self, key: str, default = None):
-        if key not in self.config:
+    def get(self, *args, **kwargs):
+        default = kwargs.get("default", None)
+        if not args:
             return default
 
-        return self.config[key]
+        keys = list(args)
+        # If the last argument is not a string, or is empty, treat it as an explicit default
+        if keys and not isinstance(keys[-1], str) or not keys[-1]:
+            default = keys.pop()
+
+        current = self.config.to_dict()
+
+        # traverse through the provided keys
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return default
+
+        return current
 
     def set(self, key: str, value):
         if key not in self.config:

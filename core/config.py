@@ -27,6 +27,7 @@ default_config = {
     "model": {
         "name": "",
         "temperature": 0.7,
+        "enable_thinking": True,
         "reasoning_effort": None,
         "use_tools": True
     },
@@ -98,6 +99,17 @@ class ConfigManager:
             else:
                 return default
         return current
+
+    def to_dict(self):
+        # Start from the root config and traverse through the base path
+        current = self.root_config
+        for k in self.base_path:
+            if isinstance(current, dict) and k in current:
+                current = current[k]
+            else:
+                return {}
+
+        return dict(current)
 
     def __getitem__(self, key):
         """Access items using bracket notation: config['key']"""
@@ -266,6 +278,35 @@ def reconcile_lists(available_names, default_names, section_config):
     }
 
 
+def _flatten_settings(settings_dict):
+    """Recursively flattens a settings dictionary by extracting 'default' values."""
+    if isinstance(settings_dict, dict) and "default" in settings_dict:
+        return _flatten_settings(settings_dict["default"])
+    if isinstance(settings_dict, dict):
+        return {k: _flatten_settings(v) for k, v in settings_dict.items()}
+    return settings_dict
+
+def _merge_module_settings(current_settings, module_defaults):
+    """Recursively merges current_settings with module_defaults schema."""
+    if isinstance(module_defaults, dict) and "default" in module_defaults:
+        if isinstance(current_settings, dict) and "default" in current_settings:
+            return module_defaults["default"]
+        return current_settings if current_settings is not None else module_defaults["default"]
+
+    if not isinstance(module_defaults, dict):
+        return current_settings if current_settings is not None else module_defaults
+
+    if not isinstance(current_settings, dict):
+        current_settings = {}
+
+    new_settings = {}
+    for k, v in module_defaults.items():
+        if k in current_settings:
+            new_settings[k] = _merge_module_settings(current_settings[k], v)
+        else:
+            new_settings[k] = _flatten_settings(v)
+    return new_settings
+
 def sync_module_settings(config_dict, instances, section_key):
     """Performs deep pruning and merging of module settings."""
     section = config_dict.setdefault(section_key, {})
@@ -282,41 +323,11 @@ def sync_module_settings(config_dict, instances, section_key):
             continue
 
         if name in settings and isinstance(settings[name], dict):
-            curr = settings[name]
-
-            # 1. Remove keys that are no longer defined in the module
-            for k in [k for k in curr if k not in module_defaults]:
-                del curr[k]
-
-            # 2. Merge defaults into the current settings
-            for k, v in module_defaults.items():
-                # Determine the actual value (handling the new dict structure)
-                if isinstance(v, dict) and "default" in v:
-                    default_val = v["default"]
-                else:
-                    default_val = v
-
-                if k not in curr:
-                    # Key doesn't exist in user config, use default
-                    curr[k] = default_val
-                elif isinstance(curr[k], dict) and "default" in curr[k]:
-                    # This handles the case where sync_config left the
-                    # metadata dict in the schema because the user didn't override it.
-                    # We flatten it here so the config file stays clean.
-                    curr[k] = default_val
-                # If k is in curr and is already a flat value, we leave it alone.
-
-            if not curr:
+            settings[name] = _merge_module_settings(settings[name], module_defaults)
+            if not settings[name]:
                 del settings[name]
         elif module_defaults:
-            # If the module has no settings in the config at all,
-            # create a flat version from the defaults so the file is populated.
-            flat_defaults = {}
-            for k, v in module_defaults.items():
-                if isinstance(v, dict) and "default" in v:
-                    flat_defaults[k] = v["default"]
-                else:
-                    flat_defaults[k] = v
+            flat_defaults = _flatten_settings(module_defaults)
             if flat_defaults:
                 settings[name] = flat_defaults
 

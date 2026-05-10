@@ -472,7 +472,7 @@ core:
                     content = message.get("content")
                     if not content:
                         if message.get("tool_calls"):
-                            content = str(message.get("tool_calls"))
+                            content = str(self.channel.tc_manager.display_call(message.get("tool_calls")))
 
                     context_display.append(f"== {message.get('role')} ==\n{content}")
 

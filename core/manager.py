@@ -138,8 +138,6 @@ class Manager:
             print(flush=True)
             print(f"Please open the WebUI at http://{host}:{port}", flush=True)
 
-        print(await self.get_settings_structure());
-
         try:
             await asyncio.gather(*self._async_tasks, return_exceptions=should_swallow_exceptions)
         except KeyboardInterrupt:
@@ -283,7 +281,7 @@ class Manager:
                     sysprompt_header = module._header
                 prompt_chunk = f"# {sysprompt_header}\n{str(module_sysprompt).strip()}"
 
-                if module_name in ("agent_framework_awareness", "identity", "memory"):
+                if module_name in ("agent_framework_awareness", "identity", "memory", "writing_style"):
                     sysprompt_top.append(prompt_chunk)
                 elif module_name in ("time", "system"):
                     sysprompt_bottom.append(prompt_chunk)

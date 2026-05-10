@@ -282,7 +282,14 @@
     margin: 4px 0 12px 0;
     font-size: 0.75rem;
     line-height: 1.4;
+    color: var(--text-secondary);
+}
+
+/* Optional: Highlight the description when the input is focused
+ *  to guide the user's eye to the explanation */
+.setting-item:focus-within .setting-description {
     color: var(--text-primary);
+    transition: all 0.2s ease;
 }
 
 /* Select description: appears below the select dropdown */
@@ -290,13 +297,13 @@
     margin: 4px 0 12px 0;
     font-size: 0.75rem;
     line-height: 1.4;
-    color: var(--text-primary);
+    color: var(--text-secondary);
 }
 
 /* Module Card: appears inside the small card container */
 .toggle-list-item-description {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     line-height: 1.4;
     white-space: pre-wrap;
 

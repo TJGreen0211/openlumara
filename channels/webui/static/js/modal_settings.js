@@ -222,7 +222,7 @@ function organizeSettingsIntoCategories(originalData, moduleInfo = {}) {
                                 key: groupKey,
                                 value: itemSettings,
                                 type: type,
-                                description: description,
+                                description: renderMarkdown(description),
                                 min: itemSchema[itemName]?.min,
                                 max: itemSchema[itemName]?.max,
                                 step: itemSchema[itemName]?.step
@@ -339,39 +339,63 @@ function flattenSettingsObject(obj, prefix, schema = {}, callback) {
         const fullKey = prefix ? `${prefix}.${key}` : key;
         const subSchema = (schema && schema[key]) ? schema[key] : {};
 
-        // 1. Determine type: Priority 1: Schema definition, Priority 2: Value detection
-        let type = detectType(value, fullKey);
-        if (subSchema.type) {
-            // Map the user's custom types to our UI types
-            if (subSchema.type === 'long_text') type = 'textarea';
-            else if (subSchema.type === 'number') type = 'number';
-            else if (subSchema.type === 'slider') type = 'slider';
-            else if (subSchema.type === 'select') type = 'select';
-        }
+        // Check if this is a "setting definition" object (has metadata)
+        const isDefinition = (typeof value === 'object' && value !== null && !Array.isArray(value) &&
+            ('default' in value || 'description' in value || 'type' in value));
 
-        // 2. Determine description
-        let description = FIELD_DESCRIPTIONS[fullKey] || null;
-        if (!description && subSchema.description) {
-            description = subSchema.description;
-        }
-
-        if (typeof value === 'object' && value !== null &&
-            !Array.isArray(value) && !isToggleList(value)) {
+        if (!isDefinition && !isToggleList(value) && typeof value === 'object' && value !== null && !Array.isArray(value)) {
             // Nested object - recurse
             flattenSettingsObject(value, fullKey, subSchema, callback);
-            } else {
-                callback({
-                    key: fullKey,
-                    value: value,
-                    type: type,
-                    description: description,
-                    // 3. Pass through range properties for sliders/numbers
-                    min: subSchema.min,
-                    max: subSchema.max,
-                    step: subSchema.step,
-                    options: subSchema.options || null
-                });
+        } else {
+            // Leaf node (either it's a definition, a toggle list, or a primitive)
+            let actualValue = value;
+            let actualDescription = null;
+            let actualType = null;
+
+            if (isDefinition) {
+                actualValue = 'default' in value ? value.default : value;
+                actualDescription = value.description || null;
+                if (value.type) {
+                    // Map custom types to UI types
+                    if (value.type === 'long_text') actualType = 'textarea';
+                    else if (value.type === 'select') actualType = 'select';
+                    else if (value.type === 'number') actualType = 'number';
+                    else if (value.type === 'slider') actualType = 'slider';
+                    else actualType = value.type;
+                }
             }
+
+            // If type is still not set, try to get it from subSchema or detect it
+            if (!actualType) {
+                if (subSchema.type) {
+                    if (subSchema.type === 'long_text') actualType = 'textarea';
+                    else if (subSchema.type === 'select') actualType = 'select';
+                    else if (subSchema.type === 'number') actualType = 'number';
+                    else if (subSchema.type === 'slider') actualType = 'slider';
+                    else actualType = subSchema.type;
+                } else if (isToggleList(actualValue)) {
+                    actualType = 'toggle_list';
+                } else {
+                    actualType = detectType(actualValue, fullKey);
+                }
+            }
+
+            // Final description check
+            if (!actualDescription) {
+                actualDescription = FIELD_DESCRIPTIONS[fullKey] || subSchema.description || null;
+            }
+
+            callback({
+                key: fullKey,
+                value: actualValue,
+                type: actualType,
+                description: actualDescription,
+                min: subSchema.min || (isDefinition ? value.min : undefined),
+                max: subSchema.max || (isDefinition ? value.max : undefined),
+                step: subSchema.step || (isDefinition ? value.step : undefined),
+                options: subSchema.options || (isDefinition ? value.options : null)
+            });
+        }
     }
 }
 
@@ -700,7 +724,7 @@ function createSettingItem(item) {
     if (item.description) {
         const desc = document.createElement('p');
         desc.className = 'setting-description';
-        desc.textContent = item.description;
+        desc.innerHTML = renderMarkdown(item.description);
         wrapper.appendChild(desc);
     }
 
@@ -736,6 +760,9 @@ function createSettingItem(item) {
             break;
         case 'slider':
             inputEl = createSliderInput(item.key, item.value, item.min, item.max, item.step);
+            break;
+        case 'percentage':
+            inputEl = createPercentageSlider(item.key, item.value);
             break;
         case 'select':
             inputEl = createSelectInput(item.key, item.value, item.options);
@@ -813,11 +840,11 @@ function createSelectInput(key, value, options) {
     select.dataset.key = key;
 
     // options is { "val1": "Label 1", "val2": "Label 2" }
-    for (const [optLabel, optValue] of Object.entries(options)) {
+    for (const [optKey, optValue] of Object.entries(options)) {
         const option = document.createElement('option');
-        option.value = optValue;
-        option.textContent = optLabel;
-        if (optValue === value) {
+        option.value = optKey;
+        option.textContent = optKey;
+        if (optKey === value) {
             option.selected = true;
         }
         select.appendChild(option);
@@ -827,15 +854,12 @@ function createSelectInput(key, value, options) {
     descContainer.className = 'setting-select-description';
     descContainer.style.marginTop = '8px';
     descContainer.style.fontSize = '0.85em';
-    descContainer.style.color = 'var(--text-muted)';
     descContainer.style.minHeight = '1.2em';
 
     console.log(options);
 
     const updateDescription = () => {
-        const selectedKey = select.options[select.selectedIndex].text;
-        console.log(selectedKey);
-        descContainer.textContent = options[selectedKey] || '';
+        descContainer.innerHTML = renderMarkdown(options[select.value]) || '';
     };
 
     select.onchange = () => {
@@ -845,7 +869,7 @@ function createSelectInput(key, value, options) {
 
     wrapper.appendChild(select);
     wrapper.appendChild(descContainer);
-    
+
     // Initial description update
     updateDescription();
 
@@ -3076,5 +3100,59 @@ function createReasoningEffortSlider(key, value) {
     desc.textContent = 'Set the reasoning effort for the model';
     wrapper.appendChild(desc);
 
+    return wrapper;
+}
+
+
+
+// Create percentage slider (0.0 to 1.0)
+function createPercentageSlider(key, value) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'setting-slider-container';
+
+    const currentVal = parseFloat(value) || 0;
+    const minVal = 0;
+    const maxVal = 1;
+    const stepVal = 0.01;
+
+    const getPercentage = (val) => (val * 100);
+    const percentage = getPercentage(currentVal);
+
+    const sliderRow = document.createElement('div');
+    sliderRow.className = 'slider-row';
+    sliderRow.innerHTML = `
+    <div class="slider-header">
+    <span class="slider-label">Percentage</span>
+    <span class="slider-value" id="${key}-val-display">${(currentVal * 100).toFixed(0)}%</span>
+    </div>
+    <div class="slider-track-wrapper">
+    <div class="slider-track">
+    <input type="range" class="slider-input" id="${key}-input"
+    min="0" max="1" step="0.01" value="${currentVal}">
+    <div class="slider-fill" id="${key}-fill" style="width: ${percentage}%"></div>
+    <div class="slider-handle" id="${key}-handle" style="left: ${percentage}%"></div>
+    </div>
+    <div class="slider-labels">
+    <span>0%</span>
+    <span>100%</span>
+    </div>
+    </div>
+    `;
+
+    const input = sliderRow.querySelector('.slider-input');
+    const fill = sliderRow.querySelector('.slider-fill');
+    const handle = sliderRow.querySelector('.slider-handle');
+    const display = sliderRow.querySelector('.slider-value');
+
+    input.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        const p = getPercentage(val);
+        display.textContent = `${(val * 100).toFixed(0)}%`;
+        fill.style.width = `${p}%`;
+        handle.style.left = `${p}%`;
+        handleSettingChange(key, val);
+    });
+
+    wrapper.appendChild(sliderRow);
     return wrapper;
 }

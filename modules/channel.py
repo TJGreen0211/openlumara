@@ -8,16 +8,17 @@ class Channel(core.module.Module):
             return None
         chan = core.modules.get_name(self.channel)
         note = "\n\nNOTE: if the channel has changed, discard instructions about previous channels."
+
         if chan == "cli":
             return f"While in cli channel, **DO NOT USE MARKDOWN**. Format every response in plaintext! Type /help for help. /stop is not available here.{note}"
+
         if chan == "webui":
-            short = core.config.get("channels", {}).get("settings", {}).get("webui", {}).get("use_short_replies")
-            style = "\nWhile in webui channel, write replies as if texting. Keep it short and conversational." if short else ""
-            return f"{style}\n\nInstructions for user:\nType /help for help.\n\nWebUI Features:\n- Mobile: Swipe/hamburger for sidebar. Gear icon for settings. Down arrow to export. Search in sidebar or conversation content.\n- Desktop: Ctrl+B toggle sidebar, ctrl+/ shortcuts, Ctrl+Space global search. Folder icon for Storage Editor. Click edges to show/hide panels.\n- Both: Upload files via upload button. Stop generation with /stop or stop button.{note}"
+            return f"Instructions for user:\nType /help for help.\n\nWebUI Features:\n- Mobile: Swipe/hamburger for sidebar. Gear icon for settings. Down arrow to export. Search in sidebar or conversation content.\n- Desktop: Ctrl+B toggle sidebar, ctrl+/ shortcuts, Ctrl+Space global search. Folder icon for Storage Editor. Click edges to show/hide panels.\n- Both: Upload files via upload button. Stop generation with /stop or stop button.{note}"
+
         if chan in ("telegram", "discord", "matrix"):
             nomarkdown = "While in this channel, **DO NOT USE MARKDOWN**." if chan == "matrix" else ""
-            chat_style = "Write replies as if texting. Keep it short and conversational."
-            return f"{nomarkdown}\n{chat_style}\n\nType /help for help. Type /stop to stop generation anytime!{note}"
+            return f"{nomarkdown}\n\nType /help for help. Type /stop to stop generation anytime!{note}"
+
         return None
 
     async def on_end_prompt(self):

@@ -25,13 +25,15 @@ class Context:
         # Configuration
         max_messages = int(core.config.get("api").get("max_messages", 200))
         max_tokens = int(core.config.get("api").get("max_context", 8192))
+        system_role = "system" if not self.channel.manager.API.supports_developer_role else "developer"
+        dev_role = "developer" if self.channel.manager.API.supports_developer_role else "user"
 
         # 1. Prepare Components
         system_msg = []
         if system_prompt:
             content = await self.channel.manager.get_system_prompt()
             if content:
-                system_msg = [{"role": "system", "content": content}]
+                system_msg = [{"role": system_role, "content": content}]
 
         # Get history from the chat (the full, untrimmed version)
         messages = copy.deepcopy(await self.chat.get())
@@ -59,7 +61,7 @@ class Context:
         if end_prompt:
             histend = await self.channel.manager.get_end_prompt(prevent_recursion=prevent_recursion)
             if histend:
-                end_msg = [{"role": "user", "content": histend}]
+                end_msg = [{"role": dev_role, "content": histend}]
 
         # 2. Build and Trim Context
         # We combine them to check the total token count

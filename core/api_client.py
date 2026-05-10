@@ -27,6 +27,8 @@ class APIClient():
         # used for insecure SSL connections
         self._httpx_client = None
 
+        self.supports_developer_role = False
+
     async def connect(self):
         if self.connected:
             # dont unnecessarily connect
@@ -69,6 +71,8 @@ class APIClient():
         self.connected = True
         self._connection_error = None
         self._connection_attempts = 0
+        self.supports_developer_role = await self._check_developer_role_support(self._AI)
+
         core.log("API", "Successfully connected to AI")
         return True
 
@@ -106,6 +110,34 @@ class APIClient():
     def get_model(self):
         return self._model
 
+    async def _check_developer_role_support(self, client):
+        try:
+            # We send a minimal request using the 'developer' role.
+            # We use a very short prompt to minimize token usage/cost.
+            await client.chat.completions.create(
+                model="test-model", # Most APIs will ignore the model name if the error is role-based
+                messages=[
+                    {"role": "developer", "content": "test"},
+                    {"role": "user", "content": "test"}
+                ],
+                max_tokens=1
+            )
+            return True
+        except Exception as e:
+            error_message = str(e).lower()
+
+            # If the API returns an error specifically about the role, it doesn't support it.
+            # Common error indicators: "invalid role", "unknown role", "unexpected role"
+            if "role" in error_message:
+                return False
+
+            # If it's a different error (like 'model_not_found'), the API
+            # likely processed the roles correctly and failed later.
+            if "model" in error_message:
+                return True
+
+            return False
+
     def set_model(self, name: str):
         self._model = name
         return self._model
@@ -133,12 +165,17 @@ class APIClient():
             "tools": tools,
             "stream": stream,
             "temperature": core.config.get("model", {}).get("temperature", 0.2),
-            "max_completion_tokens": core.config.get("api", {}).get("max_output_tokens", 8192)
+            "max_completion_tokens": core.config.get("api", {}).get("max_output_tokens", 8192),
+            "extra_body": {
+                "chat_template_kwargs": {
+                    "enable_thinking": core.config.get("model", "enable_thinking")
+                }
+            }
         }
 
         # add model param fields
         for field, value in core.config.get("model", default={}).items():
-            if field in ["name", "use_tools", "reasoning_effort"]:
+            if field in ["name", "use_tools", "reasoning_effort", "enable_thinking"]:
                 continue
 
             req[field] = value

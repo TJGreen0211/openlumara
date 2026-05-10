@@ -4,7 +4,10 @@ class TokenThreshold(core.module.Module):
     """Will make the AI warn you if you're approaching the token limit"""
 
     settings = {
-        "warning_threshold_percentage": 80
+        "warning_threshold": {
+            "default": 0.8,
+            "type": "percentage"
+        }
     }
 
     async def on_end_prompt(self):
@@ -28,7 +31,8 @@ class TokenThreshold(core.module.Module):
             
         used_percentage = (current / max_tokens) * 100
 
-        warning_threshold_percent = self.config.get("warning_threshold_percentage")
+        warning_threshold_percent = self.config.get("warning_threshold")
+        warning_threshold_percent = warning_threshold_percent * 100
 
         if used_percentage >= warning_threshold_percent:
             remaining_percentage = 100 - used_percentage
