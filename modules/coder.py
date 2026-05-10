@@ -73,7 +73,8 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
             "options": {
                 "none": "Prevent your AI from reading any files... if you need that for some reason",
                 "symbols": "The AI will target specific 'symbols' (functions/class methods) to read their code. Supports treesitter for greatly improved symbol targeting and syntax error detection. Treesitter support must be installed for it to work (requirements_coder.txt)",
-                "files": "The AI will read entire files, with a line and filesize limit"
+                "files": "The AI will read entire files, with a line and filesize limit",
+                "both": "The AI will be able to read using symbol tools and full file reading tools"
             }
         },
         "writing_mode": {
@@ -82,7 +83,8 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
             "options": {
                 "read-only": "The AI will only be able to read your files, not write to them.",
                 "symbols": "The AI will edit code by targeting specific 'symbols' (functions/class methods)",
-                "full edits": "The AI will edit code by performing direct file edits and search/replace"
+                "full edits": "The AI will edit code by performing direct file edits and search/replace",
+                "both": "The AI will be able to edit using symbol tools and full file editing tools"
             }
         },
         "coding_style": {
@@ -293,22 +295,45 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
             "list_project_folder"
         ])
 
+        symbol_reading_tools = [
+            "get_outline",
+            "get_symbol",
+            "format_file"
+        ]
+        symbol_writing_tools = [
+            "create_project",
+            "create_file",
+            "edit_symbol",
+            "add_symbol_before",
+            "add_symbol_after",
+            "delete_symbol"
+        ]
+
+        file_reading_tools = [
+            "read_file",
+            "search_in_file",
+            "grep",
+            "find_files",
+            "format_file"
+        ]
+        file_writing_tools = [
+            "create_project",
+            "create_file",
+            "overwrite_file",
+            "append_to_file",
+            "edit",
+            "search_replace",
+            "format_file"
+        ]
+
         match self.config.get("reading_mode"):
             case "symbols":
-                self.enabled_tools.extend([
-                    "get_outline",
-                    "get_symbol",
-                    "format_file"
-                ])
+                self.enabled_tools.extend(symbol_reading_tools)
             case "files":
-                self.enabled_tools.extend([
-                    "read_file",
-                    "search_in_file",
-                    "grep",
-                    "find_files",
-                    "format_file"
-                ])
-
+                self.enabled_tools.extend(file_reading_tools)
+            case "both":
+                self.enabled_tools.extend(symbol_reading_tools)
+                self.enabled_tools.extend(file_reading_tools)
 
         if self.config.get("writing_mode") != "read-only":
             self.enabled_tools.extend([
@@ -318,24 +343,12 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
 
         match self.config.get("writing_mode"):
             case "symbols":
-                self.enabled_tools.extend([
-                    "create_project",
-                    "create_file",
-                    "edit_symbol",
-                    "add_symbol_before",
-                    "add_symbol_after",
-                    "delete_symbol"
-                ])
+                self.enabled_tools.extend(symbol_writing_tools)
             case "full edits":
-                self.enabled_tools.extend([
-                    "create_project",
-                    "create_file",
-                    "overwrite_file",
-                    "append_to_file",
-                    "edit",
-                    "search_replace",
-                    "format_file"
-                ])
+                self.enabled_tools.extend(file_writing_tools)
+            case "both":
+                self.enabled_tools.extend(symbol_writing_tools)
+                self.enabled_tools.extend(file_writing_tools)
 
         if self.config.get("allow_code_exection"):
             self.enabled_tools.append("execute")
@@ -1249,14 +1262,13 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
         except Exception as e:
             return self.result(f"error: {e}", False)
 
+
+
     async def read_file(self, project_name: str, file_path: list, limit: int, offset: int = None):
         """
         Reads a file with optional line offset and limit.
         Returns content as string, or error dict on failure.
         """
-        if self.config.get("reading_mode") != "files":
-            return self.result("error: Full file reading is disabled. Use get_symbol!", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("error: file does not exist!", success=False)
@@ -1280,32 +1292,38 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
 
             # Apply limit
             end_idx = total_lines
-            end_limit_idx = min(start_idx + limit, total_lines)
-            if limit is not None and end_limit_idx < total_lines:
-                end_idx = end_limit_idx
+            if limit is not None:
+                end_idx = min(start_idx + limit, total_lines)
 
             # Enforce max lines
+            line_limit_reached = False
             if (end_idx - start_idx) > max_lines:
                 end_idx = start_idx + max_lines
-                truncated = True
+                line_limit_reached = True
 
             selected_lines = lines[start_idx:end_idx]
             result = "".join(selected_lines)
 
             # Truncate if too large (50KB)
+            size_limit_reached = False
             max_bytes = 50 * 1024
-            truncated = False
             if len(result.encode('utf-8')) > max_bytes:
                 while len(result.encode('utf-8')) > max_bytes and result:
                     result = result[:-1]
-                truncated = True
+                size_limit_reached = True
 
             if offset and not result:
                 return self.result("Offset was beyond file's ending, please use a lower offset", success=False)
 
             response = result
-            if truncated:
-                response += "\n\n[Output truncated - file has more content]"
+            if end_idx < total_lines:
+                reason = "line limit reached" if line_limit_reached else "limit reached"
+                remaining = total_lines - end_idx
+                next_offset = end_idx + 1
+                response += f"[Output truncated - {reason}. {remaining} lines remain starting from line {next_offset}]"
+            
+            if size_limit_reached:
+                response += "[Output truncated - file size limit reached]"
 
             return response
         except Exception as e:
@@ -1313,8 +1331,6 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
 
     async def overwrite_file(self, project_name: str, file_path: list, content: str):
         """Completely overwrites an existing file with new content."""
-        if self.config.get("writing_mode") != "files":
-            return self.result("error: File overwriting is disabled. Use edit_symbol!", success=False)
 
         file_path_str = self._get_file_path(project_name, file_path)
 
@@ -1339,9 +1355,6 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
 
     async def append_to_file(self, project_name: str, file_path: list, content: str):
         """Appends content to the end of a file. Creates the file if it doesn't exist."""
-
-        if self.config.get("writing_mode") != "files":
-            return self.result("error: File overwriting is disabled. Use edit_symbol!", success=False)
 
         file_path_str = self._get_file_path(project_name, file_path)
         target_dir = os.path.dirname(file_path_str)
@@ -1515,9 +1528,6 @@ class Coder(modules.sandboxed_files.SandboxedFiles):
 
     async def edit_symbol(self, project_name: str, file_path: list, symbol_name: str, new_content: str, language: str = None):
         """Replaces the content of a symbol with new content."""
-
-        if not self.config.get("permissions", "edit_functions"):
-            return self.result("error: Symbol editing is disabled.", success=False)
 
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
