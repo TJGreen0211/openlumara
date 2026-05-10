@@ -81,7 +81,7 @@ class ToolcallManager:
         else:
             return token
 
-    async def _build_recursive_request(self, token, final_content, final_reasoning):
+    async def _build_recursive_request(self, token, final_content = "", final_reasoning = ""):
         repaired_token = await self._repair_toolcall_token(token)
 
         toolcall_request = {"role": "assistant"}

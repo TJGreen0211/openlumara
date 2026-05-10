@@ -406,7 +406,7 @@ function detectType(value, key = '') {
     }
     if (value === null || value === undefined) return 'text';
     if (typeof value === 'boolean') return 'boolean';
-    if (typeof value === 'number') return 'number';
+    if (typeof value === 'number' && !key.toLowerCase().endsWith('id')) return 'number';
     if (Array.isArray(value)) return 'array';
     if (typeof value === 'object') return 'object';
     if (typeof value === 'string') {
@@ -855,8 +855,6 @@ function createSelectInput(key, value, options) {
     descContainer.style.marginTop = '8px';
     descContainer.style.fontSize = '0.85em';
     descContainer.style.minHeight = '1.2em';
-
-    console.log(options);
 
     const updateDescription = () => {
         descContainer.innerHTML = renderMarkdown(options[select.value]) || '';

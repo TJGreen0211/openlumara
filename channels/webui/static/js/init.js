@@ -122,17 +122,9 @@ async function init() {
 
         function handleNewMessage(msg) {
             if (!isConnected || userIsEditing) return;
-
-            console.log("received websocket message");
-
             if (msg.role === 'assistant' && isStreaming) return;
-
-            console.log("proceeding with websocket message..");
-
             if (chat.querySelector(`[data-index="${msg.index}"]`)) return;
 
-            console.log("rendering websocket message");
-            console.log(msg);
             renderSingleMessage(msg, msg.index, true);
             if (typeof msg.index === 'number') {
                 lastMessageIndex = msg.index + 1;

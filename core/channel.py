@@ -9,6 +9,10 @@ import asyncio
 class Channel:
     """Base class for channels"""
 
+    settings = {
+        # base settings here lol
+    }
+
     def __init__(self, manager):
         self.manager = manager
         self.name = core.modules.get_name(self) # shorthand alias
@@ -27,6 +31,16 @@ class Channel:
         # the user first sending a message. this is what powers announcements and the like
         self.push_queue = asyncio.Queue()
         self._queue_task = None
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+        # merge the base class's settings with the subclass settings.
+        # this way, we can define settings ALL channels should have
+        for b in cls.__mro__[1:]:
+            if hasattr(b, "settings"):
+                cls.settings = b.settings | cls.settings
+                break
 
     async def _shutdown(self):
         """internal shutdown function. gets called by the manager before on_shutdown()"""
@@ -79,23 +93,25 @@ class Channel:
         # fallback
         return ""
 
-    def _format_message(self, message: dict):
+    def format_message(self, message: dict):
         formatted = ""
 
         role = message.get("role")
+
+        reasoning_content = None
+
         if role in ("user", "assistant"):
-            reasoning_content = message.get("reasoning_content")
-            if reasoning_content:
-                formatted += reasoning_content
-                formatted += "\n\n"
+            if self.config.get("show_reasoning"):
+                reasoning_content = message.get("reasoning_content")
+                if reasoning_content:
+                    formatted += f"**Reasoning:**\n{reasoning_content}\n\n"
 
             content = message.get("content")
             if content:
                 if reasoning_content:
-                    formatted += "---"
+                    formatted += "**Conclusion**:\n"
 
-                formatted += content
-                formatted += "\n\n"
+                formatted += f"{content}\n\n"
 
         if role == "assistant":
             if message.get("tool_calls"):
@@ -105,7 +121,7 @@ class Channel:
                 formatted += "\n\n"
 
         if role == "tool":
-            formatted = "(received tool results)"
+            formatted = "processing results.."
 
         message["content"] = formatted.strip()
 
@@ -122,7 +138,7 @@ class Channel:
         while not getattr(self, "_shutting_down", False):
             try:
                 message = await self.push_queue.get()
-                await self.on_push(self._format_message(message))
+                await self.on_push(self.format_message(message))
                 self.push_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -148,7 +164,7 @@ class Channel:
     #             if new_messages:
     #                 for message in new_messages:
     #                     # trigger the event
-    #                     await self.on_message(self._format_message(message))
+    #                     await self.on_message(self.format_message(message))
     #
     #             await asyncio.sleep(0.1)
     #
@@ -271,7 +287,7 @@ class Channel:
         if tool_calls:
             return None
 
-        return assistant_message
+        return self.format_message(assistant_message)
 
     async def send_stream(self, message: dict):
         """sends a message to the AI from within the current channel, streaming version"""
@@ -403,8 +419,7 @@ class Channel:
             # yield an estimated token usage if the API didn't provide one
             yield {"type": "token_usage", "content": await self.context.chat.count_tokens(), "source": "estimation"}
 
-        if not tool_calls_occurred: # don't add an extra message at the end of a toolcalling chain
-
+        if not tool_calls_occurred and final_content: # don't add an extra message at the end of a toolcalling chain
             # add the assistant's response to context
             assistant_message = {
                 "role": "assistant",

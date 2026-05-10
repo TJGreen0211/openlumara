@@ -148,14 +148,31 @@ class Client(discord.Client):
 
                         if is_cmd:
                             # only allow authorised user to use commands
-                            authorised_id = self.ai_channel.config.get("authorised_user_id")
+                            authorised_id = int(self.ai_channel.config.get("authorised_user_id"))
 
                             if message.author.id != authorised_id:
                                 return await message.channel.send("Only the bot owner is allowed to use commands!")
                         else:
+                            orig_content = str(content)
+                            content = ""
+
+                            group_chat = self.ai_channel.config.get("enable_group_chat")
+
+                            # check if the message is a reply
+                            if message.reference:
+                                # this gets the actual message object being replied to
+                                replied_message = await message.channel.fetch_message(message.reference.message_id)
+
+                                # format it like a reply
+                                replied_message_formatted = "> "+"\n> ".join(replied_message.content.split("\n"))
+                                content += f"in reply to:\n{replied_message_formatted}\n\n"
+
                             # if group chat is enabled, make the AI aware of who is speaking
-                            if self.ai_channel.config.get("enable_group_chat"):
-                                content = f"{message.author.display_name} said: {content}"
+                            if group_chat:
+                                content += f"{message.author.display_name} said: {orig_content}"
+                            else:
+                                content += orig_content
+
                     except Exception as e:
                         return await message.channel.send(f"error while processing your request: {e}")
 
@@ -186,6 +203,7 @@ class Discord(core.channel.Channel):
         "authorised_user_id": "USER_ID_HERE",
         "require_mentions": False,
         "use_message_streaming": False,
+        "show_reasoning": False,
         "use_replies": True,
         "enable_group_chat": False,
         "announce_startup": False,

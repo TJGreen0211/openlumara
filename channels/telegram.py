@@ -153,11 +153,31 @@ class Telegram(core.channel.Channel):
                 # Wait for a message from the queue
                 update, context = await self.message_queue.get()
 
-                # Process the message (this waits for the stream to finish)
-                await self._process_stream(update, context)
+                chat_id = update.effective_chat.id
+                user_msg = update.message.text.strip()
 
-                # Mark the task as done
-                self.message_queue.task_done()
+                # Start typing indicator before generating response
+                typing_task = asyncio.create_task(self._keep_typing(chat_id))
+
+                try:
+                    response = await self.send({"role": "user", "content": user_msg})
+                    if response:
+                        content = response.get("content")
+                        # send message to telegram
+                        await context.bot.send_message(chat_id, content)
+                except Exception as e:
+                    core.log("telegram", f"Error in queue worker processing: {e}")
+                finally:
+                    # Stop typing indicator
+                    if not typing_task.done():
+                        typing_task.cancel()
+                        try:
+                            await typing_task
+                        except asyncio.CancelledError:
+                            pass
+                    # Mark the task as done
+                    self.message_queue.task_done()
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -270,20 +290,19 @@ class Telegram(core.channel.Channel):
             except Exception as e:
                 core.log("telegram", f"Failed to send message: {e}")
 
-    async def _announce(self, message: str, type: str = None):
-        if not type:
-            type = "info"
+    async def on_push(self, message: dict):
+        content = message.get("content")
 
-        core.log("telegram", f"[{type}] {message}")
+        core.log("telegram", content)
 
         if self.authorized_chat_id and self.app:
-            emoji_map = {
-                "error": "🚨",
-                "warning": "⚠️",
-                "status": "ℹ️",
-                "info": "💬"
-            }
-            emoji = emoji_map.get(type, "🔔")
-            safe_msg = message.replace("*", "").replace("_", "")
-            text = f"{emoji} *{type.upper()}:* {safe_msg}"
-            asyncio.create_task(self._send_telegram_message(text))
+            # emoji_map = {
+            #     "error": "🚨",
+            #     "warning": "⚠️",
+            #     "status": "ℹ️",
+            #     "info": "💬"
+            # }
+            # emoji = emoji_map.get(type, "🔔")
+            # safe_msg = content.replace("*", "").replace("_", "")
+            # text = f"{emoji} *{type.upper()}:* {safe_msg}"
+            asyncio.create_task(self._send_telegram_message(content))

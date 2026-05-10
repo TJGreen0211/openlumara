@@ -795,7 +795,7 @@ async function newChat() {
             // Force the sidebar to stay on the current active category 
             // in case loadChats() or selectCategory() reset it.
             selectCategory(activeCategory);
-            closeSidebar();
+            await loadChat(data.chat.id);
         }
     } catch (e) {
         console.error('Failed to create new chat:', e);

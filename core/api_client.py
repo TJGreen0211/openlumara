@@ -114,11 +114,14 @@ class APIClient():
         try:
             # We send a minimal request using the 'developer' role.
             # We use a very short prompt to minimize token usage/cost.
-            await client.chat.completions.create(
-                model=self._model, # Most APIs will ignore the model name if the error is role-based
+            response = await client.chat.completions.create(
+                model=self._model,
+                # send dev -> user -> dev to check for multi-dev-message support,
+                # which is what the dev role is useful for in our case
                 messages=[
                     {"role": "developer", "content": "test"},
-                    {"role": "user", "content": "test"}
+                    {"role": "user", "content": "test"},
+                    {"role": "developer", "content": "test2"}
                 ],
                 max_tokens=1
             )
@@ -165,13 +168,6 @@ class APIClient():
             }
         }
 
-        # add model param fields
-        # for field, value in core.config.get("model", default={}).items():
-        #     if field in ["name", "use_tools", "reasoning_effort", "enable_thinking"]:
-        #         continue
-        #
-        #     req[field] = value
-
         reasoning_effort = core.config.get("model", {}).get("reasoning_effort")
         if reasoning_effort:
             req["reasoning_effort"] = reasoning_effort
@@ -190,7 +186,29 @@ class APIClient():
             core.log("debug:request", str(req))
 
         try:
-            response = await self._AI.chat.completions.create(**req)
+            # check for cancellation before starting the request
+            if self.cancel_request:
+                return {"error": "cancelled", "message": "request was cancelled before it could start"}
+
+            # wrap the request in a way that we can check for cancellation
+            # since openai's async client doesn't natively support an abort signal 
+            # easily through the high-level chat.completions.create, we use a task
+            # so we can actually cancel the task itself.
+            
+            request_task = asyncio.create_task(self._AI.chat.completions.create(**req))
+            
+            # monitor the task and the cancel_request flag
+            while not request_task.done():
+                if self.cancel_request:
+                    request_task.cancel()
+                    return {"error": "cancelled", "message": "request was cancelled during processing"}
+                await asyncio.sleep(0.1)
+
+            response = await request_task
+
+        except asyncio.CancelledError:
+            core.log_error("request was cancelled", None)
+            return {"error": "cancelled", "message": "request was cancelled"}
         except openai.AuthenticationError as e:
             core.log_error("Authentication error - disconnecting", e)
             self.connected = False
@@ -298,20 +316,19 @@ class APIClient():
             core.log("debug:reasoning", reasoning_content)
 
         # extract message content
-        # replace with reasoning if message was blank
-        final_content = response_main.message.content or reasoning_content or ""
+        final_content = response_main.message.content or ""
 
         # handle tool calls, if any
         tool_calls = None
         if use_tools and core.config.get("model").get("use_tools", False) and response_main.message.tool_calls:
-            tool_calls = response_main.message.tool_calls
+            tool_calls = [tc.model_dump(warnings=False) for tc in response_main.message.tool_calls]
 
         result = {}
 
         if final_content:
             result["content"] = final_content
         if reasoning_content:
-            result["reasoning"] = reasoning_content
+            result["reasoning_content"] = reasoning_content
         if tool_calls:
             result["tool_calls"] = tool_calls
 

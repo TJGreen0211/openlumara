@@ -469,17 +469,12 @@ core:
                 context_display = []
 
                 for message in context:
-                    if message.get("role") == "tool": continue
+                    if message.get("role") in ("tool", "developer"): continue
 
-                    content = message.get("content")
-                    if not content:
-                        content = ""
-                        tool_calls = message.get("tool_calls")
-                        if tool_calls:
-                            for tool_call in tool_calls:
-                                content += self.channel.tc_manager.display_call(tool_call)
+                    message_formatted = self.channel.format_message(message)
 
-                    context_display.append(f"== {message.get('role')} ==\n{content}")
+                    content = message_formatted.get("content")
+                    context_display.append(f"== {message_formatted.get('role')} ==\n{content}")
 
                 context_display.append("---")
 

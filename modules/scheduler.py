@@ -170,12 +170,10 @@ class Scheduler(core.module.Module):
         tool_calls = response.get("tool_calls")
 
         if tool_calls and job_channel:
-            # Use a local manager to avoid race conditions and ensure the correct channel is used
-            tc_manager = core.toolcalls.ToolcallManager(job_channel)
-
             final_content_list = []
-            async for token in tc_manager.process(
-                tool_calls
+            async for token in job_channel.tc_manager.process(
+                response,
+                push=True
             ):
                 if token.get("type") == "content":
                     final_content_list.append(token.get("content", ""))
