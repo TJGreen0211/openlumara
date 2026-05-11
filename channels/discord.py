@@ -5,7 +5,6 @@ import datetime
 import json_repair
 
 MAX_CHARS = 1900
-CHUNK_SIZE = 400
 
 class Client(discord.Client):
     def __init__(self, channel, **kwargs):
@@ -14,47 +13,78 @@ class Client(discord.Client):
 
     async def _stream_to_discord(self, token_stream, discord_channel):
         """streams a message to discord in steps"""
+        edit_interval = self.ai_channel.config.get("discord_edit_interval", 2)
         message_obj = await discord_channel.send("processing your request...")
+        edit_lock = asyncio.Lock()
 
-        message_content = []
+        class StreamState:
+            def __init__(self, initial_msg):
+                self.message_obj = initial_msg
+                self.full_content = ""
+                self.pending_content = ""
+                self.is_running = True
 
-        next_edit_time = datetime.datetime.now()
-        message_content_full = []
-        shown_reasoning_text = False
-        char_counter = 0
+        state = StreamState(message_obj)
 
-        async with message_obj.channel.typing():
-            async for token in token_stream:
-                word = token.get("content")
+        async def periodic_editor():
+            while state.is_running:
+                await asyncio.sleep(edit_interval)
+                async with edit_lock:
+                    if state.pending_content:
+                        try:
+                            chunk = state.pending_content
+                            state.pending_content = ""
+                            state.full_content += chunk
+                            await state.message_obj.edit(content=state.full_content)
+                        except Exception:
+                            pass
 
-                if not word or not isinstance(word, str):
-                    # wtf
-                    continue
+        editor_task = asyncio.create_task(periodic_editor())
 
-                message_content.append(word)
-                message_content_full.append(word)
-                message_content_str = "".join(message_content)
-                char_limit_exceeded = len(message_content_str) > MAX_CHARS
+        try:
+            async with message_obj.channel.typing():
+                async for token in token_stream:
+                    if token.get("type") == "new_chunk":
+                        async with edit_lock:
+                            if state.pending_content:
+                                state.full_content += state.pending_content
+                                state.pending_content = ""
+                                try:
+                                    await state.message_obj.edit(content=state.full_content)
+                                except:
+                                    pass
+                            
+                            state.message_obj = await discord_channel.send("...")
+                            state.full_content = ""
+                        continue
 
-                # edit message every few seconds or if token limit reached
-                if datetime.datetime.now() >= next_edit_time or len(message_content) >= CHUNK_SIZE:
+                    word = token.get("content")
+                    if not word or not isinstance(word, str):
+                        continue
+                    state.pending_content += word
+        finally:
+            state.is_running = False
+            editor_task.cancel()
+            try:
+                await editor_task
+            except asyncio.CancelledError:
+                pass
+            
+            async with edit_lock:
+                if state.pending_content:
+                    state.full_content += state.pending_content
+                    state.pending_content = ""
+                
+                if state.full_content:
                     try:
-                        await message_obj.edit(content=message_content_str)
-                        if len(message_content) >= CHUNK_SIZE-1:
-                            message_content = []
-                            message_obj = await discord_channel.send("...")
-                    except:
-                        message_obj = await discord_channel.send("...")
-                        await message_obj.edit(content=word)
-                        message_content = []
-
-                    next_edit_time = datetime.datetime.now() + datetime.timedelta(seconds=1)
-
-        if message_content:
-            await message_obj.edit(content="".join(message_content))
-            return "".join(message_content)
-        else:
-            return "..come again?"
+                        await state.message_obj.edit(content=state.full_content)
+                    except Exception:
+                        try:
+                            await discord_channel.send(state.full_content)
+                        except:
+                            pass
+            
+            return state.full_content if state.full_content else "..come again?"
 
     async def on_ready(self):
         core.log("discord", "logged in.")
@@ -130,7 +160,7 @@ class Client(discord.Client):
                         if self.ai_channel.config.get("use_message_streaming"):
                             response_obj = self.ai_channel.format_stream_for_text(
                                 self.ai_channel.send_stream({"role": "user", "content": content}),
-                                chunk_size=CHUNK_SIZE
+                                chunk_size=MAX_CHARS
                             )
                             response_content = await self._stream_to_discord(response_obj, message.channel)
                         else:
@@ -139,7 +169,7 @@ class Client(discord.Client):
                             if response_obj:
                                 response_content = response_obj.get("content")
 
-                                chunks = [response_content[i:i + CHUNK_SIZE] for i in range(0, len(response_content), CHUNK_SIZE)]
+                                chunks = [response_content[i:i + MAX_CHARS] for i in range(0, len(response_content), MAX_CHARS)]
 
                                 for chunk in chunks:
                                     await message.channel.send(chunk, mention_author=self.ai_channel.config.get("use_replies"))
@@ -161,7 +191,8 @@ class Discord(core.channel.Channel):
         "use_replies": True,
         "enable_group_chat": False,
         "announce_startup": False,
-        "announce_shutdown": False
+        "announce_shutdown": False,
+        "discord_edit_interval": 2
     }
 
     async def on_push(self, message: dict):
@@ -174,7 +205,7 @@ class Discord(core.channel.Channel):
         content = message.get("content")
 
         # split the content into chunk sizes that discord accepts
-        chunks = [content[i:i + CHUNK_SIZE] for i in range(0, len(content), CHUNK_SIZE)]
+        chunks = [content[i:i + MAX_CHARS] for i in range(0, len(content), MAX_CHARS)]
 
         for guild in self._client.guilds:
             for channel in guild.channels:

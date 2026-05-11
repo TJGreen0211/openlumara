@@ -554,7 +554,6 @@ class Channel:
         currently_reasoning = False
         show_reasoning = self.config.get("show_reasoning")
         last_token_was_newline = False
-        token_counter = 0
         char_counter = 0
 
         async for token in stream:
@@ -576,10 +575,14 @@ class Channel:
                 pass
 
             # ensure formatting displays correctly even when split into chunks
-            if chunk_size and token_counter >= chunk_size:
+            if chunk_size and char_counter >= chunk_size:
+                # signal to our caller that we're starting a new chunk
+                yield {"type": "new_chunk", "content": ""}
+                char_counter = 0
+
                 if currently_reasoning and show_reasoning:
                     yield text_to_token("> ")
-                    token_counter = 1 # what we just emitted counts as a token
+                    char_counter += len("> ") # what we just emitted counts as a token
 
             if token_type == "reasoning" and not currently_reasoning:
                 if show_reasoning:
@@ -590,8 +593,7 @@ class Channel:
                     think_str = "\n*thinking..*\n"
                 currently_reasoning = True
 
-                # char_counter += len(think_str)
-                token_counter += 1
+                char_counter += len(think_str)
                 yield text_to_token(think_str)
 
             header_str = None
@@ -604,7 +606,6 @@ class Channel:
             if header_str:
                 char_counter += len(header_str)
                 yield text_to_token(header_str)
-                token_counter += 1
 
             if token_type in ["content", "tool_calls", "tool"] and currently_reasoning:
                 # we can have multiple reasoning blocks
@@ -622,7 +623,6 @@ class Channel:
                     tool_delta_str = tool_delta_str.replace("\\n", "\n")
 
                     char_counter += len(tool_delta_str)
-                    token_counter += 1
                     yield text_to_token(tool_delta_str)
             elif not self.config.get("stream_tool_calls") and token_type == "tool_calls":
                 tool_calls = token.get("tool_calls")
@@ -630,17 +630,13 @@ class Channel:
                     tool_str = "\n"+self.tc_manager.display_call(tool_call)
                     char_counter += len(tool_str)
                     yield text_to_token(tool_str)
-                    token_counter += 1
 
             if token_type == "content":
                 yield text_to_token(content)
-                token_counter += 1
+                char_counter += len(content)
             if token_type == "reasoning" and show_reasoning:
-                token_counter += 1
+                char_counter += len(content)
                 yield text_to_token(content)
-
-            if isinstance(content, str):
-                char_counter = len(content)
 
     async def on_push(self, message: dict):
         raise NotImplementedError

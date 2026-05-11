@@ -20,6 +20,9 @@ class Telegram(core.channel.Channel):
 
     settings =  {
         "token": "TOKEN_HERE",
+        "use_message_streaming": True,
+        "stream_tool_calls": False,
+        "show_reasoning": False,
         "announce_startup": False,
         "announce_shutdown": False
     }
@@ -160,11 +163,15 @@ class Telegram(core.channel.Channel):
                 typing_task = asyncio.create_task(self._keep_typing(chat_id))
 
                 try:
-                    response = await self.send({"role": "user", "content": user_msg})
-                    if response:
-                        content = response.get("content")
-                        # send message to telegram
-                        await context.bot.send_message(chat_id, content)
+                    if self.config.get("use_message_streaming"):
+                        # Process the message (this waits for the stream to finish)
+                        await self._process_stream(update, context)
+                    else:
+                        response = await self.send({"role": "user", "content": user_msg})
+                        if response:
+                            content = response.get("content")
+                            # send message to telegram
+                            await context.bot.send_message(chat_id, content)
                 except Exception as e:
                     core.log("telegram", f"Error in queue worker processing: {e}")
                 finally:
@@ -202,7 +209,7 @@ class Telegram(core.channel.Channel):
 
         try:
             # 2. Consume the stream
-            async for token in self.send_stream({"role": "user", "content": user_msg}):
+            async for token in self.format_stream_for_text(self.send_stream({"role": "user", "content": user_msg})):
                 t_type = token.get("type")
                 content = token.get("content", "")
                 visual_buffer = None
