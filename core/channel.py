@@ -605,7 +605,7 @@ class Channel:
                 # we can have multiple reasoning blocks
                 currently_reasoning = False
 
-            if token_type == "tool_call_delta" and self.config.get("stream_tool_calls"):
+            if self.config.get("stream_tool_calls") and token_type == "tool_call_delta":
                 # Extract the accumulated tool call from the delta
                 tc_list = token.get("tool_calls", [])
                 if tc_list:
@@ -618,7 +618,7 @@ class Channel:
 
                     char_counter += len(tool_delta_str)
                     yield text_to_token(tool_delta_str)
-            elif token_type == "tool_calls":
+            elif not self.config.get("stream_tool_calls") and token_type == "tool_calls":
                 tool_calls = token.get("tool_calls")
                 for tool_call in tool_calls:
                     tool_str = "\n"+self.tc_manager.display_call(tool_call)
