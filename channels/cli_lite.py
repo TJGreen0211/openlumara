@@ -1,6 +1,8 @@
 import core
 
-class CliNonstream(core.channel.Channel):
+class CliLite(core.channel.Channel):
+    """A super lightweight version of the CLI channel that uses basic python input and doesn't use streaming"""
+
     async def run(self):
         while True:
             user_input = input("> ")

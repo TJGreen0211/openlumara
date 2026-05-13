@@ -1,1 +1,0 @@
-Channels are the main way the user can communicate with the AI. They are interfaces such as Telegram, Discord, and the Web UI. The user can change a bunch of settings per channel through either the Web UI, the `/config` command, or by manually editing the config file.
