@@ -7,6 +7,8 @@ json-repair
 aiofiles
 python-ulid
 requests
+jinja2
+itsdangerous
 fastapi
 uvicorn
 beautifulsoup4
