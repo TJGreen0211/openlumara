@@ -176,8 +176,9 @@ document.addEventListener('keydown', (event) => {
                     inputField.value = messageHistory[historyIndex];
                 }
             }
-            event.preventDefault();
             autoResize(inputField);
+            event.preventDefault();
+            event.stopPropagation();
             return;
         }
     }
