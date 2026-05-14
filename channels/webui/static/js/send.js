@@ -595,7 +595,11 @@ async function sendCommand(message) {
         if (message.startsWith("/stop") || message.startsWith("STOP")) {
             await stopGeneration(true);
         } else {
-            // For standard messages, we'll keep using POST as it's a single transaction
+            // Create placeholder for the command being sent
+            placeholderUserWrapper = createPlaceholderUserMessage(message);
+            chat.insertBefore(placeholderUserWrapper, typing);
+            scrollToBottom();
+
             const response = await fetch('/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -614,8 +618,11 @@ async function sendCommand(message) {
                     errorData.error_type,
                     errorData.action
                 );
+                removePlaceholder();
                 return;
             }
+
+            removePlaceholder();
 
             if (!isStreaming) {
                 await syncMessages();
