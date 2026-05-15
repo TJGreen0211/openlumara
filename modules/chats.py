@@ -45,16 +45,20 @@ class Chats(core.module.Module):
         await self.channel.context.chat.set_tags(tags)
         return self.result(f"chat organised!")
 
-    async def _search(self, query: str):
+    async def _search(self, query: str, max_results: int = 20):
         chats = await self.channel.context.chat.get_all()
         if not chats:
             return False
 
         found_chats = []
+        count = 0
         for index, chat in enumerate(chats):
             # do not search within current chat
             if index == 0 or index == len(chats)-1:
                 continue
+
+            if count > max_results:
+                break
 
             # create a new chat dict so that we can include only the messages that contain the query
             filtered_chat = {"id": chat.get("id"), "title": chat.get("title"), "tags": chat.get("tags", []), "messages": []}
@@ -64,17 +68,21 @@ class Chats(core.module.Module):
             if chat.get("title", "").lower().strip().find(query.lower().strip()) != -1:
                 found = True
 
+            count = 0
+
             # search within content
             for message in chat.get("messages", []):
                 content = message.get("content", "")
                 if not isinstance(content, str):
                     continue
 
-                if content.lower().find(query.lower().strip())!= -1:
+                if content.lower().find(query.lower().strip()) != -1:
                     filtered_chat["messages"].append({"role": message.get("role"), "content": message.get("content")})
                     found = True
+                    break
 
             if found:
+                count += 1
                 found_chats.append(filtered_chat)
 
         if not found_chats:

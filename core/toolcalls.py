@@ -274,7 +274,7 @@ class ToolcallManager:
                         await self.channel.push(final_msg)
 
         except Exception as e:
-            core.log("error", f"Error while handling tool calls: {e}")
+            core.log_error(f"Error while handling tool calls", e)
             await self.channel.announce(
                 f"Error while handling tool calls: {e}",
                 "error"
