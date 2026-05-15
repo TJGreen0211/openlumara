@@ -5,11 +5,18 @@ import copy
 class Config(core.module.Module):
     """Lets the AI manage the OpenLumara configuration/settings for you"""
 
-    unsafe = True
     _header = "OpenLumara config"
 
     settings = {
-        "put_config_in_system_prompt": True
+        "put_config_in_system_prompt": {
+            "description": "Makes your AI aware of all your settings. Redacts sensitive information before it ever reaches the AI, such as API keys, usernames and passwords""",
+            "default": False
+        },
+        "allow_ai_to_modify_config": {
+            "description": "Whether to let the AI modify your config for you. Convenient, but very unsafe!! Prompt injection  attacks can easily lead to your config getting messed up, though it still can't read your sensitive information.",
+            "unsafe": True,
+            "default": False
+        }
     }
 
     def _redact_sensitive_info(self, data):

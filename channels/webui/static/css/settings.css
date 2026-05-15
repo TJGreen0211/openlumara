@@ -2233,6 +2233,22 @@
     filter: grayscale(0.2);
 }
 
+.setting-item-unsafe {
+    border-left: 3px solid #ef4444 !important; /* Red warning border */
+    padding: 4px;
+    background-color: rgba(239, 68, 68, 0.05); /* Very faint red background */
+    position: relative;
+}
+
+.setting-item-unsafe::after {
+    content: "⚠️ UNSAFE";
+    position: absolute;
+    right: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    color: #ef4444;
+    opacity: 0.7;
+}
 
 /* ==========================================================================
  *  Utilities & Accessibility

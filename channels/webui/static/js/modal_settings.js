@@ -162,12 +162,13 @@ function organizeSettingsIntoCategories(originalData, moduleInfo = {}) {
                                 value: itemSettings,
                                 type: type,
                                 description: description,
-                                // Pass through extra schema properties for the input type
+                                unsafe: itemSchema[itemName]?.unsafe || false,
                                 min: itemSchema[itemName]?.min,
                                 max: itemSchema[itemName]?.max,
                                 step: itemSchema[itemName]?.step
                             });
                         }
+
                 }
             }
             // ... (rest of module direct items logic remains the same)
@@ -341,7 +342,7 @@ function flattenSettingsObject(obj, prefix, schema = {}, callback) {
 
         // Check if this is a "setting definition" object (has metadata)
         const isDefinition = (typeof value === 'object' && value !== null && !Array.isArray(value) &&
-            ('default' in value || 'description' in value || 'type' in value));
+        ('default' in value || 'description' in value || 'type' in value || 'unsafe' in value));
 
         if (!isDefinition && !isToggleList(value) && typeof value === 'object' && value !== null && !Array.isArray(value)) {
             // Nested object - recurse
@@ -351,10 +352,12 @@ function flattenSettingsObject(obj, prefix, schema = {}, callback) {
             let actualValue = value;
             let actualDescription = null;
             let actualType = null;
+            let actualUnsafe = false;
 
             if (isDefinition) {
                 actualValue = 'default' in value ? value.default : value;
                 actualDescription = value.description || null;
+                actualUnsafe = value.unsafe || false;
                 if (value.type) {
                     // Map custom types to UI types
                     if (value.type === 'long_text') actualType = 'textarea';
@@ -390,6 +393,7 @@ function flattenSettingsObject(obj, prefix, schema = {}, callback) {
                 value: actualValue,
                 type: actualType,
                 description: actualDescription,
+                unsafe: actualUnsafe || subSchema.unsafe || false,
                 min: subSchema.min || (isDefinition ? value.min : undefined),
                 max: subSchema.max || (isDefinition ? value.max : undefined),
                 step: subSchema.step || (isDefinition ? value.step : undefined),
@@ -769,6 +773,10 @@ function createSettingItem(item) {
             break;
         default:
             inputEl = createTextInput(item.key, item.value, item.type);
+    }
+
+    if (item.unsafe) {
+        inputEl.classList.add('setting-item-unsafe');
     }
 
     wrapper.appendChild(inputEl);
