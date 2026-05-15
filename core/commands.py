@@ -185,6 +185,10 @@ def _get_config_value(path: list):
                         desc = ""
                         if isinstance(s_schema, dict):
                             desc = s_schema.get("description", "")
+                            unsafe = s_schema.get("unsafe", False)
+
+                            if unsafe:
+                                desc += "\n  !! UNSAFE SETTING - ENABLE AT YOUR OWN RISK !!"
                             if "options" in s_schema and isinstance(s_schema["options"], dict):
                                 opts = s_schema["options"]
                                 opt_list = [f"{k}: {v}" for k, v in opts.items()]

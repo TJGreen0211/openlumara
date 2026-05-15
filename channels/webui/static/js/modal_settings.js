@@ -8,6 +8,7 @@ let settingsHasChanges = false;
 let cachedModels = null;
 let modelsLoadError = null;
 let moduleInfoCache = {};
+let showUnsafeSettings = localStorage.getItem('showUnsafeSettings') === 'true';
 
 // Category icons
 const SETTINGS_ICONS = {
@@ -94,6 +95,8 @@ function organizeSettingsIntoCategories(originalData, moduleInfo = {}) {
         };
 
         const addToGroup = (groupKey, groupTitle, item, isDirect = false) => {
+            if (item.unsafe && !showUnsafeSettings) return;
+
             if (!categories[category].groups.has(groupKey)) {
                 categories[category].groups.set(groupKey, {
                     title: groupTitle,
@@ -754,7 +757,7 @@ function createSettingItem(item) {
             inputEl = createToggleListInput(item.key, item.value, !!item.isModuleList);
             break;
         case 'boolean':
-            inputEl = createToggleInput(item.key, item.value);
+            inputEl = createToggleInput(item.key, item.value, item.unsafe);
             break;
         case 'number':
             inputEl = createNumberInput(item.key, item.value);
@@ -1066,7 +1069,15 @@ function createToggleListInput(key, value, isModuleList = false) {
     const descriptions = value.descriptions || {};
     const unsafeModules = value.unsafeModules || {};
 
-    const sortedItems = allItems.sort((a, b) => {
+    const sortedItems = allItems
+    .filter(item => {
+        // If we are in a module list and the item is unsafe, hide it if toggle is off
+        if (isModuleList && unsafeModules[item] && !showUnsafeSettings) {
+            return false;
+        }
+        return true;
+    })
+    .sort((a, b) => {
         const aEnabled = enabledSet.has(a);
         const bEnabled = enabledSet.has(b);
         const aUnsafe = unsafeModules[a] === true;
@@ -1184,8 +1195,19 @@ function createToggleListInput(key, value, isModuleList = false) {
             itemWrapper.appendChild(name);
             itemWrapper.appendChild(toggle);
 
-            checkbox.onchange = () => {
+            checkbox.onchange = async () => {
                 const newState = checkbox.checked;
+
+                if (newState && isUnsafe) {
+                    const confirmed = await showConfirmDialog(
+                        "You are about to enable an unsafe setting. This could potentially affect the stability or security of the application. Proceed?"
+                    );
+                    if (!confirmed) {
+                        checkbox.checked = false;
+                        return;
+                    }
+                }
+
                 itemWrapper.classList.toggle('enabled', newState);
                 newState ? enabledSet.add(item) : enabledSet.delete(item);
                 status.querySelector('.toggle-count').textContent = `${enabledSet.size} of ${sortedItems.length} enabled`;
@@ -1342,7 +1364,7 @@ function createNumberInput(key, value) {
 }
 
 // Create toggle switch (single boolean)
-function createToggleInput(key, value) {
+function createToggleInput(key, value, isUnsafe = false) {
     const wrapper = document.createElement('div');
     wrapper.className = 'setting-toggle-wrapper';
 
@@ -1361,8 +1383,19 @@ function createToggleInput(key, value) {
     labelSpan.textContent = value ? 'Enabled' : 'Disabled';
 
     // Handle change
-    checkbox.onchange = () => {
+    checkbox.onchange = async () => {
         const newValue = checkbox.checked;
+
+        if (newValue && isUnsafe) {
+            const confirmed = await showConfirmDialog(
+                "You are about to enable an unsafe setting. Proceed?"
+            );
+            if (!confirmed) {
+                checkbox.checked = false;
+                return;
+            }
+        }
+
         labelSpan.textContent = newValue ? 'Enabled' : 'Disabled';
         handleSettingChange(key, newValue);
     };
@@ -2900,6 +2933,43 @@ function createThemeSection() {
         twControls.classList.add('visible');
     }
 
+    const advancedSettingsSection = document.createElement('div');
+    const advancedSettingsLabel = document.createElement('h4');
+    advancedSettingsLabel.textContent = 'Advanced Settings';
+    advancedSettingsLabel.className = 'section-heading';
+
+    const unsafeVisibilityToggleRow = document.createElement('div');
+    unsafeVisibilityToggleRow.className = 'toggle-row toggle-unsafe';
+    unsafeVisibilityToggleRow.style.marginTop = '16px';
+    unsafeVisibilityToggleRow.style.paddingTop = '16px';
+    unsafeVisibilityToggleRow.style.borderTop = '1px solid var(--border-color)';
+
+    unsafeVisibilityToggleRow.innerHTML = `
+    <div class="toggle-info">
+    <span class="toggle-label">Show Unsafe Settings</span>
+    <span class="toggle-description">Unsafe settings are things like total system shell access, code execution, and anything else that could easily compromise your security or data. They are hidden by default because they are risky, but they are available for power users through this toggle.</span>
+    </div>
+    <label class="toggle-switch">
+    <input type="checkbox" id="show-unsafe-toggle">
+    <span class="toggle-slider"></span>
+    </label>
+    `;
+
+    const unsafeCheckbox = unsafeVisibilityToggleRow.querySelector('#show-unsafe-toggle');
+    unsafeCheckbox.checked = showUnsafeSettings;
+
+    unsafeCheckbox.addEventListener('change', function() {
+        showUnsafeSettings = this.checked;
+        localStorage.setItem('showUnsafeSettings', this.checked);
+
+        // Re-render the entire form to apply the filter
+        // Since loadSettings() triggers organizeSettingsIntoCategories()
+        loadSettings();
+    });
+
+    advancedSettingsSection.appendChild(unsafeVisibilityToggleRow);
+
+    wrapper.appendChild(advancedSettingsSection);
 
     // ==========================================================================
     // THEME MODE TOGGLE
