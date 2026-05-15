@@ -3,7 +3,7 @@ import json
 import copy
 
 class Config(core.module.Module):
-    """Lets the AI manage the OpenLumara configuration/settings for you"""
+    """Makes your AI aware of your openlumara settings and optionally allows it to change them"""
 
     _header = "OpenLumara config"
 
