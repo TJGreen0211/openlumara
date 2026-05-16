@@ -218,6 +218,8 @@ async function send(providedContent = null) {
     if (isStreaming) return;
     if (!message && !isRegenerate) return;
 
+    promptProcessingReceived = false;
+    let fancyProcessingIndicator = null;
     typewriterQueue = [];
     displayedContent = '';
     isTypewriterRunning = false;
@@ -292,13 +294,18 @@ async function send(providedContent = null) {
     aiWrapper.appendChild(aiMsgDiv);
 
     const aiActions = createActionButtons('assistant', 'streaming', '', true);
-    aiWrapper.appendChild(aiActions);
 
-    // Insert stats container
     const statsDiv = document.createElement('div');
     statsDiv.id = 'message-stats-container';
-    statsDiv.className = 'generation-stats-bar';
-    aiWrapper.appendChild(statsDiv);
+    statsDiv.className = 'action-stats';
+
+    // Wrap buttons + stats in a single row container
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'actions-stats-row';
+    actionsRow.appendChild(aiActions);
+    actionsRow.appendChild(statsDiv);
+
+    aiWrapper.appendChild(actionsRow);
 
     let streamHadError = false;
     let streamStarted = false;
@@ -309,6 +316,9 @@ async function send(providedContent = null) {
 
     const soundEnabled = localStorage.getItem("streamingSoundEnabled") === 'true';
     let playedCompletionSound = false;
+
+    let progressBarFill = null;
+    let progressTextEls = null;
 
     scrollToBottom();
 
@@ -363,26 +373,47 @@ async function send(providedContent = null) {
                             const prog = data.content;
 
                             if (!streamStarted) {
-                                const cache = prog.cache || 0;
-                                const processed = prog.processed - cache;
-                                const total = prog.total - cache;
-                                const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+                                promptProcessingReceived = true;
+                                if (typing && !fancyProcessingIndicator) {
+                                    fancyProcessingIndicator = document.createElement('div');
+                                    fancyProcessingIndicator.className = 'prompt-processing-indicator-wrapper';
+                                    chat.insertBefore(fancyProcessingIndicator, typing);
+                                    typing.style.display = 'none';
 
-                                const elapsed = prog.time_ms / 1000;
-                                const remaining = (total - processed) > 0
-                                ? (elapsed / processed) * (total - processed)
-                                : 0;
-
-                                if (typing) {
-                                    // Inject the fancy structure
-                                    typing.innerHTML = `
+                                    // 🟢 BUILD ONCE
+                                    fancyProcessingIndicator.innerHTML = `
                                     <div class="prompt-processing-indicator">
-                                    <div class="tool-processing-text">Processing: ${percent}%</div>
-                                    <div class="tool-processing-text" style="opacity: 0.7">(ETA: ${Math.ceil(remaining)}s)</div>
+                                    <div class="progress-header">
+                                    <span class="prompt-processing-text">Processing: 0%</span>
+                                    <span class="prompt-processing-text" style="opacity: 0.7">(ETA: 0s)</span>
+                                    </div>
+                                    <div class="prompt-progress-bar">
+                                    <div class="prompt-progress-bar-fill" style="width: 0%"></div>
+                                    </div>
                                     </div>
                                     `;
-                                    typing.classList.remove('hidden');
+
+                                    // 🟢 CACHE DOM REFERENCES
+                                    progressBarFill = fancyProcessingIndicator.querySelector('.prompt-progress-bar-fill');
+                                    progressTextEls = fancyProcessingIndicator.querySelectorAll('.prompt-processing-text');
                                 }
+                            }
+
+                            // Calculate progress (same logic as before)
+                            const cache = prog.cache || 0;
+                            const processed = prog.processed - cache;
+                            const total = prog.total - cache;
+                            const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+                            const elapsed = prog.time_ms / 1000;
+                            const remaining = (total - processed) > 0 ? (elapsed / processed) * (total - processed) : 0;
+
+                            // 🟢 UPDATE CACHED ELEMENTS DIRECTLY (no innerHTML!)
+                            if (progressBarFill) {
+                                progressBarFill.style.width = `${percent}%`;
+                            }
+                            if (progressTextEls && progressTextEls.length >= 2) {
+                                progressTextEls[0].textContent = `Processing: ${percent}%`;
+                                progressTextEls[1].textContent = `(ETA: ${Math.ceil(remaining)}s)`;
                             }
                         }
 
@@ -427,8 +458,12 @@ async function send(providedContent = null) {
                             startStreamingUI(aiWrapper, typing);
                             streamStarted = true;
 
-                            // Remove processing text
-                            const typingEl = document.getElementById('typing-indicator');
+                            // Hide fancy indicator and restore typing indicator
+                            if (fancyProcessingIndicator) {
+                                fancyProcessingIndicator.remove();
+                                fancyProcessingIndicator = null;
+                            }
+                            typing.style.display = '';
                         }
                         const token = data.content || data.token || '';
                         if (token) {
@@ -463,6 +498,13 @@ async function send(providedContent = null) {
                                 removePlaceholder();
                                 startStreamingUI(aiWrapper, typing);
                                 streamStarted = true;
+
+                                // Hide fancy indicator and restore typing indicator
+                                if (fancyProcessingIndicator) {
+                                    fancyProcessingIndicator.remove();
+                                    fancyProcessingIndicator = null;
+                                }
+                                typing.style.display = '';
                             }
                             // Clear processing indicators when reasoning starts
                             clearProcessingIndicators();
@@ -478,6 +520,13 @@ async function send(providedContent = null) {
                             removePlaceholder();
                             startStreamingUI(aiWrapper, typing);
                             streamStarted = true;
+
+                            // Hide fancy indicator and restore typing indicator
+                            if (fancyProcessingIndicator) {
+                                fancyProcessingIndicator.remove();
+                                fancyProcessingIndicator = null;
+                            }
+                            typing.style.display = '';
                         }
                         ensureToolCallsSegment();
                         handleToolCallDelta(data, aiMsgDiv, aiWrapper);
@@ -499,9 +548,9 @@ async function send(providedContent = null) {
                         updateTokenUsage();
                     }
 
-                    // Timing updates
-                    if (data.type === 'timings') {
-                        updateTimingStats(data.content);
+                    // Update the timing stats
+                    if (data.timings) {
+                        updateTimingStats(data.timings);
                     }
 
                     console.log(data);
@@ -540,6 +589,13 @@ async function send(providedContent = null) {
             collapseFinishedReasoning(aiMsgDiv);
             await finalizeStreamingUI(aiWrapper, aiMsgDiv);
         }
+
+        // Final safety cleanup for processing indicators
+        if (fancyProcessingIndicator) {
+            fancyProcessingIndicator.remove();
+            fancyProcessingIndicator = null;
+        }
+        typing.style.display = '';
         
         // Update chat info
         try {
@@ -648,6 +704,13 @@ function finishStream() {
     removePlaceholder();
     clearStreamingToolCalls();
     resetStreamState();
+    
+    // Clean up separate fancy processing indicator
+    if (fancyProcessingIndicator) {
+        fancyProcessingIndicator.remove();
+        fancyProcessingIndicator = null;
+    }
+
     setInputState(false, false, false);
     updateTokenUsage();
     isStreaming = false;
@@ -724,12 +787,8 @@ function renderStats(container, tps, genTokens) {
     // Format tokens per second
     const tpsText = tps > 0 ? tps.toFixed(2) : "0.00";
 
-    // Generate icon (you can replace with your SVG)
-    const sparkleIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>`;
-
     container.innerHTML = `
     <div class="stat-badge">
-    <span class="stat-icon">${sparkleIcon}</span>
     <span class="stat-value">${tpsText} t/s</span>
     </div>
     `;

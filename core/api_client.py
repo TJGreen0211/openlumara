@@ -436,10 +436,12 @@ class APIClient():
                 if chunk.choices:
                     streamed_token = chunk.choices[0].delta
 
-                    # yield the current token in the stream
+                    content_yield = None
+
+                    # handle content token streaming
                     if streamed_token.content:
                         tokens.append(streamed_token.content)
-                        yield {"type": "content", "content": streamed_token.content}
+                        content_yield = {"type": "content", "content": streamed_token.content}
 
                     # handle reasoning content streaming
                     reason_part = getattr(streamed_token, "reasoning_content", None) or \
@@ -447,21 +449,26 @@ class APIClient():
 
                     if reason_part:
                         reasoning_tokens.append(reason_part)
-                        yield {"type": "reasoning", "content": reason_part}
+                        content_yield = {"type": "reasoning", "content": reason_part}
 
+                    # add timing data to the yielded token
                     if streamed_token.content or reason_part:
                         # Send timing data: Use native if available, otherwise calculate
                         native_timings = getattr(chunk, 'timings', None)
                         if native_timings:
-                            yield {"type": "timings", "content": native_timings}
+                            content_yield["timings"] = native_timings
 
                         else:
                             # Fallback: Calculate tokens/s based on time between chunks
                             if delta_ms > 1: # Only yield if significant time passed
-                                yield {"type": "timings", "content": {
+                                content_yield["timings"] = {
                                     "predicted_ms": delta_ms,
                                     "predicted_n": 1
-                                }}
+                                }
+
+                    # and finally, yield the content token
+                    if content_yield:
+                        yield content_yield
 
                     # extract tool calls, if any
                     if streamed_token.tool_calls and use_tools:

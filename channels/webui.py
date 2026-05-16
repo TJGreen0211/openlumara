@@ -555,8 +555,6 @@ async def stream_message(request: Request, user: str = Depends(require_auth)):
             yield f"data: {json.dumps({'_meta': {'type': 'connection', 'status': 'connected'}, 'id': stream_id})}\n\n"
 
             async for token_data in channel_instance.send_stream(data):
-                print(token_data)
-
                 if stream_id in stream_cancellations:
                     stream_cancellations.discard(stream_id)
                     yield f"data: {json.dumps({'_meta': {'type': 'cancelled'}})}\n\n"
