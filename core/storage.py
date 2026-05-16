@@ -55,7 +55,9 @@ class StorageList(list):
     def _write(self, content):
         try:
             write_mode = "wb" if self.binary else "w"
-            with open(self.path, write_mode, encoding="utf-8") as f:
+            encoding = "utf-8" if not self.binary else None
+
+            with open(self.path, write_mode, encoding=encoding) as f:
                 f.write(content)
         except Exception as e:
             core.log("error", f"error writing {self.name}: {e}")
@@ -66,7 +68,8 @@ class StorageList(list):
         try:
             result = None
             read_mode = "rb" if self.binary else "r"
-            with open(self.path, read_mode, encoding="utf-8") as f:
+            encoding = "utf-8" if not self.binary else None
+            with open(self.path, read_mode, encoding=encoding) as f:
                 result = f.read()
             return result
         except Exception as e:
@@ -170,7 +173,8 @@ class StorageDict(dict):
     def _write(self, content):
         try:
             write_mode = "wb" if self.binary else "w"
-            with open(self.path, write_mode, encoding="utf-8") as f:
+            encoding = "utf-8" if not self.binary else None
+            with open(self.path, write_mode, encoding=encoding) as f:
                 f.write(content)
         except Exception as e:
             core.log("error", f"error writing {self.name}: {e}")
@@ -182,7 +186,8 @@ class StorageDict(dict):
         try:
             result = None
             read_mode = "rb" if self.binary else "r"
-            with open(self.path, read_mode, encoding="utf-8") as f:
+            encoding = "utf-8" if not self.binary else None
+            with open(self.path, read_mode, encoding=encoding) as f:
                 result = f.read()
             return result
         except Exception as e:
