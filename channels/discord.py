@@ -252,21 +252,23 @@ class Discord(core.channel.Channel):
 
         # split the content into chunk sizes that discord accepts
         content = message.get("content")
+        core.log(f"{self.name} push", content)
         chunks = [content[i:i + MAX_CHARS] for i in range(0, len(content), MAX_CHARS)]
 
         # send into the channel if we have the permissions to
         channel = await self._client.fetch_channel(target_channel_id)
-        if isinstance(channel, discord.TextChannel):
-            if (
-                channel.permissions_for(guild.me).view_channel and
-                channel.permissions_for(guild.me).send_messages
-            ):
-                for chunk in chunks:
-                    await channel.send(chunk)
-                    await asyncio.sleep(0.5)
-            else:
-                core.log(self.name, "Error while sending push message: Discord bot does not have the required permissions to send messages into the target channel. Please give it the needed permissions!")
-                return
+        for guild in self._client.guilds:
+            if isinstance(channel, discord.TextChannel):
+                if (
+                    channel.permissions_for(guild.me).view_channel and
+                    channel.permissions_for(guild.me).send_messages
+                ):
+                    for chunk in chunks:
+                        await channel.send(chunk)
+                        await asyncio.sleep(0.5)
+                else:
+                    core.log(self.name, "Error while sending push message: Discord bot does not have the required permissions to send messages into the target channel. Please give it the needed permissions!")
+                    return
 
     async def run(self):
         token = core.config.config.get("channels").get("settings").get("discord").get("token")
