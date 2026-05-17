@@ -180,10 +180,10 @@ const TypewriterAudioManager = {
             if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
             const configs = {
-                send_message:    { freq: 440,  dur: 0.25 },
-                response_start:  { freq: 440,  dur: 0.25 },
+                send_message:    { freq: 220,  dur: 0.25 },
+                response_start:  { freq: 220,  dur: 0.25 },
                 reasoning_end:   { freq: 220,  dur: 0.25 },
-                completion:      { freq: 220,  dur: 0.25 }
+                completion:      { freq: 440,  dur: 0.25 }
             };
 
             const cfg = configs[id] || { freq: 440, dur: 0.2 };
@@ -301,10 +301,10 @@ const TypewriterAudioManager = {
 
             if (id === 'send_message') {
                 // First note (warm base, smooth attack)
-                playTone(440, t, 0.008, 0.20, 0.20);
+                playTone(440, t, 0.008, 0.20, 0.7);
 
                 // Second note (slightly higher, softer, clear spacing)
-                playTone(330, t + 0.08, 0.008, 0.20, 0.18);
+                playTone(330, t + 0.08, 0.008, 0.20, 0.6);
 
                 return; // ⚠️ CRITICAL
             }
@@ -313,22 +313,26 @@ const TypewriterAudioManager = {
                 // inverse of send_message
 
                 // Second note (slightly higher, softer, clear spacing)
-                playTone(330, t, 0.008, 0.20, 0.18);
+                playTone(330, t, 0.008, 0.20, 0.7);
 
                 // First note (warm base, smooth attack)
-                playTone(440, t + 0.08, 0.008, 0.20, 0.20);
+                playTone(440, t + 0.08, 0.008, 0.20, 0.6);
                 return; // ⚠️ CRITICAL
             }
 
             if (id === 'reasoning_end') {
+                // Warm base tone (smoother attack, resolving decay)
                 this.isReasoningPlaying = true;
 
-                // Gentle bell-like chime: fundamental + octave overtone
-                playHarmonic(2.0, 0.05, 0.6, 0.2);
+                // Soft fifth harmonic (wider spacing)
+                playHarmonic(1.5, 0.10, 0.7, -0.3);
+
+                // Gentle octave harmonic (clear resolution)
+                playHarmonic(2.0, 0.20, 0.6, 0.3);
 
                 setTimeout(() => {
                     this.isReasoningPlaying = false;
-                }, 450);
+                }, 250);
             }
 
             // === GENERIC FALLBACK (other sounds) ===
