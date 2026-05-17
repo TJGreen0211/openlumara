@@ -304,7 +304,7 @@ const TypewriterAudioManager = {
                 playTone(440, t, 0.008, 0.20, 0.20);
 
                 // Second note (slightly higher, softer, clear spacing)
-                playTone(220, t + 0.08, 0.008, 0.20, 0.18);
+                playTone(330, t + 0.08, 0.008, 0.20, 0.18);
 
                 return; // ⚠️ CRITICAL
             }
@@ -313,7 +313,7 @@ const TypewriterAudioManager = {
                 // inverse of send_message
 
                 // Second note (slightly higher, softer, clear spacing)
-                playTone(220, t, 0.008, 0.20, 0.18);
+                playTone(330, t, 0.008, 0.20, 0.18);
 
                 // First note (warm base, smooth attack)
                 playTone(440, t + 0.08, 0.008, 0.20, 0.20);
