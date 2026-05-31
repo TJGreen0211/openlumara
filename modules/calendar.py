@@ -22,6 +22,12 @@ class Calendar(core.module.Module):
             "description": "Whether to receive notifications about upcoming events",
             "default": True
         },
+        "notification_channel": {
+            "type": "select",
+            "default": "telegram",
+            "description": "Which channel to send calendar notifications to",
+            "options": {name: "" for name in core.config.get("channels", "enabled", [])}
+        },
         "notification_window": {
             "description": "Amount of minutes in advance you should be notified. You can set this to 0 to be notified at the time of the event.",
             "default": 30
@@ -70,8 +76,8 @@ class Calendar(core.module.Module):
             return False
 
         channel_name = event.get("notify_channel")
-        if not channel_name and self.channel:
-            channel_name = self.channel.name
+        if not channel_name:
+            channel_name = self.config.get("notification_channel")
 
         channel = self.manager.channels.get(channel_name)
 
