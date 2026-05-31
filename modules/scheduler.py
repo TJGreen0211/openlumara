@@ -311,13 +311,8 @@ Use tools if needed. For simple reminders, do not use tools.
                     case "instruction only":
                         final_messages = [instruction_message_pure]
                     case "system prompt + instruction":
-                        final_messages = [
-                            {
-                                "role": "system",
-                                "content": await job_channel.manager.get_system_prompt()
-                            },
-                            instruction_message
-                        ]
+                        sysprompt = await job_channel.context.get(system_prompt=True, end_prompt=False, history=False)
+                        final_messages = sysprompt+[instruction_message]
                     case "full context":
                         # Build a fresh private copy each attempt (context may have changed)
                         base_messages = await job_channel.context.get(end_prompt=False)

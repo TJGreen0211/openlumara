@@ -12,7 +12,7 @@ class Context:
         # UI-agnostic chat history system - save/load context windows from save file!
         self.chat = core.chat.Chat(self.channel)
 
-    async def get(self, system_prompt=True, end_prompt=True, prevent_recursion=False):
+    async def get(self, system_prompt=True, end_prompt=True, history=True, prevent_recursion=False):
         """
         builds the full context window using system prompt + message history + end prompt
         to the API, we send this full context.
@@ -39,74 +39,76 @@ class Context:
             if content:
                 system_msg = [{"role": system_role, "content": content}]
 
-        # Get history from the chat (the full, untrimmed version)
-        messages = copy.deepcopy(await self.chat.get())
+        messages = []
+        if history:
+            # Get history from the chat (the full, untrimmed version)
+            messages = copy.deepcopy(await self.chat.get())
 
-        # we need to support chat summarization without losing the user-facing end of chat history
-        # so that we can cut context without actually losing our logs..
+            # we need to support chat summarization without losing the user-facing end of chat history
+            # so that we can cut context without actually losing our logs..
 
-        # so, i'm using a special entry in the messages array that serves as a cutoff point
-        # from which to actually return the chat history
+            # so, i'm using a special entry in the messages array that serves as a cutoff point
+            # from which to actually return the chat history
 
-        # find the last occurence of it and return only the messages from that point onward
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("signal", "") == "SUMMARIZATION_CUTOFF":
-                messages = [{"role": "user", "content": "Summarize our chat so far"}]+messages[i:]
-                break
+            # find the last occurence of it and return only the messages from that point onward
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("signal", "") == "SUMMARIZATION_CUTOFF":
+                    messages = [{"role": "user", "content": "Summarize our chat so far"}]+messages[i:]
+                    break
 
-        # Remove ghost messages from history
-        messages = [msg for msg in messages if not msg.get("ghost")]
-        
-        # If disabled, remove reasoning from all prior messages
-        if not core.config.get("model", "keep_reasoning_in_context"):
-            messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
+            # Remove ghost messages from history
+            messages = [msg for msg in messages if not msg.get("ghost")]
 
-        # Apply max_messages limit to history first
-        if messages and len(messages) > max_messages:
-            messages = messages[-max_messages:]
+            # If disabled, remove reasoning from all prior messages
+            if not core.config.get("model", "keep_reasoning_in_context"):
+                messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
 
-        # Strip multimodal data from all messages except the last one to save tokens
-        if messages:
-            for i in range(len(messages) - 1):
-                msg = messages[i]
-                if msg.get("role") in ("tool", "tool_calls"):
-                    # dont mess with toolcalls
-                    continue
+            # Apply max_messages limit to history first
+            if messages and len(messages) > max_messages:
+                messages = messages[-max_messages:]
 
-                content = msg.get("content")
-                if isinstance(content, list):
-                    # Keep only the parts of the message that are text
-                    msg["content"] = [
-                        part for part in content
-                        if isinstance(part, dict) and part.get("type") == "text"
-                    ]
-                elif isinstance(content, str):
-                    pass
-                else:
-                    # disallow non-string content
-                    continue
+            # Strip multimodal data from all messages except the last one to save tokens
+            if messages:
+                for i in range(len(messages) - 1):
+                    msg = messages[i]
+                    if msg.get("role") in ("tool", "tool_calls"):
+                        # dont mess with toolcalls
+                        continue
 
-        # enforce correct turn order
-        if messages:
-            enforced_messages = []
-            for msg in messages:
-                if (
-                    enforced_messages and
-                    enforced_messages[-1].get("role") == "assistant" and
-                    msg.get("role") == "assistant" and
-                    # IMPORTANT: Only inject if neither message is a tool call.
-                    # Assistant -> Tool -> Assistant is VALID.
-                    # Assistant -> Assistant is INVALID.
-                    not enforced_messages[-1].get("role") == "tool"
-                ):
-                    # We inject a "spacer" user message.
-                    # Using a single space " " is less intrusive to the LLM
-                    # than "[SYSTEM_TICK]" and satisfies the API requirement.
-                    enforced_messages.append({"role": "user", "content": " "})
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        # Keep only the parts of the message that are text
+                        msg["content"] = [
+                            part for part in content
+                            if isinstance(part, dict) and part.get("type") == "text"
+                        ]
+                    elif isinstance(content, str):
+                        pass
+                    else:
+                        # disallow non-string content
+                        continue
 
-                enforced_messages.append(msg)
+            # enforce correct turn order
+            if messages:
+                enforced_messages = []
+                for msg in messages:
+                    if (
+                        enforced_messages and
+                        enforced_messages[-1].get("role") == "assistant" and
+                        msg.get("role") == "assistant" and
+                        # IMPORTANT: Only inject if neither message is a tool call.
+                        # Assistant -> Tool -> Assistant is VALID.
+                        # Assistant -> Assistant is INVALID.
+                        not enforced_messages[-1].get("role") == "tool"
+                    ):
+                        # We inject a "spacer" user message.
+                        # Using a single space " " is less intrusive to the LLM
+                        # than "[SYSTEM_TICK]" and satisfies the API requirement.
+                        enforced_messages.append({"role": "user", "content": " "})
 
-            messages = enforced_messages
+                    enforced_messages.append(msg)
+
+                messages = enforced_messages
 
         end_msg = []
         if end_prompt:
