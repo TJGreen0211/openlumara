@@ -10,6 +10,14 @@ class WebSearch(modules.http.Http):
     """Lets your AI search the web!"""
 
     settings = {
+        "max_results": {
+            "default": 5,
+            "description": "The maximum number of results to return for search queries."
+        },
+        "proxy": {
+            "default": None,
+            "description": "An optional proxy string (e.g., 'http://user:pass@host:port') for the HTTP client."
+        },
         "block_uncommon_ports": {
             "default": True,
             "description": "Block dangerous ports, such as FTP, SSH, Telnet, SMTP, and so on"
@@ -29,16 +37,6 @@ class WebSearch(modules.http.Http):
         "domain_blacklist": {
             "default": [],
             "description": "Forbid access to these domains"
-        },
-        "max_results": {
-            "type": "int",
-            "default": 5,
-            "description": "The maximum number of results to return for search queries."
-        },
-        "proxy": {
-            "type": "str",
-            "default": None,
-            "description": "An optional proxy string (e.g., 'http://user:pass@host:port') for the HTTP client. OPERATOR-ONLY: must never be settable by the AI/model."
         }
     }
 
