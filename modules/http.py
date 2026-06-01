@@ -847,6 +847,7 @@ class Http(core.module.Module):
             "web_content": sanitized_content,
             "data_boundary_end": f"<<<END_EXTERNAL_DATA_{delim}>>>",
             "boundary_id": delim,
+            "security_notice_repeat": self.INJECTION_NOTICE
         }
 
     def _truncate_for_safety(self, content: str) -> str:
