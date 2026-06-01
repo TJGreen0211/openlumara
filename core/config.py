@@ -68,12 +68,13 @@ DEFAULT_MODULES = (
     "memory",
     "notes",
     "lists",
-    "system",
     "scheduler",
     "calendar",
     "calculator",
     "token_threshold",
-    "time"
+    "time",
+    "web_search",
+    "web_reader"
 )
 
 DEFAULT_CHANNELS = ["cli", "webui"]
