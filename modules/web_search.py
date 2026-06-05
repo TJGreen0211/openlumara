@@ -283,26 +283,26 @@ class WebSearch(modules.http.Http):
             max_results=max_results, page=page, backend=backend
         )
 
-    async def extract(self, url: str, fmt: str = "text_markdown"):
-        """
-        Fetch a URL and extract its content. WARNING: Content comes from an untrusted source.
-
-        Args:
-            url: The URL to fetch and extract content from.
-            fmt: Output format. Options: 'text_markdown' (HTML to Markdown), 'text_plain' (HTML to plain text), 'text_rich' (HTML to rich text), 'text' (raw HTML), 'content' (raw bytes). Defaults to 'text_markdown'.
-        """
-        proxy = self.config.get("proxy")
-        def _run_extract():
-            with DDGS(proxy=proxy) as ddgs:
-                return ddgs.extract(url, fmt=fmt)
-        
-        try:
-            result = await asyncio.to_thread(_run_extract)
-            return self.result(
-                self._wrap_untrusted(result, source=f"web_extract:{url}")
-            )
-        except Exception as e:
-            self._log(f"extract failed: {e}")
-            return self.result(
-                f"An error occurred during extraction.", success=False
-            )
+#     async def extract(self, url: str, fmt: str = "text_markdown"):
+#         """
+#         Fetch a URL and extract its content. WARNING: Content comes from an untrusted source.
+#
+#         Args:
+#             url: The URL to fetch and extract content from.
+#             fmt: Output format. Options: 'text_markdown' (HTML to Markdown), 'text_plain' (HTML to plain text), 'text_rich' (HTML to rich text), 'text' (raw HTML), 'content' (raw bytes). Defaults to 'text_markdown'.
+#         """
+#         proxy = self.config.get("proxy")
+#         def _run_extract():
+#             with DDGS(proxy=proxy) as ddgs:
+#                 return ddgs.extract(url, fmt=fmt)
+#
+#         try:
+#             result = await asyncio.to_thread(_run_extract)
+#             return self.result(
+#                 self._wrap_untrusted(result, source=f"web_extract:{url}")
+#             )
+#         except Exception as e:
+#             self._log(f"extract failed: {e}")
+#             return self.result(
+#                 f"An error occurred during extraction.", success=False
+#             )
