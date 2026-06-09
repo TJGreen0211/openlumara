@@ -2306,83 +2306,78 @@ const themes = {
         name: 'Sakura',
         mode: 'dark',
         vars: {
-            // === SHAPES (Bubbly) ===
-            '--radius-sm': '12px',
-            '--radius-md': '20px',
-            '--radius-lg': '30px',
+            // === TYPOGRAPHY ===
+            '--font-primary': "'Indie Flower', sans-serif",
+            '--font-display': "'Indie Flower', sans-serif",
+
+            // === SHAPES (Bubbly & Plastic) ===
+            '--radius-sm': '16px',
+            '--radius-md': '28px',
+            '--radius-lg': '36px',
             '--radius-xl': '999px',
 
-            // === COLORS (Official Barbie Pink #DA1884) ===
-            '--bg-primary': '#12080c',
-            '--bg-secondary': '#1e0a14',
-            '--bg-tertiary': '#3a1025',
-            '--bg-message-user': 'linear-gradient(135deg, #da1884 0%, #a01570 100%)',
-            '--bg-message-ai': '#180810',
-            '--bg-message-announce': 'linear-gradient(135deg, #2a0c1a 0%, #1a0810 100%)',
-            '--bg-message-command': 'linear-gradient(135deg, #4a1830 0%, #3a1020 100%)', // Pink (Not Green!)
-            '--bg-message-command-response': 'linear-gradient(135deg, #2a1828 0%, #1a1020 100%)',
-            '--bg-input': '#1a0812',
-            '--bg-code': '#0e0608',
-            '--bg-sidebar': '#0c0408',
+            // === COLORS (Neon Pink & Plastic Blue on Black) ===
+            '--bg-primary': '#0d0208', // Very dark purple/black
+            '--bg-secondary': '#1a0511', // Dark magenta shadow
+            '--bg-tertiary': '#2d0a1f',
+            '--bg-message-user': 'linear-gradient(135deg, #ff1493 0%, #ff80b3 100%)', // Bright Pink
+            '--bg-message-ai': '#1e0a14', // Dark purple
+            '--bg-message-announce': 'linear-gradient(135deg, #4a1428 0%, #2d0a1f 100%)',
+            '--bg-message-command': 'linear-gradient(135deg, #880e4f 0%, #ad1457 100%)', // Darker Pink
+            '--bg-message-command-response': 'linear-gradient(135deg, #1a0511 0%, #2d0a1f 100%)',
+            '--bg-input': '#1a0511',
+            '--bg-code': '#1a0511',
+            '--bg-sidebar': '#0d0208',
 
-            '--border-color': '#4a1840',
-            '--border-message': '#642050',
-            '--border-user': '#da1884',
-            '--border-sidebar': '#2a0818',
+            '--border-color': '#880e4f',
+            '--border-message': '#4a1428',
+            '--border-user': '#ff1493', // Neon Pink Border
 
-            '--text-primary': '#ffeef4',
-            '--text-secondary': '#f8a0d0',
-            '--text-muted': '#b06090',
-            '--text-code': '#ffd0e8',
+            '--text-primary': '#fce4ec', // Very light pink/white
+            '--text-secondary': '#f8bbd0', // Light pink
+            '--text-muted': '#f48fb1', // Bright pink for readability
 
-            '--accent': '#da1884',
-            '--accent-glow': 'rgba(218, 24, 132, 0.6)',
-            '--accent-secondary': '#ff69b4',
+            '--accent': '#ff1493', // Neon Hot Pink
+            '--accent-glow': 'rgba(255, 20, 147, 0.8)', // Strong Glow
+            '--accent-secondary': '#00bcd4', // Plastic Blue for contrast
 
-            '--error': '#ff69b4',
-            '--error-bg': 'linear-gradient(135deg, #3a1020 0%, #2a0818 100%)',
-            '--error-border': '#da1884',
+            '--error': '#ff5252', // Neon Red
+            '--error-bg': 'linear-gradient(135deg, #311111 0%, #4a1428 100%)',
+            '--error-border': '#ff5252',
 
-            '--important': '#ff69b4', // Hot Pink instead of Yellow
-            '--important-bg': 'linear-gradient(135deg, #3a1025 0%, #2a0818 100%)',
-            '--important-border': '#da1884',
+            '--important': '#ff1493',
+            '--important-bg': 'linear-gradient(135deg, #4a1428 0%, #2d0a1f 100%)',
+            '--important-border': '#ff1493',
 
-            '--info': '#da1884', // Barbie Pink instead of Blue
-            '--info-bg': 'linear-gradient(135deg, #2a0820 0%, #1a0410 100%)',
-            '--info-border': '#a01570',
+            '--info': '#00bcd4', // Plastic Cyan/Blue
+            '--info-bg': 'linear-gradient(135deg, #004d40 0%, #002621 100%)',
+            '--info-border': '#00bcd4',
 
-            '--button-bg': 'linear-gradient(135deg, #da1884 0%, #c4157a 100%)',
-            '--button-hover': 'linear-gradient(135deg, #ff40a0 0%, #da1884 100%)',
-            '--button-stop': 'linear-gradient(135deg, #401020 0%, #300818 100%)',
-            '--button-stop-hover': 'linear-gradient(135deg, #5a1830 0%, #401020 100%)',
-            '--button-stop-glow': 'rgba(255, 105, 180, 0.4)',
+            '--button-bg': 'linear-gradient(135deg, #ff1493 0%, #ff80b3 100%)',
+            '--button-hover': 'linear-gradient(135deg, #ff80b3 0%, #ff1493 100%)',
+            '--button-stop': 'linear-gradient(135deg, #ff1493 0%, #ff80b3 100%)',
+            '--button-stop-hover': 'linear-gradient(135deg, #ff80b3 0%, #ff1493 100%)',
+            '--button-stop-glow': 'rgba(255, 20, 147, 0.8)', // Neon Glow
 
-            '--scrollbar': '#5a1850',
-            '--scrollbar-hover': '#8a2080',
+            '--scrollbar': '#880e4f',
+            '--scrollbar-hover': '#ff1493',
 
-            '--shadow-soft': '0 4px 20px rgba(218, 24, 132, 0.2)',
-            '--shadow-glow': '0 0 25px var(--accent-glow)',
+            '--shadow-soft': '0 4px 20px rgba(0, 0, 0, 0.5)',
+            '--shadow-glow': '0 0 30px rgba(255, 20, 147, 0.6)', // Pink Glow
 
-            '--tool-bg': '#1a0812',
-            '--tool-bg-secondary': '#12080c',
-            '--tool-border': '#4a1840',
-            '--tool-border-hover': '#6a2060',
-            '--tool-pending-bg': 'rgba(218, 24, 132, 0.15)',
-            '--tool-pending-color': '#da1884',
-            '--tool-completed-bg': 'rgba(255, 105, 180, 0.15)',
-            '--tool-completed-color': '#ff69b4',
+            '--tool-bg': '#1a0511',
+            '--tool-bg-secondary': '#2d0a1f',
+            '--tool-border': '#4a1428',
+            '--tool-border-hover': '#ff1493',
+            '--tool-pending-bg': 'rgba(255, 20, 147, 0.1)',
+            '--tool-pending-color': '#ff1493',
+            '--tool-completed-bg': 'rgba(0, 188, 212, 0.1)',
+            '--tool-completed-color': '#00bcd4', // Cyan checkmark
 
             // === DECORATION ===
-            '--bg-pattern': `
-            radial-gradient(1.5px 1.5px at 10% 20%, #ffffff, transparent),
-            radial-gradient(1px 1px at 30% 65%, #ff69b4, transparent),
-            radial-gradient(1.5px 1.5px at 70% 10%, #ffffff, transparent),
-            radial-gradient(1px 1px at 90% 50%, #da1884, transparent),
-            radial-gradient(2px 2px at 50% 80%, #ffffff, transparent)
-            `,
-            '--bg-pattern-size': '200px 200px',
-            '--message-decoration': '1px solid rgba(218, 24, 132, 0.3)',
-            '--avatar-shape': '30%'
+            '--bg-pattern': 'radial-gradient(#880e4f 1px, transparent 1px)',
+            '--message-decoration': '2px solid rgba(255, 20, 147, 0.6)', // Pink dashed
+            '--avatar-shape': '35%'
         }
     },
     'light-lavender': {
