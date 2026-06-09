@@ -2242,7 +2242,7 @@ const themes = {
             '--bg-primary': '#fff9fc',
             '--bg-secondary': '#fff0f8',
             '--bg-tertiary': '#ffe0f0',
-            '--bg-message-user': 'linear-gradient(135deg, #ff80b3 0%, #ff1493 100%)',
+            '--bg-message-user': '#ffcddd',
             '--bg-message-ai': '#ffe0ec',
             '--bg-message-announce': 'linear-gradient(135deg, #e1bee7 0%, #f8bbd0 100%)',
             '--bg-message-command': 'linear-gradient(135deg, #f48fb1 0%, #ec407a 100%)',
