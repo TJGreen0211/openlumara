@@ -36,7 +36,7 @@ WEBUI_DIR = core.get_path("channels/webui")
 
 # ordered list of javascript files, to load in this exact order
 JS_FILES = [
-    "themes", "icons", "variables", "content_helpers", "markdown", "messages",
+    "icons", "variables", "content_helpers", "markdown", "messages",
     "msg_actions", "sidebar", "utils", "notif", "status", "polling", "chats",
     "tags", "search", "export", "modals", "autocomplete", "input", "send", "upload", "theming",
     "audio", "modal_settings", "storage_editor", "responsive", "init"
@@ -412,8 +412,19 @@ async def api_logout(request: Request):
 
 @app.get("/")
 async def index(request: Request):
-    base_js_files = ["icons", "variables"]
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "request": request,
+            "js_files": JS_FILES,
+            "css_files": CSS_FILES,
+            "require_login": bool(channel_instance.config.get("require_login"))
+        }
+    )
 
+@app.get("/themes.js")
+async def generate_themes_file(request: Request):
     # get themes
     themes_dir = os.path.join(WEBUI_DIR, "themes")
     all_themes = {}
@@ -432,26 +443,7 @@ async def index(request: Request):
 
     themes_script = f"window.themes = {{ {', '.join(js_parts)} }};"
 
-    main_js_files = [
-        "content_helpers", "markdown", "messages",
-        "msg_actions", "sidebar", "utils", "notif", "status", "polling", "chats",
-        "tags", "search", "export", "modals", "autocomplete", "input", "send", "upload", "theming",
-        "audio", "modal_settings",
-        "storage_editor", "responsive", "init"
-    ]
-
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "request": request,
-            "base_js_files": base_js_files,
-            "main_js_files": main_js_files,
-            "themes_script": themes_script,
-            "css_files": CSS_FILES,
-            "require_login": bool(channel_instance.config.get("require_login"))
-        }
-    )
+    return Response(themes_script, media_type="application/javascript")
 
 @app.get("/api/health")
 async def health_check():

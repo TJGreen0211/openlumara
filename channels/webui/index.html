@@ -527,16 +527,8 @@
         </div>
     </div>
 
-    {% for filename in base_js_files %}
-        <script src="/static/js/{{ filename }}.js"></script>
-    {% endfor %}
-    {% for filename in theme_js_files %}
-        <script src="/static/js/{{ filename }}.js"></script>
-    {% endfor %}
-    <script>
-        {{ themes_script | safe }}
-    </script>
-    {% for filename in main_js_files %}
+    <script src="/themes.js"></script>
+    {% for filename in js_files %}
         <script src="/static/js/{{ filename }}.js"></script>
     {% endfor %}
 </body>
