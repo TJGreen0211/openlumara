@@ -156,13 +156,16 @@ class Client(discord.Client):
                             is_cmd = content_str.lower().strip().startswith(cmd_prefix.lower())
 
                             if is_cmd:
+                                if len(cmd) <= 0:
+                                    raise Exception("command was somehow zero length. aborting for security reasons.")
+
                                 if cmd[0] not in self.public_commands:
                                     authorised_id = self.ai_channel.config.get("authorised_user_id")
                                     if authorised_id and message.author.id != int(authorised_id):
                                         return await message.channel.send("Only the bot owner is allowed to use commands!")
-                                else:
-                                    # send the pure command to the AI
-                                    content = f"{cmd_prefix}{' '.join(cmd)}"
+
+                                # send the pure command to the AI
+                                content = f"{cmd_prefix}{' '.join(cmd)}"
 
                     except Exception as e:
                         return await message.channel.send(f"error while processing your request: {e}")
