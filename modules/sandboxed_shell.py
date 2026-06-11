@@ -2,10 +2,13 @@ import core
 import subprocess
 import shutil
 import os
+import uuid
+import time
 
 class SandboxedShell(core.module.Module):
     """
-    Lets your AI safely run shell commands in a docker/podman sandbox.
+    Lets your AI safely run shell commands in a disposable sandboxed container.
+    Container is created, command runs, then container is immediately killed.
     """
 
     settings = {
@@ -21,6 +24,10 @@ class SandboxedShell(core.module.Module):
             "default": "~/sandbox",
             "description": "The path to the folder your shell will be limited to. It can't access anything outside this folder!"
         },
+        "execution_timeout": {
+            "default": 10,
+            "description": "Maximum amount of time (in seconds) a process inside the shell is allowed to run for"
+        },
         "cpu_limit": {
             "default": 0.5,
             "type": "percentage",
@@ -34,10 +41,6 @@ class SandboxedShell(core.module.Module):
             "default": 10,
             "description": "Maximum amount of processes to allow"
         },
-        "execution_timeout": {
-            "default": 30,
-            "description": "Maximum amount of time a process inside the shell is allowed to run for"
-        },
         "temporary_filesystem_size_limit": {
             "default": "512m",
             "description": "Maximum size for the temporary sandbox disk (e.g., 512m, 2g). Only works when persistent_data is off."
@@ -45,17 +48,12 @@ class SandboxedShell(core.module.Module):
         "image": "python:3.11-slim",
         "run_as_user": {
             "default": "65534",
-            "description": "UID to run the container processes as. Defaults to 65534 (nobody) for security."
+            "description": "User ID to run the container processes as. Defaults to 65534 (nobody) for security."
         }
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Resolve the host path and ensure it exists.
-        self.host_workspace = os.path.expanduser(self.config.get("sandbox_path", default="~/sandbox"))
-        if not os.path.exists(self.host_workspace):
-            os.makedirs(self.host_workspace, exist_ok=True)
-
         self.runtime = None
         if shutil.which("podman"):
             self.runtime = "podman"
@@ -63,92 +61,81 @@ class SandboxedShell(core.module.Module):
             self.runtime = "docker"
 
         if not self.runtime:
-            core.log("sandbox_shell", "Neither docker nor podman are available, sandbox shell not started. Please set up either docker or podman to use the sandboxed shell!")
+            core.log("sandbox_shell", "Neither docker nor podman are available!")
             return False
 
-        self.container_name = "openlumara_shell"
+        self.host_workspace = os.path.expanduser(self.config.get("sandbox_path", default="~/sandbox"))
+        os.makedirs(self.host_workspace, exist_ok=True)
 
-        # 1. Check if the container is already running
-        is_running = False
-        check_cmd = [self.runtime, 'inspect', '-f', '{{.State.Running}}', self.container_name]
-        try:
-            check_res = subprocess.run(check_cmd, capture_output=True, text=True)
-            if check_res.returncode == 0 and check_res.stdout.strip() == "true":
-                is_running = True
-        except Exception:
-            is_running = False
-
-        # 2. If not running, start a long-lived background container
-        if not is_running:
-            # remove a lingering container if it's present
-            subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True)
-
-            core.log("sandbox_shell", "Starting container..")
-
-            uid = self.config.get("run_as_user", default="65534")
-
-            start_cmd = [
-                self.runtime, 'run', '-d',
-                '--name', self.container_name,
-                '--user', uid,
-                '--cpus', str(self.config.get("cpu_limit", default=0.5)),
-                '--memory', self.config.get("memory_limit", default="256m"),
-                '--pids-limit', str(self.config.get("max_processes", default=50)),
-                '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
-                '--rm',
-            ]
-
-            if self.config.get("persistent_data", default=True):
-                start_cmd.extend(['-v', f"{self.host_workspace}:/data:Z"])
-            else:
-                limit = self.config.get("temporary_filesystem_size_limit", default="512m")
-                start_cmd.extend(['--tmpfs', f"/data:size={limit},mode=1777"])
-
-            # set working dir to /data
-            start_cmd.extend(['-w', '/data'])
-
-            start_cmd.extend([
-                self.config.get("image", default="python:3.11-slim"),
-                'tail', '-f', '/dev/null'  # Keep it alive
-            ])
-
-            try:
-                subprocess.run(start_cmd, check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                return core.log("sandbox_shell", f"Failed to start container: {e.stderr.decode()}")
-
-            core.log("sandbox_shell", "Container started")
+    def _get_unique_name(self):
+        """Generate a unique container name to avoid collisions"""
+        return f"ol_{uuid.uuid4().hex[:8]}_{int(time.time()*1000)}"
 
     async def run(self, command: str):
-        """Runs a command in the sandboxed Docker/Podman environment."""
+        """Runs a command in a sandboxed container, then kills it."""
         if not self.runtime:
-            return self.result(f"Docker or podman are not installed or available.", False)
+            return self.result("Docker or podman not available.", False)
 
-        # Execute the command via 'exec'
-        exec_cmd = [
-            self.runtime, 'exec',
-            self.container_name,
-            'sh', '-c', command
+        uid = self.config.get("run_as_user", default="65534")
+        timeout = self.config.get("execution_timeout", default=30)
+        img = self.config.get("image", default="python:3.11-slim")
+
+        # Generate unique container name
+        self.container_name = self._get_unique_name()
+
+        # Build container run command
+        cmd = [
+            self.runtime, 'run', '--rm',
+            '--name', self.container_name,
+            '--user', uid,
+            '--cpus', str(self.config.get("cpu_limit", default=0.5)),
+            '--memory', self.config.get("memory_limit", default="256m"),
+            '--pids-limit', str(self.config.get("max_processes", default=10)),
+            '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
         ]
 
+        # Handle persistent vs temporary data
+        if self.config.get("persistent_data", default=True):
+            cmd.extend(['-v', f"{self.host_workspace}:/data:Z"])
+        else:
+            limit = self.config.get("temporary_filesystem_size_limit", default="512m")
+            cmd.extend(['--tmpfs', f"/data:size={limit},mode=1777"])
+
+        # Set working directory and add command
+        cmd.extend(['-w', '/data'])
+        cmd.extend([img, 'sh', '-c', command])
+
         try:
-            result = subprocess.run(
-                exec_cmd,
-                capture_output=True,
-                timeout=self.config.get("execution_timeout", default=30)
-            )
-
-            return self.result({
-                "stdout": result.stdout.decode().strip(),
-                "stderr": result.stderr.decode().strip(),
-                "exit_code": result.returncode,
-                "data_dir": "/data"
-            })
-
+            # Run the container with timeout
+            result = subprocess.run(cmd, capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return self.result("Command timed out.", False)
+            # Container is still running after timeout
+            try:
+                subprocess.run([self.runtime, 'kill', self.container_name], capture_output=True)
+                subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True)
+            except Exception:
+                pass
+            return self.result(f"Command timed out after {timeout}s", False)
         except Exception as e:
-            return self.result(f"Module Error: {str(e)}", False)
+            # Handle collision or other errors
+            if "already in use" in str(e):
+                # Clean up and retry with new name
+                subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True)
+                self.container_name = self._get_unique_name()
+                cmd[4] = self.container_name  # Update name in cmd list
+                try:
+                    result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+                except Exception:
+                    return self.result("Container creation failed after retry", False)
+            else:
+                return self.result(f"Error: {str(e)}", False)
+
+        return self.result({
+            "stdout": result.stdout.decode().strip(),
+            "stderr": result.stderr.decode().strip(),
+            "exit_code": result.returncode,
+            "data_dir": "/data"
+        })
 
     @core.module.command("shell", send_to_ai=True, help={
         "<cmd>": "runs a command in the sandboxed shell"
@@ -159,17 +146,15 @@ class SandboxedShell(core.module.Module):
 
         try:
             result = await self.run(" ".join(args))
-
             content = result.get("content")
+
             if not isinstance(content, dict):
                 return content
 
-            stdout = content.get("stdout") if content else ""
-            stderr = content.get("stderr") if content else ""
+            stdout = content.get("stdout", "")
+            stderr = content.get("stderr", "")
 
-            output = ""
-            if stdout:
-                output += stdout
+            output = stdout
             if stderr:
                 output += "\n" + stderr
 
@@ -180,33 +165,10 @@ class SandboxedShell(core.module.Module):
     @core.module.command("shell_setup", send_to_ai=True)
     async def cmd_setup(self, args):
         """shows details about your sandbox setup"""
-
-        conf = (
+        return (
             f"Runtime: {self.runtime}\n"
             f"Container Name: {self.container_name}\n"
             f"Image: {self.config.get('image')}\n"
             f"Persistent Data: {self.config.get('persistent_data')}\n"
             f"Internet enabled: {self.config.get('internet_access')}"
         )
-        return conf
-
-    async def on_shutdown(self):
-        """
-        Triggered when OpenLumara shuts down.
-        Stops and removes the persistent container to keep the host clean.
-        """
-        if not self.runtime:
-            return
-
-        stop_cmd = [self.runtime, 'kill', self.container_name]
-        rm_cmd = [self.runtime, 'rm', self.container_name]
-
-        core.log("sandbox_shell", "shutting down container")
-
-        try:
-            # We attempt to stop and remove, but ignore errors if the container
-            # doesn't exist or wasn't running.
-            subprocess.run(stop_cmd, capture_output=True)
-            subprocess.run(rm_cmd, capture_output=True)
-        except Exception:
-            pass

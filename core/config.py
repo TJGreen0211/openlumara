@@ -19,7 +19,8 @@ default_config = {
     "core": {
         "data_folder": "data",
         "auto_resume_chats": True,
-        "cmd_prefix": "/"
+        "cmd_prefix": "/",
+        "tool_timeout": 15
     },
     "api": {
         "url": "http://localhost:5001/v1",
