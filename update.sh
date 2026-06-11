@@ -8,10 +8,7 @@ if git fetch origin 2>/dev/null; then
 
         if [ "$LOCAL" != "$REMOTE" ]; then
             echo "updates available! pulling changes..."
-            # Stash local changes to tracked files to prevent pull conflicts.
-            git stash
             git pull
-            git stash pop || echo "note: some local changes could not be automatically reapplied."
         else
             echo "already up to date."
         fi

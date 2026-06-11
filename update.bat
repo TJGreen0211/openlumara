@@ -19,10 +19,7 @@ if %errorlevel% equ 0 (
         echo no upstream configured, skipping update check.
     ) else if "!LOCAL!" NEQ "!REMOTE!" (
         echo updates available! pulling changes...
-        :: Stash local changes to tracked files to prevent pull conflicts.
-        git stash
         git pull
-        git stash pop || echo note: some local changes could not be automatically reapplied.
     ) else (
         echo already up to date.
     )
