@@ -3717,6 +3717,25 @@ toggleModal = function(modalName) {
             }
             overlay.classList.remove('show');
             modal.classList.remove('show');
+
+            // Clear active selections from sidebar when dialog closes
+            activeSettingsCategory = null;
+            activeModule = null;
+            activeChannel = null;
+            modulesExpanded = { modules: false, user_modules: false, channels: false };
+
+            document.querySelectorAll('.settings-nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            document.querySelectorAll('.module-sub-list button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            document.querySelectorAll('.module-sub-list').forEach(list => {
+                list.classList.remove('expanded');
+                list.style.display = 'none';
+            });
         } else {
             overlay.classList.add('show');
             modal.classList.add('show');
