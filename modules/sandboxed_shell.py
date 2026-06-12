@@ -100,7 +100,7 @@ class SandboxedShell(core.module.Module):
             cmd.extend(['-v', f"{self.host_workspace}:/data:Z"])
         else:
             limit = self.config.get("temporary_filesystem_size_limit", default="512m")
-            cmd.extend(['--tmpfs', f"/data:size={limit},mode=1777"])
+            cmd.extend(['--tmpfs', f"/data:size={limit}"])
 
         # Set working directory and add command
         cmd.extend(['-w', '/data'])
