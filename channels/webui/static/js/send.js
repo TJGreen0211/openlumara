@@ -20,66 +20,43 @@ let fancyProcessingIndicator = null;
  */
 function updateStopButtonState() {
     const stopBtn = document.getElementById('stop');
-    if (!stopBtn || !stopBtn.classList.contains('show')) return;
+    if (!stopBtn) return;
     
-    const stopIcon = stopBtn.querySelector('.stop-icon');
-    const streamingIcon = stopBtn.querySelector('.streaming-icon');
-    const streamingIndicator = stopBtn.querySelector('.streaming-indicator');
-    if (!stopIcon || !streamingIcon || !streamingIndicator) return;
+    // Only update if button is visible (has 'show' class)
+    if (!stopBtn.classList.contains('show')) return;
     
     const typewriterEnabled = localStorage.getItem("typewriterEnabled") === 'true';
     const typewriterSpeed = parseInt(localStorage.getItem("typewriterSpeed") ?? "30", 10);
     const useTypewriter = typewriterEnabled && typewriterSpeed > 0;
     
-     if (!useTypewriter) {
-        streamingIcon.classList.remove('active');
-        streamingIndicator.style.display = 'none';
-        
-        if (isDataStreaming === true) {
-            stopBtn.classList.add('show-text');
-            stopIcon.classList.remove('active');
-        } else {
-            stopBtn.classList.remove('show-text');
-            stopIcon.classList.add('active');
-        }
+    // Remove all state classes first
+    stopBtn.classList.remove('streaming', 'typing', 'skip', 'streaming-only', 'show-text');
+    
+    // When typewriter is OFF: just show "Stop" during streaming
+    if (!useTypewriter) {
+        stopBtn.style.paddingBottom = '0px';
         return;
     }
     
+    // When typewriter is ON: track streaming/typing/skip states
     const tokensStreaming = isDataStreaming === true;
     const typewriterRunning = isTypewriterRunning === true;
     
-    // Reset all icons
-    stopIcon.classList.remove('active');
-    streamingIcon.classList.remove('active');
-    streamingIcon.querySelectorAll('svg').forEach(svg => svg.classList.remove('active'));
+    stopBtn.style.paddingBottom = '0px';
     
-    // Typewriter is active and tokens are still streaming in
-    if (typewriterRunning && tokensStreaming) {
-        streamingIcon.classList.add('active');
-        streamingIcon.querySelector('.icon-typing').classList.add('active');
-        streamingIndicator.style.display = 'inline-flex';
-        stopBtn.style.paddingBottom = '12px';
+    // Both tokens and typewriter running
+    if (tokensStreaming && typewriterRunning) {
+        stopBtn.classList.add('streaming', 'typing');
     }
-    // Tokens done but typewriter is still running
+    // Tokens done but typewriter still running (skip state)
     else if (!tokensStreaming && typewriterRunning) {
-        streamingIcon.classList.add('active');
-        streamingIcon.querySelector('.icon-skip').classList.add('active');
-        streamingIndicator.style.display = 'none';
-        stopBtn.style.paddingBottom = '0px';
+        stopBtn.classList.add('streaming', 'skip');
     }
-    // Only tokens streaming (no typewriter)
-    else if (tokensStreaming) {
-        streamingIcon.classList.add('active');
-        streamingIcon.querySelector('.icon-streaming').classList.add('active');
-        streamingIndicator.style.display = 'inline-flex';
-        stopBtn.style.paddingBottom = '12px';
+    // Only tokens streaming, typewriter not yet started
+    else if (tokensStreaming && !typewriterRunning) {
+        stopBtn.classList.add('streaming');
     }
-    // Typewriter finished, tokens done
-    else {
-        stopIcon.classList.add('active');
-        streamingIndicator.style.display = 'none';
-        stopBtn.style.paddingBottom = '0px';
-    }
+    // Both done - no state classes
 }
 
 function resetStreamState() {
