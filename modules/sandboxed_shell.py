@@ -94,7 +94,6 @@ class SandboxedShell(core.module.Module):
             '--user', uid,
             '--tmpfs', '/dev', # Block access to host /dev
             '--cap-drop', 'all',
-            '--security-opt', 'device=/dev/null:rwm',
             '--cpus', str(self.config.get("cpu_limit", default=0.5)),
             '--memory', self.config.get("memory_limit", default="256m"),
             '--pids-limit', str(self.config.get("max_processes", default=10)),
