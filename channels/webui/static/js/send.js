@@ -31,10 +31,17 @@ function updateStopButtonState() {
     const typewriterSpeed = parseInt(localStorage.getItem("typewriterSpeed") ?? "30", 10);
     const useTypewriter = typewriterEnabled && typewriterSpeed > 0;
     
-    if (!useTypewriter) {
-        stopIcon.classList.add('active');
+     if (!useTypewriter) {
         streamingIcon.classList.remove('active');
         streamingIndicator.style.display = 'none';
+        
+        if (isDataStreaming === true) {
+            stopBtn.classList.add('show-text');
+            stopIcon.classList.remove('active');
+        } else {
+            stopBtn.classList.remove('show-text');
+            stopIcon.classList.add('active');
+        }
         return;
     }
     
@@ -51,23 +58,27 @@ function updateStopButtonState() {
         streamingIcon.classList.add('active');
         streamingIcon.querySelector('.icon-typing').classList.add('active');
         streamingIndicator.style.display = 'inline-flex';
+        stopBtn.style.paddingBottom = '12px';
     }
     // Tokens done but typewriter is still running
     else if (!tokensStreaming && typewriterRunning) {
         streamingIcon.classList.add('active');
         streamingIcon.querySelector('.icon-skip').classList.add('active');
         streamingIndicator.style.display = 'none';
+        stopBtn.style.paddingBottom = '0px';
     }
     // Only tokens streaming (no typewriter)
     else if (tokensStreaming) {
         streamingIcon.classList.add('active');
         streamingIcon.querySelector('.icon-streaming').classList.add('active');
         streamingIndicator.style.display = 'inline-flex';
+        stopBtn.style.paddingBottom = '12px';
     }
     // Typewriter finished, tokens done
     else {
         stopIcon.classList.add('active');
         streamingIndicator.style.display = 'none';
+        stopBtn.style.paddingBottom = '0px';
     }
 }
 

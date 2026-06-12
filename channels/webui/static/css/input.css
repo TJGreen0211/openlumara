@@ -212,6 +212,17 @@ body.token-bar-hidden .input-area {
     justify-content: center;
 }
 
+/* Stop button text override */
+#stop.show-text .stop-icon {
+    display: flex !important;
+}
+#stop.show-text .stop-text {
+    display: inline-block;
+}
+#stop.show-text .stop-icon svg {
+    display: none;
+}
+
 .stop-icon svg,
 .streaming-icon svg {
     width: 20px;
@@ -246,6 +257,19 @@ body.token-bar-hidden .input-area {
     display: inline-flex;
     align-items: center;
     margin-left: 6px;
+}
+#stop.show .streaming-indicator,
+#stop.show-text .streaming-indicator {
+    position: absolute;
+    bottom: 10px;
+    left: 2px;
+    right: 0;
+    margin: 0;
+    justify-content: center;
+}
+
+#stop.show {
+    padding-bottom: 12px;
 }
 
 .indicator-dot {
