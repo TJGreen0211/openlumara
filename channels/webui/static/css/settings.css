@@ -2383,7 +2383,11 @@
     }
 }
 
-
+@media (min-width: 768px) {
+    .settings-content {
+        padding: 24px 40px;
+    }
+}
 
 /* Reasoning Effort Slider */
 .setting-slider-container {
