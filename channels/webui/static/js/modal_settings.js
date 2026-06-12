@@ -701,6 +701,9 @@ function renderSettingsNav(categories) {
 
 // Switch active settings category
 function switchSettingsCategory(category) {
+    const nav = document.getElementById('settings-nav');
+    const savedScrollLeft = nav ? nav.scrollLeft : 0;
+    
     activeSettingsCategory = category;
     
     // Expand the clicked category's sub-list, collapse others
@@ -725,6 +728,11 @@ function switchSettingsCategory(category) {
     renderSettingsForm(categories, category);
     // Re-render nav to update sub-list active state and visibility
     renderSettingsNav(categories);
+    
+    // Restore scroll position to prevent mobile auto-scroll jump
+    if (nav) {
+        nav.scrollLeft = savedScrollLeft;
+    }
 }
 
 // Handle module selection from sub-list
