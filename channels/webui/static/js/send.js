@@ -12,6 +12,65 @@ let manuallyCollapsedReasoning = new Set();
 let toolProcessingIndicatorElement = null;
 let fancyProcessingIndicator = null;
 
+/**
+ * Updates the stop button icon and streaming indicator based on typewriter state.
+ * Shows typing icon with indicator when tokens are streaming and typewriter is active.
+ * Shows skip icon when tokens are done but typing is still in progress.
+ * Shows streaming icon when only tokens are streaming (no typewriter).
+ */
+function updateStopButtonState() {
+    const stopBtn = document.getElementById('stop');
+    if (!stopBtn || !stopBtn.classList.contains('show')) return;
+    
+    const stopIcon = stopBtn.querySelector('.stop-icon');
+    const streamingIcon = stopBtn.querySelector('.streaming-icon');
+    const streamingIndicator = stopBtn.querySelector('.streaming-indicator');
+    if (!stopIcon || !streamingIcon || !streamingIndicator) return;
+    
+    const typewriterEnabled = localStorage.getItem("typewriterEnabled") === 'true';
+    const typewriterSpeed = parseInt(localStorage.getItem("typewriterSpeed") ?? "30", 10);
+    const useTypewriter = typewriterEnabled && typewriterSpeed > 0;
+    
+    if (!useTypewriter) {
+        stopIcon.classList.add('active');
+        streamingIcon.classList.remove('active');
+        streamingIndicator.style.display = 'none';
+        return;
+    }
+    
+    const tokensStreaming = isDataStreaming === true;
+    const typewriterRunning = isTypewriterRunning === true;
+    
+    // Reset all icons
+    stopIcon.classList.remove('active');
+    streamingIcon.classList.remove('active');
+    streamingIcon.querySelectorAll('svg').forEach(svg => svg.classList.remove('active'));
+    
+    // Typewriter is active and tokens are still streaming in
+    if (typewriterRunning && tokensStreaming) {
+        streamingIcon.classList.add('active');
+        streamingIcon.querySelector('.icon-typing').classList.add('active');
+        streamingIndicator.style.display = 'inline-flex';
+    }
+    // Tokens done but typewriter is still running
+    else if (!tokensStreaming && typewriterRunning) {
+        streamingIcon.classList.add('active');
+        streamingIcon.querySelector('.icon-skip').classList.add('active');
+        streamingIndicator.style.display = 'none';
+    }
+    // Only tokens streaming (no typewriter)
+    else if (tokensStreaming) {
+        streamingIcon.classList.add('active');
+        streamingIcon.querySelector('.icon-streaming').classList.add('active');
+        streamingIndicator.style.display = 'inline-flex';
+    }
+    // Typewriter finished, tokens done
+    else {
+        stopIcon.classList.add('active');
+        streamingIndicator.style.display = 'none';
+    }
+}
+
 function resetStreamState() {
     streamSegments = [];
     segCounter = 0;
@@ -282,6 +341,9 @@ async function send(providedContent = null) {
     isStreaming = true;
     isDataStreaming = true;
     currentController = new AbortController();
+    
+    // Update stop button to show streaming indicator when tokens start
+    updateStopButtonState();
 
     let playedCompletionSound = false;
 
@@ -442,6 +504,8 @@ async function send(providedContent = null) {
                         if (metaType === 'commit') {
                             // Signal that data streaming is complete so the typewriter can finish
                             isDataStreaming = false;
+                            // Update stop button state to show "Skip" if typewriter is still running
+                            updateStopButtonState();
                             // Wait for typewriter to finish before finalizing
                             if (isTypewriterRunning) {
                                 await waitForTypewriter();
@@ -610,6 +674,8 @@ async function send(providedContent = null) {
         }
     } finally {
         isDataStreaming = false;
+        // Update stop button state to show "Skip" if typewriter is still running
+        updateStopButtonState();
 
         if (window.upload_queue && window.upload_queue.files.length > 0) {
             window.upload_queue.wrappers.forEach(w => w.remove());
@@ -841,6 +907,8 @@ let isTypewriterRunning = false;
 
 async function startTypewriterProcessSegments(msgDiv) {
     isTypewriterRunning = true;
+    // Update button state now that typewriter has started
+    updateStopButtonState();
 
     const typewriterEnabled = localStorage.getItem("typewriterEnabled") !== 'false';
     if (!typewriterEnabled) {
@@ -874,6 +942,8 @@ async function startTypewriterProcessSegments(msgDiv) {
 
     TypewriterAudioManager.play('completion');
     isTypewriterRunning = false;
+    // Update stop button state back to "Stop" when typewriter finishes
+    updateStopButtonState();
 }
 
 function waitForTypewriter() {
