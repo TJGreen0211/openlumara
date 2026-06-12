@@ -10,8 +10,9 @@ let modelsLoadError = null;
 let moduleInfoCache = {};
 let showUnsafeSettings = localStorage.getItem('showUnsafeSettings') === 'true';
 let activeModule = null; // Tracks the selected module for Desktop split view / Mobile drill-down
+let activeChannel = null; // Tracks the selected channel for Desktop split view / Mobile drill-down
 let categories = {}; // Global reference to settings categories
-let modulesExpanded = { modules: false, user_modules: false }; // Tracks expansion state per category
+let modulesExpanded = { modules: false, user_modules: false, channels: false }; // Tracks expansion state per category
 
 // Category icons
 const SETTINGS_ICONS = {
@@ -649,6 +650,45 @@ function renderSettingsNav(categories) {
                 btn.parentNode.insertBefore(subList, btn.nextSibling);
             }
         }
+
+        // Add channel sub-list for Channels category on desktop only
+        if (!isMobile && cat === 'channels' && data.groups && data.groups.has('_direct_')) {
+            const directGroup = data.groups.get('_direct_');
+            if (directGroup && directGroup.items.length > 0) {
+                const channelListData = directGroup.items[0].value;
+                const allChannels = getAllToggleItems({ enabled: channelListData.enabled, disabled: channelListData.disabled });
+                const enabledSet = new Set(channelListData.enabled);
+                
+                const subList = document.createElement('div');
+                subList.className = 'module-sub-list' + (modulesExpanded[cat] ? ' expanded' : '');
+                subList.style.display = modulesExpanded[cat] ? '' : 'none';
+
+                allChannels.forEach(channelName => {
+                    // Only show enabled channels in the sidebar
+                    if (!enabledSet.has(channelName)) return;
+
+                    // Check if channel has settings - only show channels with actual settings
+                    const channelSettingsGroupKey = `${cat}.settings.${channelName}`;
+                    const channelGroup = data.groups?.get(channelSettingsGroupKey);
+                    if (!channelGroup || channelGroup.items.length === 0) return;
+
+                    const subBtn = document.createElement('button');
+                    subBtn.textContent = formatLabel(channelName);
+                    subBtn.dataset.channel = channelName;
+                    subBtn.classList.toggle('active', activeChannel === channelName);
+
+                    subBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        selectChannel(channelName, cat);
+                    };
+
+                    subList.appendChild(subBtn);
+                });
+
+                // Insert sub-list after the main button
+                btn.parentNode.insertBefore(subList, btn.nextSibling);
+            }
+        }
     });
 
     // Restore active highlight after re-rendering
@@ -665,17 +705,21 @@ function switchSettingsCategory(category) {
     
     // Expand the clicked category's sub-list, collapse others
     const isModules = category === 'modules' || category === 'user_modules';
+    const isChannels = category === 'channels';
     for (const key in modulesExpanded) {
-        modulesExpanded[key] = (isModules && key === category);
+        modulesExpanded[key] = (isModules && key === category) || (isChannels && key === category);
     }
 
     document.querySelectorAll('.settings-nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.category === category);
     });
 
-    // Reset active module when switching to Modules category
+    // Reset active module/channel when switching to Modules/Channels category
     if (category === 'modules' || category === 'user_modules') {
         activeModule = null;
+    }
+    if (category === 'channels') {
+        activeChannel = null;
     }
 
     renderSettingsForm(categories, category);
@@ -688,6 +732,14 @@ function switchSettingsCategory(category) {
 function selectModule(moduleName, category = 'modules') {
     activeSettingsCategory = category;
     activeModule = moduleName;
+    renderSettingsForm(categories, category);
+    renderSettingsNav(categories);
+}
+
+// Handle channel selection from sub-list
+function selectChannel(channelName, category = 'channels') {
+    activeSettingsCategory = category;
+    activeChannel = channelName;
     renderSettingsForm(categories, category);
     renderSettingsNav(categories);
 }
@@ -748,7 +800,7 @@ function renderSettingsForm(categories, activeSettingsCategory = null) {
             }
         }
 
-        // Special handling for Modules category
+       // Special handling for Modules category
         if (cat === 'modules' || cat === 'user_modules') {
             const directGroup = data.groups?.get('_direct_');
             if (directGroup && directGroup.items.length > 0) {
@@ -885,9 +937,147 @@ function renderSettingsForm(categories, activeSettingsCategory = null) {
                 }
             }
         }
+
+        // Special handling for Channels category
+        if (cat === 'channels') {
+            const directGroup = data.groups?.get('_direct_');
+            if (directGroup && directGroup.items.length > 0) {
+                const channelListData = directGroup.items[0].value;
+                const allChannels = getAllToggleItems({ enabled: channelListData.enabled, disabled: channelListData.disabled });
+                const enabledSet = new Set(channelListData.enabled);
+
+                if (isMobile) {
+                    if (activeChannel) {
+                        // Drill-down: Show settings for selected channel
+                        const backBtn = document.createElement('button');
+                        backBtn.className = 'mobile-back-btn';
+                        backBtn.style.cssText = 'display: flex; align-items: center; gap: 10px; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); font-size: 0.9rem; font-weight: 600; cursor: pointer; padding: 12px 16px; width: 100%; margin-bottom: 12px; border-radius: 8px; transition: all 0.15s ease;';
+                        backBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5"></path>
+                        <path d="M12 19l-7-7 7-7"></path>
+                        </svg>
+                        <span>Back</span>
+                        `;
+                        backBtn.onmouseenter = () => { backBtn.style.background = 'var(--bg-secondary)'; backBtn.style.borderColor = 'var(--accent)'; };
+                        backBtn.onmouseleave = () => { backBtn.style.background = 'var(--bg-tertiary)'; backBtn.style.borderColor = 'var(--border-color)'; };
+                        backBtn.onclick = () => {
+                            activeChannel = null;
+                            renderSettingsForm(categories, activeSettingsCategory);
+                        };
+                        itemsContainer.appendChild(backBtn);
+
+                        // Render settings for the active channel
+                        const channelSettingsGroupKey = `${cat}.settings.${activeChannel}`;
+                        const channelGroup = data.groups?.get(channelSettingsGroupKey);
+                        if (channelGroup) {
+                            const channelContainer = document.createElement('div');
+                            channelContainer.className = 'settings-group';
+                            channelContainer.dataset.group = channelSettingsGroupKey;
+
+                            const header = document.createElement('div');
+                            header.className = 'settings-group-header';
+                            header.innerHTML = `<span class="settings-group-title">${formatLabel(activeChannel)}</span>`;
+                            
+                            const content = document.createElement('div');
+                            content.className = 'settings-group-content';
+
+                            channelGroup.items.forEach(item => {
+                                const itemEl = createSettingItem(item);
+                                content.appendChild(itemEl);
+                            });
+
+                            channelContainer.appendChild(header);
+                            channelContainer.appendChild(content);
+                            itemsContainer.appendChild(channelContainer);
+                        } else {
+                            // Fallback if no specific settings group exists
+                            const msg = document.createElement('div');
+                            msg.className = 'settings-section-desc';
+                            msg.textContent = `No specific settings configured for ${formatLabel(activeChannel)}.`;
+                            itemsContainer.appendChild(msg);
+                        }
+                    } else {
+                        // Show channel list (iOS drill style)
+                        const channelListContainer = document.createElement('div');
+                        channelListContainer.className = 'settings-group';
+                        const header = document.createElement('div');
+                        header.className = 'settings-group-header';
+                        header.innerHTML = `<span class="settings-group-title" style="font-weight: 500; color: var(--text-primary);">${data.title}</span>`;
+                        channelListContainer.appendChild(header);
+                        
+                        const listContent = document.createElement('div');
+                        listContent.className = 'settings-group-content module-list-content';
+                        listContent.style.cssText = 'display: flex; flex-direction: column; background: transparent; border-radius: 0; overflow: visible; padding: 0; border: none;';
+                        
+                        allChannels.forEach(channelName => {
+                            if (!enabledSet.has(channelName)) return;
+                            const channelSettingsGroupKey = `${cat}.settings.${channelName}`;
+                            const channelGroup = data.groups?.get(channelSettingsGroupKey);
+                            if (!channelGroup || channelGroup.items.length === 0) return;
+
+                            const btn = document.createElement('button');
+                            btn.className = 'setting-item module-list-item';
+                            btn.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--bg-secondary); border: none; border-bottom: 1px solid var(--border-color); cursor: pointer; transition: background 0.15s ease; margin: 0; width: 100%; text-align: left; color: var(--text-primary); font-weight: 500; font-size: 0.95rem;';
+                            btn.textContent = formatLabel(channelName);
+                            btn.onclick = () => {
+                                activeChannel = channelName;
+                                renderSettingsForm(categories, cat);
+                            };
+                            listContent.appendChild(btn);
+                        });
+                        channelListContainer.appendChild(listContent);
+                        itemsContainer.appendChild(channelListContainer);
+
+                        // Show the global toggle list
+                        const itemEl = createSettingItem(directGroup.items[0]);
+                        itemsContainer.appendChild(itemEl);
+                    }
+                } else {
+                    // Desktop: Show sidebar sub-list or channel settings
+                    if (activeChannel) {
+                        // Show settings for selected channel
+                        const channelSettingsGroupKey = `${cat}.settings.${activeChannel}`;
+                        const channelGroup = data.groups?.get(channelSettingsGroupKey);
+                        if (channelGroup) {
+                            const channelContainer = document.createElement('div');
+                            channelContainer.className = 'settings-group';
+                            channelContainer.dataset.group = channelSettingsGroupKey;
+
+                            const header = document.createElement('div');
+                            header.className = 'settings-group-header';
+                            header.innerHTML = `<span class="settings-group-title">${formatLabel(activeChannel)}</span>`;
+
+                            const content = document.createElement('div');
+                            content.className = 'settings-group-content';
+
+                            channelGroup.items.forEach(item => {
+                                const itemEl = createSettingItem(item);
+                                content.appendChild(itemEl);
+                            });
+
+                            channelContainer.appendChild(header);
+                            channelContainer.appendChild(content);
+                            itemsContainer.appendChild(channelContainer);
+                        } else {
+                            // Fallback if no specific settings group exists
+                            const msg = document.createElement('div');
+                            msg.className = 'settings-section-desc';
+                            msg.textContent = `No specific settings configured for ${formatLabel(activeChannel)}.`;
+                            itemsContainer.appendChild(msg);
+                        }
+                    } else {
+                        // Show the global toggle list (desktop)
+                        const itemEl = createSettingItem(directGroup.items[0]);
+                        itemEl.classList.add('full-width-item');
+                        itemsContainer.appendChild(itemEl);
+                    }
+                }
+            }
+        }
         
-        // Skip generic group rendering for modules/user_modules
-        if (cat !== 'modules' && cat !== 'user_modules') {
+        // Skip generic group rendering for modules/user_modules/channels
+        if (cat !== 'modules' && cat !== 'user_modules' && cat !== 'channels') {
             // Render groups - put direct items first
             if (data.groups) {
                 // First render direct (ungrouped) items into the main vertical stack
@@ -1943,6 +2133,12 @@ function detectChannelOrModuleChanges() {
         }
     }
     return false;
+}
+
+// Detect if there are changes in channel settings specifically (for sidebar sub-items)
+function detectChannelChanges() {
+    if (!settingsData['channels']) return false;
+    return JSON.stringify(settingsData['channels']) !== JSON.stringify(settingsOriginal['channels']);
 }
 
 // Detect if there are changes in API or model settings

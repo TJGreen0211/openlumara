@@ -5,7 +5,7 @@
 .settings-modal {
     display: flex;
     flex-direction: column;
-    width: 95vw;
+    width: 60vw;
     height: 85vh;
     padding: 0;
     max-width: 1200px;
