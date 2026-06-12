@@ -45,6 +45,10 @@ class SandboxedShell(core.module.Module):
             "default": "512m",
             "description": "Maximum size for the temporary sandbox disk (e.g., 512m, 2g). Only works when persistent_data is off."
         },
+        "read_only": {
+            "default": True,
+            "description": "Whether the container filesystem is read-only. If enabled, /tmp is mounted as tmpfs for temporary writes."
+        },
         "image": "python:3.11-slim",
         "run_as_user": {
             "default": "65534",
@@ -83,17 +87,24 @@ class SandboxedShell(core.module.Module):
         # Generate unique container name
         self.container_name = self._get_unique_name()
 
-        # Build container run command
+        # Build container run command with strict security settings
         cmd = [
             self.runtime, 'run', '--rm',
             '--name', self.container_name,
             '--user', uid,
+            '--tmpfs', '/dev', # Block access to host /dev
+            '--cap-drop', 'all',
+            '--security-opt', 'device=/dev/null:rwm',
             '--cpus', str(self.config.get("cpu_limit", default=0.5)),
             '--memory', self.config.get("memory_limit", default="256m"),
             '--pids-limit', str(self.config.get("max_processes", default=10)),
             '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
             '--stop-timeout', '1'
         ]
+
+        if self.config.get("read_only", default=True):
+            cmd.append('--read-only')
+            cmd.extend(['--tmpfs', '/tmp']) # Allow writes to /tmp if read-only is active
 
         # Handle persistent vs temporary data
         if self.config.get("persistent_data", default=True):
