@@ -92,6 +92,7 @@ class SandboxedShell(core.module.Module):
             '--memory', self.config.get("memory_limit", default="256m"),
             '--pids-limit', str(self.config.get("max_processes", default=10)),
             '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
+            '--stop-timeout', '1'
         ]
 
         # Handle persistent vs temporary data
@@ -106,29 +107,32 @@ class SandboxedShell(core.module.Module):
         cmd.extend([img, 'sh', '-c', command])
 
         try:
-            # Run the container with timeout
-            result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+            # Run the container with manual timeout handling
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            stdout, stderr = process.communicate(timeout=timeout)
+            return self.result({
+                "stdout": stdout.decode().strip(),
+                "stderr": stderr.decode().strip(),
+                "exit_code": process.returncode,
+                "data_dir": "/data"
+            })
         except subprocess.TimeoutExpired:
-            # Container is still running after timeout
+            # Timeout occurred
+            process.kill()  # Kill the docker run process
             try:
-                subprocess.run([self.runtime, 'kill', self.container_name], capture_output=True)
-                subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True)
+                # Explicitly kill the container
+                subprocess.run([self.runtime, 'kill', self.container_name], capture_output=True, timeout=5)
             except Exception:
                 pass
+
+            # Clean up the container
+            try:
+                subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True, timeout=5)
+            except Exception:
+                pass
+
             return self.result(f"Command timed out after {timeout}s", False)
-        except Exception as e:
-            # Handle collision or other errors
-            if "already in use" in str(e):
-                # Clean up and retry with new name
-                subprocess.run([self.runtime, 'rm', '-f', self.container_name], capture_output=True)
-                self.container_name = self._get_unique_name()
-                cmd[4] = self.container_name  # Update name in cmd list
-                try:
-                    result = subprocess.run(cmd, capture_output=True, timeout=timeout)
-                except Exception:
-                    return self.result("Container creation failed after retry", False)
-            else:
-                return self.result(f"Error: {str(e)}", False)
 
         return self.result({
             "stdout": result.stdout.decode().strip(),
