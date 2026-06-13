@@ -342,8 +342,9 @@ class Coder(core.module.Module):
 
         # Disable tools not in enabled list
         for prop_name in dir(self):
-            if prop_name.startswith("_"):
+            if prop_name.startswith("_") or prop_name.startswith("on_"):
                 continue
+
             attr = getattr(self, prop_name)
             if callable(attr) and prop_name not in self.enabled_tools:
                 self.disabled_tools.append(prop_name)
@@ -1044,9 +1045,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error (syntax errors will prevent file creation)
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
 
         if os.path.exists(file_path_str):
@@ -1157,9 +1155,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
 
         # Check syntax BEFORE writing to disk
@@ -1196,9 +1191,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         target_dir = os.path.dirname(file_path_str)
         if not os.path.exists(target_dir):
@@ -1256,9 +1248,6 @@ class Coder(core.module.Module):
         Returns:
             Dictionary with stdout, stderr, and returncode, or error message
         """
-        if not self.config.get("allow_code_execution"):
-            return self.result("Error: Code execution is disabled for security.", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1436,9 +1425,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error (syntax errors will prevent the edit)
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1524,9 +1510,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1599,9 +1582,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1676,9 +1656,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1815,9 +1792,6 @@ class Coder(core.module.Module):
         Returns:
             Dictionary with replacement count, or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -1870,9 +1844,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error if exact text not found
         """
-        if self.config.get("writing_mode") == "read-only":
-            return self.result("Error: Coder is in read-only mode", success=False)
-
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -2093,9 +2064,6 @@ class Coder(core.module.Module):
         Returns:
             Success message or error
         """
-        if self.config.get("writing_mode") == "read-only":
-            return {"success": False, "error": "Coder is in read-only mode"}
-
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
