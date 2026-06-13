@@ -35,7 +35,11 @@ class Context:
         # 1. Prepare Components
         system_msg = []
         if system_prompt:
-            content = await self.channel.manager.get_system_prompt()
+            try:
+                content = await self.channel.manager.get_system_prompt()
+            except Exception as e:
+                core.log_error("Error while getting system prompt", e)
+
             if content:
                 system_msg = [{"role": system_role, "content": content}]
 

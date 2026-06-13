@@ -20,6 +20,7 @@ class Manager:
         self.channels = {}
         self.channel = None # current active channel. gets dynamically switched around
         self.modules = {}
+        self.broken_modules = [] # tracks modules that threw errors and skips them so that it doesn't break the whole framework
         self.tools = []
         self.tool_names = []
         self.pure_mode = False
@@ -288,9 +289,13 @@ class Manager:
         sysprompt_top = []
         sysprompt_middle = []
         sysprompt_bottom = []
+
         for module_name, module in self.modules.items():
             if not core.config.get("model").get("use_tools", False) and module_name not in core.modules.nonagentic:
                 # skip most prompts if tools are turned off
+                continue
+
+            if module_name in self.broken_modules:
                 continue
 
             char_modules_exempt = ["characters"]
@@ -308,7 +313,12 @@ class Manager:
                 if char_disable_agent_prompts:
                     continue
 
-            module_sysprompt = await module.on_system_prompt()
+            try:
+                module_sysprompt = await module.on_system_prompt()
+            except Exception as e:
+                core.log("module error", f"{module_name}: in on_system_prompt(): {core.detail_error(e)}")
+                self.broken_modules.append(module_name)
+                continue
 
             if module_sysprompt and (module_name not in core.config.get("modules").get("disabled_prompts", [])):
                 # default to module name
@@ -347,6 +357,9 @@ class Manager:
         # automatically insert system prompts returned by modules (such as memory)
         histend_prompt = []
         for module_name, module in self.modules.items():
+            if module_name in self.broken_modules:
+                continue
+
             if prevent_recursion and module_name == "token_threshold":
                 # if we try to count the system prompt's tokens from the function that counts tokens.. we get recursion
                 continue
@@ -355,7 +368,12 @@ class Manager:
                 # skip most prompts if tools are turned off
                 continue
 
-            module_sysprompt = await module.on_end_prompt()
+            try:
+                module_sysprompt = await module.on_end_prompt()
+            except Exception as e:
+                core.log("module error", f"{module_name}: in on_end_prompt(): {core.detail_error(e)}")
+                self.broken_modules.append(module_name)
+                continue
 
             if module_sysprompt and (module_name not in core.config.get("modules").get("disabled_end_prompts", [])):
                 sysprompt_header = ' '.join(module_name.split('_')).capitalize()

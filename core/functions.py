@@ -13,6 +13,11 @@ def log(category: str, msg: str):
 def detail_error(e: Exception):
     """provides more detail about an exception, but in a compact format"""
 
+    # just return the normal message if debug mode is off
+    if not core.debug:
+        return str(e)
+
+    # lots of detail for debugging!
     return f"{e} | {e.__traceback__.tb_frame.f_code.co_filename}, {e.__traceback__.tb_frame.f_code.co_name}, ln:{e.__traceback__.tb_lineno}\n\n{traceback.format_exc()}"
 
 def log_error(msg: str, e: Exception):

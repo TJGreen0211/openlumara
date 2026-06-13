@@ -232,10 +232,7 @@ class Channel:
                     else:
                         module.on_user_message(message.get("content", ""))
                 except Exception as e:
-                    # Always log full traceback for easier debugging
-                    import traceback
-                    traceback.print_exc()
-                    core.log(module.name, f"could not run user message hook: {e}")
+                    core.log("module error", f"{module_name}: in on_user_message(): {core.detail_error(e)}")
 
         # then get the full context window
         context = await self.context.get(system_prompt=True, end_prompt=True)
@@ -288,10 +285,7 @@ class Channel:
                     else:
                         module.on_assistant_message(assistant_message.get("content", ""))
                 except Exception as e:
-                    # Always log full traceback for easier debugging
-                    import traceback
-                    traceback.print_exc()
-                    core.log(module.name, f"could not run assistant message hook: {e}")
+                    core.log("module error", f"{module_name}: in on_assistant_message(): {core.detail_error(e)}")
 
         if tool_calls:
             return None
@@ -350,7 +344,12 @@ class Channel:
             await self.context.chat.set_token_usage(user_message_token_estimation)
         else:
             # just fully estimate
-            user_message_token_estimation = await self.context.chat.count_tokens()
+            try:
+                user_message_token_estimation = await self.context.chat.count_tokens()
+            except Exception as e:
+                core.log_error("Error while trying to estimate token use", e)
+                # abort
+                return
 
         # yield so it updates throughout all channels that display token count
         yield {"type": "token_usage", "content": user_message_token_estimation, "source": "estimation"}
@@ -364,10 +363,7 @@ class Channel:
                     else:
                         module.on_user_message(message.get("content", ""))
                 except Exception as e:
-                    # Always log full traceback for easier debugging
-                    import traceback
-                    traceback.print_exc()
-                    core.log(module.name, f"could not run user message hook: {e}")
+                    core.log("module error", f"{module_name}: in on_user_message(): {core.detail_error(e)}")
 
         # get the new context window with the added message
         context = await self.context.get(system_prompt=True, end_prompt=True)
@@ -451,9 +447,7 @@ class Channel:
                             module.on_assistant_message(assistant_message.get("content", ""))
                     except Exception as e:
                         # Always log full traceback for easier debugging
-                        import traceback
-                        traceback.print_exc()
-                        core.log(module.name, f"could not run assistant message hook: {e}")
+                        core.log("module error", f"{module_name}: in on_assistant_message(): {core.detail_error(e)}")
 
     def _render_tool_token(self, name: str, args_str: str) -> str:
         delta = ""

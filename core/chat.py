@@ -316,9 +316,12 @@ class Chat:
         # inject any special messages coming from on_message_inject() in modules, such as timestamps
         for module_name, module in self.channel.manager.modules.items():
             if hasattr(module, 'on_message_inject'):
-                injection = await module.on_message_inject()
-                if injection:
-                    new_message["injection"] = str(injection)
+                try:
+                    injection = await module.on_message_inject()
+                    if injection:
+                        new_message["injection"] = str(injection)
+                except Exception as e:
+                    core.log("module error", f"{module.name}: in on_message_inject(): {core.detail_error(e)}")
 
         self.data[self.current]["messages"].append(new_message)
 
@@ -376,6 +379,7 @@ class Chat:
         """
         num_tokens = 0
         _messages = messages or await self.channel.context.get(system_prompt=True, end_prompt=True)
+
         if not _messages:
             return 0
 
