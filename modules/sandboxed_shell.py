@@ -167,7 +167,8 @@ class SandboxedShell(core.module.Module):
             except Exception:
                 pass
 
-        return bytes(stdout_buf), bytes(stderr_buf), process.returncode or -1, timed_out
+        return_code = process.returncode if process.returncode is not None else -1
+        return bytes(stdout_buf), bytes(stderr_buf), return_code, timed_out
 
     async def on_background(self):
         """Monitors container memory usage and kills/restarts if limit is exceeded."""
@@ -179,7 +180,7 @@ class SandboxedShell(core.module.Module):
 
         while True:
             try:
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
 
                 if not self.container_name or not self.runtime:
                     continue
