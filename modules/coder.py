@@ -214,7 +214,7 @@ class Coder(core.module.Module):
     settings = {
         "sandbox_folder": {
             "default": "~/coder",
-            "description": "Root folder where all projects are stored. The AI can only access files within this sandbox."
+            "description": "The folder where all your projects are stored. The AI can only access files within this sandbox."
         },
         "reading_mode": {
             "default": "symbols",
