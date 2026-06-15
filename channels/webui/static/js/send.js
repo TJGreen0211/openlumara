@@ -273,11 +273,6 @@ async function send(providedContent = null) {
 
     if (isStreaming) return;
 
-    // Prepare local UI to receive the stream (placeholder)
-    window.placeholderUserWrapper = createPlaceholderUserMessage(message);
-    chat.insertBefore(window.placeholderUserWrapper, typing);
-    scrollToBottom();
-
     // Build payload
     const hasFiles = window.upload_queue && window.upload_queue.files.length > 0;
     const isMultimodalInput = typeof rawContent !== 'string';

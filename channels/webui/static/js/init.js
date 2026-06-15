@@ -96,10 +96,8 @@ function handleWebSocketMessage(data) {
         }
         if (data.buffer) {
             // Append buffer to current message if streaming
-            if (typeof appendStreamText === 'function') {
-                appendStreamText(data.buffer);
-            }
-            if (typeof renderStreamSegments === 'function' && window._currentAiMsgDiv) {
+            appendStreamText(data.buffer);
+            if (window._currentAiMsgDiv) {
                 renderStreamSegments(window._currentAiMsgDiv);
             }
         }
@@ -110,20 +108,16 @@ function handleWebSocketMessage(data) {
         window.loadChat(data.chat_id);
         // Clear buffer if empty
         if (!data.buffer || data.buffer.length === 0) {
-            if (typeof resetStreamState === 'function') resetStreamState();
+            resetStreamState();
             window._streamInitialized = false;
         } else {
-            if (typeof appendStreamText === 'function') {
-                appendStreamText(data.buffer.join(''));
-            }
-            if (typeof renderStreamSegments === 'function' && window._currentAiMsgDiv) {
-                renderStreamSegments(window._currentAiMsgDiv);
-            }
+            appendStreamText(data.buffer.join(''));
+            renderStreamSegments(window._currentAiMsgDiv);
         }
         return;
     }
     if (data.type === 'user_message_added') {
-        handleNewMessage(data.message);
+        handleUserMessage(data.message);
         console.log(`[DEBUG] Adding new user messsage`);
         console.log(data.message);
         return;
@@ -138,10 +132,6 @@ function handleWebSocketMessage(data) {
         }
         return;
     }
-    if (data.type === 'message_added') {
-        handleNewMessage(data.message);
-        return;
-    }
     if (data.type === 'token') {
         // Real-time token broadcasting
         if (!window._currentAiMsgDiv) {
@@ -151,8 +141,6 @@ function handleWebSocketMessage(data) {
             
             const aiWrapper = document.createElement('div');
             aiWrapper.className = 'message-wrapper ai hidden streaming';
-            // Use lastMessageIndex because the user message was just broadcast with next_index
-            aiWrapper.dataset.index = lastMessageIndex; 
 
             const aiMsgDiv = document.createElement('div');
             aiMsgDiv.className = 'message ai';
@@ -207,27 +195,19 @@ function handleWebSocketMessage(data) {
 
         // Handle prompt progress
         if (tokenType === 'prompt_progress' && tokenContent) {
-            if (typeof handlePromptProgress === 'function') {
-                handlePromptProgress(tokenContent);
-            }
+            handlePromptProgress(tokenContent);
             return;
         }
 
         if (tokenType === 'reasoning' && tokenContent) {
-            if (typeof appendStreamText === 'function') {
-                appendStreamText(tokenType, tokenContent, false);
-            }
-            if (typeof renderStreamSegments === 'function') {
-                renderStreamSegments(window._currentAiMsgDiv);
-            }
+            appendStreamText(tokenType, tokenContent, false);
+            renderStreamSegments(window._currentAiMsgDiv);
             if (window._currentUseStreamingSound) {
                 TypewriterAudioManager.play('token');
             }
             updateStopButtonState();
         } else if (tokenType === 'content' && tokenContent) {
-            if (typeof appendStreamText === 'function') {
-                appendStreamText(tokenType, tokenContent, window._currentUseTypewriter);
-            }
+            appendStreamText(tokenType, tokenContent, window._currentUseTypewriter);
             if (window._currentUseTypewriter) {
                 // Manually queue characters for typewriter mode
                 if (typeof activeTypewriterSegId !== 'undefined' && activeTypewriterSegId !== -1) {
@@ -237,16 +217,12 @@ function handleWebSocketMessage(data) {
                             typewriterQueue.push({ segId: activeSeg.id, char });
                         }
                         if (typeof isTypewriterRunning === 'undefined' || !isTypewriterRunning) {
-                            if (typeof startTypewriterProcessSegments === 'function') {
-                                startTypewriterProcessSegments(window._currentAiMsgDiv);
-                            }
+                            startTypewriterProcessSegments(window._currentAiMsgDiv);
                         }
                     }
                 }
             } else {
-                if (typeof renderStreamSegments === 'function') {
-                    renderStreamSegments(window._currentAiMsgDiv);
-                }
+                renderStreamSegments(window._currentAiMsgDiv);
                 if (window._currentUseStreamingSound) {
                     TypewriterAudioManager.play('token');
                 }
@@ -254,33 +230,23 @@ function handleWebSocketMessage(data) {
             updateStopButtonState();
         } else if (tokenType === 'tool_call_delta') {
             // Handle tool call deltas
-            if (typeof ensureToolCallsSegment === 'function') {
-                ensureToolCallsSegment();
-            }
-            if (typeof handleToolCallDelta === 'function') {
-                handleToolCallDelta(data.message, window._currentAiMsgDiv, window._currentAiWrapper);
-            }
+            ensureToolCallsSegment();
+
+            handleToolCallDelta(data.message, window._currentAiMsgDiv, window._currentAiWrapper);
+
             if (window._currentUseStreamingSound && !window._currentUseTypewriter) {
                 TypewriterAudioManager.play('token');
             }
             updateStopButtonState();
         } else if (tokenType === 'tool_calls') {
             // Handle completed tool calls
-            if (typeof finalizeStreamingToolCalls === 'function') {
-                finalizeStreamingToolCalls(data.message.tool_calls || [], window._currentAiMsgDiv);
-            }
-            if (typeof TypewriterAudioManager !== 'undefined') {
-                TypewriterAudioManager.stopProcessingSound();
-            }
+            finalizeStreamingToolCalls(data.message.tool_calls || [], window._currentAiMsgDiv);
+            TypewriterAudioManager.stopProcessingSound();
             updateStopButtonState();
         } else if (tokenType === 'tool') {
             // Handle tool responses
-            if (typeof handleToolResponse === 'function') {
-                handleToolResponse(data.message, window._currentAiMsgDiv);
-            }
-            if (typeof TypewriterAudioManager !== 'undefined') {
-                TypewriterAudioManager.playProcessingSound();
-            }
+            handleToolResponse(data.message, window._currentAiMsgDiv);
+            TypewriterAudioManager.playProcessingSound();
             updateStopButtonState();
         }
         return;
@@ -290,40 +256,36 @@ function handleWebSocketMessage(data) {
         isDataStreaming = false; // Mark stream as complete
         isStreaming = false; // Reset global flag
         updateStopButtonState(); // Update button state immediately
+
+        window._currentAiWrapper.dataset.index = data.index;
         
         // Wait for typewriter to finish if it's still running
         if (typeof isTypewriterRunning === 'undefined' || !isTypewriterRunning) {
-            if (typeof finalizeStreamingUI === 'function' && window._currentAiWrapper) {
+            if (window._currentAiWrapper) {
                 finalizeStreamingUI(window._currentAiWrapper, window._currentAiMsgDiv);
             }
         } else {
             // If typewriter is running, wait for it to finish before finalizing
-            if (typeof waitForTypewriter === 'function') {
-                waitForTypewriter().then(() => {
-                    if (typeof finalizeStreamingUI === 'function' && window._currentAiWrapper) {
-                        finalizeStreamingUI(window._currentAiWrapper, window._currentAiMsgDiv);
-                    }
-                });
-            }
+            waitForTypewriter().then(() => {
+                if (window._currentAiWrapper) {
+                    finalizeStreamingUI(window._currentAiWrapper, window._currentAiMsgDiv);
+                }
+            });
         }
         window._streamInitialized = false;
         return;
     }
-    if (data.type === 'message_added') {
-        handleNewMessage(data.message);
+    if (data.type === 'push') {
+        handlePushMessage(data.message);
         return;
     }
     if (data.type === 'chat_metadata_updated') {
-        if (typeof updateChatTitleBar === 'function') {
-            updateChatTitleBar(data.title, data.tags || []);
-        }
+        updateChatTitleBar(data.title, data.tags || []);
         loadChats();
         return;
     }
     if (data.type === 'status_updated') {
-        if (typeof updateConnectionStatus === 'function') {
-            updateConnectionStatus(data.status);
-        }
+        updateConnectionStatus(data.status);
         return;
     }
     if (data.type === 'log') {
@@ -339,27 +301,12 @@ function handleWebSocketMessage(data) {
         closeModal('log');
     }
     if (data.type === 'error') {
-        if (typeof handleServerError === 'function') {
-            handleServerError(data.error);
-        }
+        handleServerError(data.error);
         return;
-    }
-    // Legacy: handle raw message objects (for backwards compatibility)
-    if (data.role && data.content !== undefined) {
-        if (data.index === undefined) {
-            // Try to determine index from current state
-            data.index = lastMessageIndex;
-        }
-        handleNewMessage(data.message);
     }
 }
 
-function handleNewMessage(msg) {
-    // Skip if we're currently streaming - messages will be synced after streaming completes
-    if (typeof isStreaming !== 'undefined' && isStreaming) {
-        return;
-    }
-    
+function handleUserMessage(msg) {
     // Only process if we have a valid WebSocket connection
     if (!isWsConnected) return;
     if (!msg || msg.index === undefined) return;
@@ -369,25 +316,16 @@ function handleNewMessage(msg) {
         console.log('Skipping old message, index:', msg.index, 'current:', lastMessageIndex);
         return;
     }
-    
-    // Skip if message already exists (check both exact index and streaming placeholder)
-    const existingWrapper = chat.querySelector(`[data-index="${msg.index}"]`);
-    if (existingWrapper) {
-        console.log('Message already exists at index:', msg.index);
-        return;
-    }
-
-    // If this is the user message and we have a placeholder, remove it
-    if (msg.role === 'user' && window.placeholderUserWrapper && window.placeholderUserWrapper.parentNode) {
-        console.log('[DEBUG] Removing user message placeholder');
-        window.placeholderUserWrapper.remove();
-    }
 
     renderSingleMessage(msg, msg.index, true);
     // Update lastMessageIndex to be one past the last rendered message
     lastMessageIndex = msg.index + 1;
     scrollToBottom();
     updateTokenUsage();
+}
+
+function handlePushMessage(msg) {
+    // stub
 }
 
 // =============================================================================

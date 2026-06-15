@@ -153,6 +153,8 @@ class ConnectionManager:
 
         self.active_chat_id = chat_id
         self.stream_buffer = []
+
+        next_index = len(await channel_instance.context.chat.get())
         
         async def stream_worker():
             try:
@@ -190,7 +192,8 @@ class ConnectionManager:
                 final_buffer = "".join(self.stream_buffer)
                 await self.broadcast({
                     "type": "stream_complete",
-                    "buffer": final_buffer
+                    "buffer": final_buffer,
+                    "index": next_index
                 })
                 
                 # Clear buffer
