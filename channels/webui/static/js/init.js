@@ -89,7 +89,10 @@ function handleWebSocketMessage(data) {
     if (data.type === 'sync_state') {
         // Sync handshake: restore active chat and buffer
         if (data.active_chat_id) {
-            switchChat(data.active_chat_id, true);
+            // We need to make sure the chat is fully loaded before syncing state
+            // In a real app, this would be an async operation.
+            // For now, we trigger the switch.
+            window.switchChat(data.active_chat_id, true);
         }
         if (data.buffer) {
             // Append buffer to current message if streaming
@@ -104,7 +107,7 @@ function handleWebSocketMessage(data) {
     }
     if (data.type === 'chat_switched') {
         // Force switch chat on all devices
-        loadChat(data.chat_id);
+        window.loadChat(data.chat_id);
         // Clear buffer if empty
         if (!data.buffer || data.buffer.length === 0) {
             if (typeof resetStreamState === 'function') resetStreamState();
@@ -121,6 +124,18 @@ function handleWebSocketMessage(data) {
     }
     if (data.type === 'user_message_added') {
         handleNewMessage(data.message);
+        console.log(`[DEBUG] Adding new user messsage`);
+        console.log(data.message);
+        return;
+    }
+    if (data.type === 'user_message_confirmed') {
+        console.log(`[DEBUG] Got user message confirmation for ID ${data.index}`)
+        // Remove 'sending...' status from the user message
+        const msgWrapper = chat.querySelector(`[data-index="${data.index}"]`);
+        if (msgWrapper) {
+            console.log(`[DEBUG] Confirming user message index: ${data.index}`);
+            msgWrapper.classList.remove('sending');
+        }
         return;
     }
     if (data.type === 'message_added') {
@@ -322,11 +337,6 @@ function handleWebSocketMessage(data) {
     if (data.type === 'ready') {
         // close the modal and resume everything
         closeModal('log');
-    }
-    if (data.type === 'shutdown') {
-        // show system logs
-        closeModal('settings');
-        showModal('log', true);
     }
     if (data.type === 'error') {
         if (typeof handleServerError === 'function') {

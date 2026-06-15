@@ -272,7 +272,6 @@ async function send(providedContent = null) {
     }
 
     if (isStreaming) return;
-    if (!message && !isRegenerate) return;
 
     // Prepare local UI to receive the stream (placeholder)
     window.placeholderUserWrapper = createPlaceholderUserMessage(message);

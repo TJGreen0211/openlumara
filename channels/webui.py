@@ -193,16 +193,6 @@ class ConnectionManager:
                     "buffer": final_buffer
                 })
                 
-                # # Commit to chat history
-                # messages = await channel_instance.context.chat.get() or []
-                # if messages:
-                #     last_msg = messages[-1]
-                #     last_msg['index'] = len(messages) - 1
-                #     await self.broadcast({
-                #         "type": "message_added",
-                #         "message": serialize_for_json(last_msg)
-                #     })
-                
                 # Clear buffer
                 self.stream_buffer = []
                 self.active_chat_id = None
@@ -748,13 +738,12 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
     next_index = len(messages)
     print(f"[DEBUG] Calculated next_index: {next_index}")
 
-    # 2. Broadcast the user message so all clients see it with the correct index
+    # 2. Broadcast the user message with the correct index
     user_msg_payload = payload_body.copy()
     if isinstance(user_msg_payload, dict):
         user_msg_payload['index'] = next_index
     
     print(f"[DEBUG] Broadcasting user message with index: {user_msg_payload}")
-    # Use a specific type for user messages to allow specialized client-side handling
     await manager.broadcast({
         "type": "user_message_added",
         "message": user_msg_payload
@@ -765,6 +754,8 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
     print(f"[DEBUG] Starting AI stream: stream_id={stream_id}")
 
     async def generator():
+        user_message_confirmed = False
+
         try:
             async for token_data in channel_instance.send_stream(payload_body, commands_authorized=True):
                 if stream_id in stream_cancellations:
@@ -775,6 +766,15 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
                 if isinstance(token_data, dict) and token_data.get('type') == 'error':
                     yield token_data
                     return
+
+                # AS SOON AS FIRST TOKEN ARRIVES: Confirm the user message to remove 'sending...'
+                # We use the index we calculated earlier
+                if not user_message_confirmed:
+                    user_message_confirmed = True
+                    await manager.broadcast({
+                        "type": "user_message_confirmed",
+                        "index": next_index
+                    })
 
                 yield token_data
         except Exception as e:
