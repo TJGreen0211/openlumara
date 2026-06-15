@@ -63,7 +63,7 @@ def _install_deps(module_name, packages, manager):
     except subprocess.CalledProcessError as e:
         manager.log(module_name, f"dependency install failed: {core.detail_error(e)}")
 
-def _uninstall_deps(module_name, packages):
+def _uninstall_deps(module_name, packages, manager):
     """uninstall pip packages"""
     if not packages:
         return

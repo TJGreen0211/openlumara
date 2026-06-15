@@ -1534,6 +1534,7 @@ class Webui(core.channel.Channel):
 
     async def on_shutdown(self):
         """Shutdown the server gracefully."""
+        await manager.broadcast({"type": "shutdown"})
         self.log("webui", "Shutting down WebUI server...")
         self.server.should_exit = True
         await asyncio.sleep(1) # Allow grace period
@@ -1543,7 +1544,10 @@ class Webui(core.channel.Channel):
         print(f"Please open the WebUI at {self.url}", flush=True)
 
         # broadcast the signal that makes the page refresh
-        await manager.broadcast({"type": "ready", "content": "ready"})
+
+        # make sure the websocket has time to connect first
+        await asyncio.sleep(0.5)
+        await manager.broadcast({"type": "ready"})
 
     def on_log(self, category, message):
         # Store log in buffer for history

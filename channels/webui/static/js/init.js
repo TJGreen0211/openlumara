@@ -88,8 +88,13 @@ function handleWebSocketMessage(data) {
         return;
     }
     if (data.type === 'ready') {
-        // refresh the page
-        window.location.reload();
+        // close the modal and resume everything
+        closeModal('log');
+    }
+    if (data.type === 'shutdown') {
+        // show system logs
+        closeModal('settings');
+        showModal('log', true);
     }
     // Legacy: handle raw message objects (for backwards compatibility)
     // Add an index if missing to ensure proper handling

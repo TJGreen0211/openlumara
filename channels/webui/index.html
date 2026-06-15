@@ -171,12 +171,7 @@
                                 <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M6 16h12"></path>
                             </svg>
                         </button>
-                        <button class="header-btn" onclick="toggleModal('log')" title="System Logs">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="4 17 10 11 4 5"></polyline>
-                                <line x1="12" y1="19" x2="20" y2="19"></line>
-                            </svg>
-                        </button>
+ 
                         <button class="header-btn" onclick="showStorageEditor()" title="Storage Editor">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -508,13 +503,9 @@
                 <div class="modal log-modal" id="log-modal" role="dialog" aria-labelledby="log-title">
                     <div class="modal-header">
                         <h2 id="log-title">System Logs</h2>
-                        <button class="modal-close" onclick="toggleModal('log')" aria-label="Close log">×</button>
+                        <button id="log-close" class="modal-close" onclick="toggleModal('log')" aria-label="Close log">×</button>
                     </div>
                     <div class="modal-content log-content">
-                        <div class="log-toolbar">
-                            <button onclick="clearLog()" title="Clear log">Clear</button>
-                            <button onclick="toggleLogAutoScroll()" id="log-autoscroll-btn" title="Toggle auto-scroll">Auto-scroll: ON</button>
-                        </div>
                         <div class="log-container" id="log-log-container">
                             <div id="log-log-content"></div>
                         </div>

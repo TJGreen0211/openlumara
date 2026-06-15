@@ -99,7 +99,7 @@ class Manager:
         if not self.args.disable_auto_installer:
             system_changed = False
             for chan_name in enabled_channels:
-                installed = await core.modules.install_module_deps(channels, chan_name)
+                installed = await core.modules.install_module_deps(channels, chan_name, self)
                 if installed:
                     newly_installed_channels.append(chan_name)
 
@@ -151,7 +151,7 @@ class Manager:
             newly_installed_modules = []
             if not self.args.disable_auto_installer:
                 for mod_name in enabled_modules:
-                    installed = await core.modules.install_module_deps(modules, mod_name, manager)
+                    installed = await core.modules.install_module_deps(modules, mod_name, self)
                     if installed:
                         newly_installed_modules.append(mod_name)
 
@@ -182,7 +182,7 @@ class Manager:
             newly_installed_user_modules = []
             if not self.args.disable_auto_installer:
                 for mod_name in enabled_user_modules:
-                    installed = await core.modules.install_module_deps(user_modules, mod_name, manager)
+                    installed = await core.modules.install_module_deps(user_modules, mod_name, self)
 
                     if installed:
                         newly_installed_user_modules.append(mod_name)

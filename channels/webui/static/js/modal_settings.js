@@ -710,6 +710,42 @@ function renderSettingsNav(categories) {
         }
     });
 
+    // add special buttons
+
+    const divider = document.createElement('div')
+    divider.className = "settings-nav-divider";
+
+    nav.appendChild(divider);
+
+    const logBtn = document.createElement('button');
+    logBtn.className = 'settings-nav-item';
+    logBtn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <polyline points="4 17 10 11 4 5"></polyline>
+    <line x1="12" y1="19" x2="20" y2="19"></line>
+    </svg>
+    <span>System Logs</span>
+    `;
+    logBtn.onclick = () => toggleModal('log');
+    nav.appendChild(logBtn);
+
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'settings-nav-item restart-btn';
+    restartBtn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.78.8 6.5 2.1l.5.4"/>
+    <path d="M21 3v5h-5"/>
+    </svg>
+    <span>Restart Server</span>
+    `;
+    restartBtn.onclick = async () => {
+        const confirmed = await showConfirmDialog("Are you sure you want to restart the server? This will disconnect the web UI momentarily.");
+        if (confirmed) {
+            restartServer();
+        }
+    };
+    nav.appendChild(restartBtn);
+
     // Restore active highlight after re-rendering
     if (activeSettingsCategory) {
         document.querySelectorAll('.settings-nav-item').forEach(item => {
@@ -2189,7 +2225,6 @@ async function saveSettings() {
         settingsHasChanges = false;
 
         if (hasChannelOrModuleChanges) {
-            showSettingsSuccessWithRestart();
             await restartServer();
         } else if (hasApiOrModelChanges) {
             await reconnectApi();
@@ -2267,8 +2302,9 @@ async function restartServer() {
             restartMsg.textContent = 'Restarting server...';
         }
 
-        toggleModal('settings');
-        toggleModal('log');
+        // show system logs
+        closeModal('settings');
+        showModal('log', true);
 
         const response = await fetch('/server/restart', {
             method: 'POST',
@@ -2277,51 +2313,12 @@ async function restartServer() {
             // Server might disconnect during restart, which is expected
             return { ok: true };
         });
+
+        // the websocket signal handles the server's on_ready()
+        // so that we can close the modal again/reload the page
     } catch (err) {
         pass
     }
-}
-
-// Show settings saved with restart message
-function showSettingsSuccessWithRestart() {
-    const form = document.getElementById('settings-form');
-    const existing = form.querySelector('.setting-success-msg');
-    if (existing) existing.remove();
-
-    const success = document.createElement('div');
-    success.className = 'setting-success-msg restart-pending';
-    success.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
-    Settings saved! Server restarting...
-    `;
-
-    form.insertBefore(success, form.firstChild);
-}
-
-
-// Show restart notification
-function showRestartNotification() {
-    const form = document.getElementById('settings-form');
-    const existing = form.querySelector('.restart-notification');
-    if (existing) existing.remove();
-
-    const notification = document.createElement('div');
-    notification.className = 'restart-notification';
-    notification.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path>
-    <path d="M21 3v5h-5"></path>
-    </svg>
-    <div class="restart-content">
-    <div class="restart-title">Server Restarting</div>
-    <div class="restart-desc">The server is applying your changes. The page will refresh when ready.</div>
-    </div>
-    `;
-
-    form.insertBefore(notification, form.firstChild);
-
-    // Start polling for server availability
-    pollForServerRestart();
 }
 
 // Show restart failed message
@@ -3785,6 +3782,18 @@ toggleModal = function(modalName) {
     // Add this line to ensure the body class is correct on page load
     document.body.classList.toggle('token-bar-hidden', !isVisible);
 })();
+
+// Settings Sidebar Buttons
+document.getElementById('settings-log-btn').addEventListener('click', () => {
+    toggleModal('log');
+});
+
+document.getElementById('settings-restart-btn').addEventListener('click', async () => {
+    const confirmed = await showConfirmDialog("Are you sure you want to restart the server? This will disconnect the web UI momentarily.");
+    if (confirmed) {
+        restartServer();
+    }
+});
 
 
 // Create reasoning effort slider
