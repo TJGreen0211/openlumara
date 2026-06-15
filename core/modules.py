@@ -45,7 +45,7 @@ def _extract_deps_from_file(file_path):
         log("core", f"could not parse dependencies from {file_path}: {e}")
     return []
 
-def _install_deps(module_name, packages, manager):
+def _install_deps(module_name, packages):
     """install pip packages"""
     if not packages:
         return
