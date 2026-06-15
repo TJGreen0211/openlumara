@@ -1718,7 +1718,10 @@ class Webui(core.channel.Channel):
 
     async def on_push(self, message: dict):
         """Triggered when a message is pushed (announcements, etc)"""
-        await manager.broadcast(message)
+        next_index = len(await channel_instance.context.chat.get())
+        message["index"] = next_index
+        self.log("webui", f"sending push message (index: {next_index}) to clients")
+        await manager.broadcast({"type": "push", "message": message, "index": next_index})
 
 # Add SessionMiddleware with secure settings
 app.add_middleware(

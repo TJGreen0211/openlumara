@@ -147,19 +147,17 @@ function handleWebSocketMessage(data) {
     }
     if (data.type === 'chat_switched') {
         // Force switch chat on all devices
-        window.loadChat(data.chat_id);
-        // Clear buffer if empty
-        if (!data.buffer || data.buffer.length === 0) {
-            resetStreamState();
-            window._streamInitialized = false;
-        } else {
-            appendStreamText(data.buffer.join(''));
-            renderStreamSegments(window._currentAiMsgDiv);
+        if (data.chat_id === currentChatId) {
+            return;
         }
+
+        console.log("[DEBUG] switching chats..");
+
+        window.loadChat(data.chat_id);
         return;
     }
     if (data.type === 'user_message_added') {
-        handleUserMessage(data.message);
+        handleNewMessage(data.message);
         console.log(`[DEBUG] Adding new user messsage`);
         console.log(data.message);
         setInputState(true, false, true);
@@ -180,6 +178,14 @@ function handleWebSocketMessage(data) {
     }
 
     if (data.type === 'token') {
+        // empty the upload queue
+        if (window.upload_queue) {
+            window.upload_queue.wrappers.forEach(w => w.remove());
+            window.upload_queue.files = [];
+            window.upload_queue.wrappers = [];
+            window.updateUploadQueueUI();
+        }
+
         // Extract token type and content correctly
         let tokenType = 'content';
         let tokenContent = '';
@@ -330,7 +336,8 @@ function handleWebSocketMessage(data) {
         return;
     }
     if (data.type === 'push') {
-        handlePushMessage(data.message);
+        console.log("[DEBUG] handling push message");
+        handleNewMessage(data.message);
         return;
     }
     if (data.type === 'chat_metadata_updated') {
@@ -360,10 +367,13 @@ function handleWebSocketMessage(data) {
     }
 }
 
-function handleUserMessage(msg) {
+function handleNewMessage(msg) {
     // Only process if we have a valid WebSocket connection
     if (!isWsConnected) return;
+    console.log("checking if message index..");
+    console.log(msg);
     if (!msg || msg.index === undefined) return;
+    console.log("check proceeded");
     
     // Validate index is sequential (not older than what we already have)
     if (msg.index < lastMessageIndex) {
@@ -376,10 +386,6 @@ function handleUserMessage(msg) {
     lastMessageIndex = msg.index + 1;
     scrollToBottom();
     updateTokenUsage();
-}
-
-function handlePushMessage(msg) {
-    // stub
 }
 
 // =============================================================================
