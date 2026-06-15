@@ -60,8 +60,6 @@ function scheduleWsReconnect() {
 }
 
 function handlePromptProgress(prog) {
-    if (!prog || typeof prog !== 'object') return;
-
     const cache = prog.cache || 0;
     const processed = prog.processed - cache;
     const total = prog.total - cache;
@@ -132,7 +130,28 @@ function handleWebSocketMessage(data) {
         }
         return;
     }
+
     if (data.type === 'token') {
+        // Extract token type and content correctly
+        let tokenType = 'content';
+        let tokenContent = '';
+
+        if (data.message) {
+            tokenType = data.message.type || 'content';
+            tokenContent = data.message.content || '';
+        } else if (data.content) {
+            tokenContent = data.content;
+        }
+
+        console.log(data);
+
+        // Handle prompt progress
+        if (tokenType === 'prompt_progress') {
+            console.log("handling prompt progress");
+            handlePromptProgress(tokenContent);
+            return;
+        }
+
         // Real-time token broadcasting
         if (!window._currentAiMsgDiv) {
             // If no AI message wrapper exists, it means a new stream has started.
@@ -180,23 +199,6 @@ function handleWebSocketMessage(data) {
         } else if (window._currentAiWrapper && !window._currentAiWrapper.parentNode) {
             // Fallback: Insert AI wrapper if it was created but not yet in the DOM
             chat.insertBefore(window._currentAiWrapper, typing);
-        }
-
-        // Extract token type and content correctly
-        let tokenType = 'content';
-        let tokenContent = '';
-        
-        if (data.message) {
-            tokenType = data.message.type || 'content';
-            tokenContent = data.message.content || '';
-        } else if (data.content) {
-            tokenContent = data.content;
-        }
-
-        // Handle prompt progress
-        if (tokenType === 'prompt_progress' && tokenContent) {
-            handlePromptProgress(tokenContent);
-            return;
         }
 
         if (tokenType === 'reasoning' && tokenContent) {
