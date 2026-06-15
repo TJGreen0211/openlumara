@@ -253,18 +253,82 @@ class Chat:
 
         return False
 
-    async def get(self):
+    async def get(self, index = None):
         """get message history of current chat"""
         if self.current is None:
             return None
 
-        return self.data[self.current].get("messages", [])
+        messages = self.data[self.current].get("messages", [])
+        return messages
 
     async def get_id(self):
         if self.current is None:
             return None
 
         return self.data[self.current].get("id", None)
+
+    async def get_message(self, index: int):
+        if not self.current:
+            return None
+
+        messages = self.data[self.current]["messages"]
+
+        if index > len(messages):
+            return None
+
+        return messages[index]
+
+    async def get_last_message_with_role(self, role: str, cutoff_index: int = None):
+        if not self.current:
+            return False
+
+        # get last message by that role
+        messages = await self.get()
+
+        # if we have a "cutoff index",
+        # it means we have to search backwards
+        # from that index
+        # which is very useful for, say,
+        # regenerating a message
+        # because we can target the last user message
+        # before the cutoff index
+
+        if len(messages) == 1:
+            # just return the first index
+            return 0
+
+        if cutoff_index is not None:
+            start_index = cutoff_index
+        else:
+            # Start at the very end
+            start_index = len(messages)
+
+        for index in range(start_index, -1, -1):
+            if index >= len(messages):
+                continue
+
+            message = messages[index]
+            if message.get("role") == role:
+                return index
+
+        return -1
+
+    async def delete_from(self, index: int):
+        """
+        Deletes all messages below a certain index
+        """
+        if self.current is None:
+            return False
+
+        messages = await self.get()
+        if not messages:
+            return False
+
+        # return all messages up to and including the target message
+        new_messages = messages[:index+1]
+
+        await self.set(new_messages)
+        return True
 
     async def set(self, messages: list):
         """overwrite message history of current chat"""

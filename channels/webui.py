@@ -240,7 +240,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
             if session_data.get('username'):
                 return session_data.get('username')
         except Exception as e:
-            channel_instance.log("webui", f"WebSocket session auth failed: {e}")
+            channel_instance.log("webui", f"WebSocket session auth failed: {core.detail_error(e)}")
 
     # Method 2: Check Bearer token in query parameters
     token = websocket.query_params.get('token')
@@ -256,6 +256,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
 
     return None
 
+@app.websocket("/ws")
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     # Authenticate before accepting connection
@@ -333,14 +334,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 elif msg_type == "user_message":
                     # Handle user message via WebSocket
-                    payload_body = data.get("content")
-                    if payload_body:
+                    content = data.get("content")
+                    if content:
                         try:
                             chat_id = manager.active_chat_id or "default"
-                            print(f"[DEBUG] WebSocket: Received user_message. chat_id={chat_id}")
-                            await start_ai_stream_task(chat_id, payload_body)
+                            # Ensure payload is a dict
+                            payload = content if isinstance(content, dict) else {"role": "user", "content": content}
+                            await start_ai_stream_task(chat_id, payload)
                         except Exception as e:
-                            print(f"[DEBUG] WebSocket: Error starting stream: {e}")
+                            channel_instance.log("webui", f"WebSocket user_message error: {core.detail_error(e)}")
                             await manager.broadcast({
                                 "type": "error",
                                 "error": str(e)
@@ -348,15 +350,39 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         print("[DEBUG] WebSocket: Received user_message but no content")
 
+                elif msg_type == "message_regenerate":
+                    index = data.get("index")
+                    channel_instance.log("debug", f"regenerate endpoint hit. target: {index}")
+
+                    if index is not None and channel_instance:
+                        last_user_message_index = await channel_instance.context.chat.get_last_message_with_role("user", cutoff_index=index)
+                        user_message = await channel_instance.context.chat.get_message(last_user_message_index)
+                        await channel_instance.context.chat.delete_from(last_user_message_index-1)
+
+                        if user_message:
+                            channel_instance.log("debug", "broadcasting message update signal")
+                            # 1. Broadcast update to sync UI (removes the old assistant message)
+                            await manager.broadcast({
+                                "type": "messages_updated",
+                                "messages": await channel_instance.context.chat.get()
+                            })
+                            # 2. Start the new stream using the user content
+                            await start_ai_stream_task(await channel_instance.context.chat.get_id(), user_message)
+                        else:
+                            await manager.broadcast({
+                                "type": "error",
+                                "error": "Could not regenerate message (no preceding user message found)."
+                            })
+
             except json.JSONDecodeError:
                 pass
             except Exception as e:
-                channel_instance.log("webui", f"WebSocket command error: {e}")
+                channel_instance.log("webui", f"WebSocket command error: {core.detail_error(e)}")
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        channel_instance.log("webui", f"WebSocket error: {e}")
+        channel_instance.log("webui", f"WebSocket error: {core.detail_error(e)}")
         manager.disconnect(websocket)
 
 
@@ -781,7 +807,7 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
 
                 yield token_data
         except Exception as e:
-            print(f"[DEBUG] Generator error: {e}")
+            print(f"[DEBUG] Generator error: {core.detail_error(e)}")
             yield {'type': 'error', 'content': core.detail_error(e) if core.debug else str(e)}
 
     await manager.start_background_stream(chat_id, generator())
@@ -1300,7 +1326,7 @@ async def list_storage_files(user: str = Depends(require_auth)):
                             data = msgpack.unpackb(f.read())
                             file_type = 'dict' if isinstance(data, dict) else 'list' if isinstance(data, list) else 'text'
                 except Exception as e:
-                    channel_instance.log("webui", f"Error reading {rel_path}: {e}")
+                    channel_instance.log("webui", f"Error reading {rel_path}: {core.detail_error(e)}")
                     file_type = 'unknown'
             elif ext in ['.txt', '.md']:
                 file_type = 'text'
@@ -1367,7 +1393,7 @@ async def load_storage_file(file: str, user: str = Depends(require_auth)):
 
     except Exception as e:
         err_msg = core.detail_error(e) if core.debug else str(e)
-        channel_instance.log("webui", f"Error loading storage file: {e}")
+        channel_instance.log("webui", f"Error loading storage file: {core.detail_error(e)}")
         raise HTTPException(status_code=500, detail=err_msg)
 
 @app.post("/storage/save")
@@ -1436,7 +1462,7 @@ async def save_storage_file(request: Request, user: str = Depends(require_auth))
 
     except Exception as e:
         err_msg = core.detail_error(e) if core.debug else str(e)
-        channel_instance.log("webui", f"Error saving storage file: {e}")
+        channel_instance.log("webui", f"Error saving storage file: {core.detail_error(e)}")
         raise HTTPException(status_code=500, detail=err_msg)
 
 @app.post("/storage/delete-key")
@@ -1499,7 +1525,7 @@ async def delete_storage_key(request: Request, user: str = Depends(require_auth)
 
     except Exception as e:
         err_msg = core.detail_error(e) if core.debug else str(e)
-        channel_instance.log("webui", f"Error deleting key: {e}")
+        channel_instance.log("webui", f"Error deleting key: {core.detail_error(e)}")
         raise HTTPException(status_code=500, detail=err_msg)
 
 @app.post("/storage/add-key")
@@ -1562,7 +1588,7 @@ async def add_storage_key(request: Request, user: str = Depends(require_auth)):
 
     except Exception as e:
         err_msg = core.detail_error(e) if core.debug else str(e)
-        channel_instance.log("webui", f"Error adding key: {e}")
+        channel_instance.log("webui", f"Error adding key: {core.detail_error(e)}")
         raise HTTPException(status_code=500, detail=err_msg)
 
 # =============================================================================

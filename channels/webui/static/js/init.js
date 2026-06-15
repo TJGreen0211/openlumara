@@ -335,6 +335,15 @@ function handleWebSocketMessage(data) {
         window._streamInitialized = false;
         return;
     }
+    if (data.type === 'messages_updated') {
+        console.log('trying to re-render messages..');
+        console.log(data.messages);
+        try {
+            renderAllMessages(data.messages, false);
+        } catch (e) {
+            console.log(e);
+        }
+    }
     if (data.type === 'push') {
         console.log("[DEBUG] handling push message");
         handleNewMessage(data.message);
