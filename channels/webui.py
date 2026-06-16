@@ -277,7 +277,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if msg_type == "stop":
                     # Signal the API to stop
-                    channel_instance.log("debug", "attempting to stop stream");
                     if channel_instance:
                         await channel_instance.manager.API.cancel()
                         await manager.broadcast({
@@ -363,8 +362,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "type": "error",
                                 "error": str(e)
                             })
-                    else:
-                        print("[DEBUG] WebSocket: Received user_message but no content")
 
                 elif msg_type == "message_delete":
                     index = data.get("index")
@@ -379,7 +376,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg_type == "message_regenerate":
                     index = data.get("index")
-                    channel_instance.log("debug", f"regenerate endpoint hit. target: {index}")
 
                     if index is not None and channel_instance:
                         last_user_message_index = await channel_instance.context.chat.get_last_message_with_role("user", cutoff_index=index)
@@ -387,7 +383,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         await channel_instance.context.chat.delete_from(last_user_message_index-1)
 
                         if user_message:
-                            channel_instance.log("debug", "broadcasting message update signal")
                             # 1. Broadcast update to sync UI (removes the old assistant message)
                             await manager.broadcast({
                                 "type": "messages_updated",
@@ -787,19 +782,16 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
     Starts an AI response stream for a given chat.
     Broadcasts the user's message with the correct index first, then streams the AI response.
     """
-    print(f"[DEBUG] start_ai_stream_task: chat_id={chat_id}, payload={payload_body}")
     
     # 1. Calculate the true next index before broadcasting anything
     messages = await channel_instance.context.chat.get() or []
     next_index = len(messages)
-    print(f"[DEBUG] Calculated next_index: {next_index}")
 
     # 2. Broadcast the user message with the correct index
     user_msg_payload = payload_body.copy()
     if isinstance(user_msg_payload, dict):
         user_msg_payload['index'] = next_index
     
-    print(f"[DEBUG] Broadcasting user message with index: {user_msg_payload}")
     await manager.broadcast({
         "type": "user_message_added",
         "message": user_msg_payload
@@ -807,7 +799,6 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
 
     # 3. Start the AI stream
     stream_id = str(uuid.uuid4())[:8]
-    print(f"[DEBUG] Starting AI stream: stream_id={stream_id}")
 
     async def generator():
         user_message_confirmed = False
@@ -834,7 +825,6 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict):
 
                 yield token_data
         except Exception as e:
-            print(f"[DEBUG] Generator error: {core.detail_error(e)}")
             yield {'type': 'error', 'content': core.detail_error(e) if core.debug else str(e)}
 
     await manager.start_background_stream(chat_id, generator())
@@ -1748,7 +1738,7 @@ class Webui(core.channel.Channel):
         # broadcast the signal that makes the page refresh
 
         # make sure the websocket has time to connect first
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         await manager.broadcast({"type": "ready"})
 
     def on_log(self, category, message):

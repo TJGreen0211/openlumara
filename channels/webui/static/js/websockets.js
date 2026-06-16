@@ -1,5 +1,6 @@
 let wsSocket = null;
 let fancyProcessingIndicatorCreated = false;
+let catchingUpFromBuffer = false;
 
 function connectWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -62,7 +63,6 @@ function handlePromptProgress(prog) {
             progressData = JSON.parse(prog);
         }
     } catch (e) {
-        console.error('[DEBUG] Failed to parse progress data:', e);
         return;
     }
 
@@ -77,8 +77,7 @@ function handlePromptProgress(prog) {
     const remaining = (total - processed) > 0 ? (elapsed / processed) * (total - processed) : 0;
 
     // 1. create indicator
-    if (!fancyProcessingIndicatorCreated) {
-        console.log('[DEBUG] Creating prompt processing indicator');
+    if (!fancyProcessingIndicatorCreated && !catchingUpFromBuffer) {
         fancyProcessingIndicator = document.createElement('div');
         fancyProcessingIndicator.className = 'prompt-processing-indicator-wrapper tool-processing-content';
 
@@ -111,7 +110,7 @@ function handlePromptProgress(prog) {
         toolProcessingIndicatorElement.updateProgress(percent);
     }
 
-    if (progressBarFill) {
+    if (typeof progressBarFill !== 'undefined') {
         progressBarFill.style.width = `${percent}%`;
     }
     if (progressTextPercent && progressTextETA) {
@@ -205,9 +204,9 @@ function handleWebSocketMessage(data) {
     // Handle typed messages from backend
     if (data.type === 'sync_state') {
         if (data.buffer.length > 0) {
-            console.log('[DEBUG] Processing buffer catch-up');
+            catchingUpFromBuffer = true;
+            loadChat(data.active_chat_id, catchingUpFromBuffer);
             createAiWrapper();
-            fancyProcessingIndicatorCreated = true;
             data.buffer.forEach(token => processToken(token, true));
             clearProcessingIndicators();
         } else {
@@ -220,8 +219,7 @@ function handleWebSocketMessage(data) {
 
     if (data.type === 'chat_switched') {
         if (data.chat_id === currentChatId) return;
-        console.log("[DEBUG] switching chats..");
-        window.loadChat(data.chat_id);
+        window.loadChat(data.chat_id, catchingUpFromBuffer);
         return;
     }
 
@@ -279,7 +277,6 @@ function handleWebSocketMessage(data) {
 
         // Real-time token processing
         if (!window._currentAiMsgDiv) {
-            console.log('[DEBUG] First token received. Creating streaming AI wrapper.');
             createAiWrapper();
         } else if (window._currentAiWrapper && !window._currentAiWrapper.parentNode) {
             chat.insertBefore(window._currentAiWrapper, typing);
@@ -353,7 +350,13 @@ function handleWebSocketMessage(data) {
     }
 
     if (data.type === 'ready') {
+        // close the modal and resume everything
         closeModal('log');
+    }
+    if (data.type === 'shutdown') {
+        // show system logs
+        closeModal('settings');
+        showModal('log', true);
     }
 
     if (data.type === 'error') {

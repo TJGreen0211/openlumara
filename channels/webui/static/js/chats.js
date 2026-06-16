@@ -902,7 +902,7 @@ async function updateTokenUsage() {
     }
 }
 
-async function loadChat(chatId) {
+async function loadChat(chatId, onlyUpToUserMessage = false) {
     if (chatId === currentChatId) {
         closeSidebar();
         return;
@@ -919,26 +919,35 @@ async function loadChat(chatId) {
 
         if (data.success && data.chat) {
             currentChatId = chatId;
-            const messages = data.chat.messages || [];
+            let messages = data.chat.messages || [];
+
+            // If catching up on buffer, only load up to the last user message
+            if (onlyUpToUserMessage) {
+                let lastUserMsgIndex = -1;
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].role === 'user') {
+                        lastUserMsgIndex = i;
+                        break;
+                    }
+                }
+                if (lastUserMsgIndex !== -1) {
+                    messages = messages.slice(0, lastUserMsgIndex + 1);
+                }
+            }
+
             renderAllMessages(messages, true);
-            lastMessageIndex = data.chat.total || (messages.length > 0 ? messages[messages.length - 1].index + 1 : 0);
+
+            // Set lastMessageIndex based on the (potentially filtered) messages
+            lastMessageIndex = messages.length;
 
             updateChatTitleBar(data.chat.title, data.chat.tags || []);
             updateTokenUsage();
             closeSidebar();
 
-            // SMART UPDATE:
-            // Only perform a full re-render if the category actually changes.
-            // This prevents the "jump" during normal chat selection on desktop.
             const chatCategory = data.chat.category || 'general';
-
             if (chatCategory !== activeCategory) {
-                // Category changed (e.g., clicking a character chat while in 'General')
-                // We must reload to show the correct list and update the category strip
                 await loadChats();
             } else {
-                // Same category (e.g., clicking a different chat in the current list)
-                // Just swap the active class on the existing element
                 updateSidebarActiveChat(chatId);
             }
         }

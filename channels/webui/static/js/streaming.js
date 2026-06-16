@@ -1090,6 +1090,8 @@ function clearProcessingIndicators() {
 
     // Also clear the global reference
     toolProcessingIndicatorElement = null;
+
+    TypewriterAudioManager.stopProcessingSound();
 }
 
 /**

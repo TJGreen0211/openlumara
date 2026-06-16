@@ -12,9 +12,6 @@ async function init() {
         }, { once: true });
 
         await checkConnection();
-        if (isConnected) {
-            await restoreCurrentChat();
-        }
     } catch (err) {
         console.error('Failed to initialize connection:', err);
         isConnected = false;
