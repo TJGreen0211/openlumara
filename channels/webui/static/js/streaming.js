@@ -454,9 +454,6 @@ function handleToolCallDelta(data, aiMsgDiv, aiWrapper) {
 
         renderStreamingToolCall(index, streamingToolCalls[index], aiMsgDiv);
     }
-
-    // Update token usage as the assistant's tool call message has been added to context
-    updateTokenUsage();
 }
 
 /**
