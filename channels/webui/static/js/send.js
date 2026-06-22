@@ -15,6 +15,12 @@ async function send(providedContent = null) {
     const rawContent = providedContent !== null ? providedContent : inputField.value.trim();
     const message = typeof rawContent === 'string' ? rawContent : extractTextContent(rawContent);
 
+    // allow bypass for commands (they can be used while streaming is happening)
+    if (message.trim().startsWith('/') || message.trim().startsWith("STOP")) {
+        clearInput();
+        return sendCommand(message);
+    }
+
     // block sending while a stream is ongoing
     if (isStreaming) return;
 
@@ -89,9 +95,6 @@ async function send(providedContent = null) {
 
     let playedCompletionSound = false;
 
-    // Play send message sound
-    TypewriterAudioManager.play('send_message');
-
     let streamHadError = false;
     let streamStarted = false;
 
@@ -125,24 +128,18 @@ async function send(providedContent = null) {
 
 async function sendCommand(message) {
     try {
-        if (message.toLowerCase() === '/connect') {
-            await reconnectApi();
-            return;
-        }
-
         if (message.startsWith("/stop") || message.startsWith("STOP")) {
             await stopGeneration(true);
         } else {
-            // Create placeholder for the command being sent
-            placeholderUserWrapper = createPlaceholderUserMessage(message);
-            chat.insertBefore(placeholderUserWrapper, typing);
-            scrollToBottom();
+            // setInputState(true, true, true);
 
             const response = await fetch('/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({role: "user", content: message })
             });
+
+            // setInputState(false, false, false);
 
             if (response.status === 503) {
                 let errorData;
@@ -156,24 +153,9 @@ async function sendCommand(message) {
                     errorData.error_type,
                     errorData.action
                 );
-                removePlaceholder();
                 return;
             }
-
-            removePlaceholder();
         }
-
-        const chatResponse = await fetch('/chat/current');
-        const chatData = await chatResponse.json();
-        if (chatData.success && chatData.chat) {
-            currentChatId = chatData.chat.id;
-            updateChatTitleBar(
-                chatData.chat.title,
-                chatData.chat.tags || []
-            );
-        }
-
-        await loadChats();
     } catch (err) {
         console.error('Command failed:', err);
     }

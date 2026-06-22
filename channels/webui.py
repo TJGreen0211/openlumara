@@ -875,7 +875,20 @@ async def send_message(request: Request, user: str = Depends(require_auth)):
         raise HTTPException(status_code=503, detail=status)
 
     data = await request.json()
+    next_index = len(await channel_instance.context.chat.get())
+    data["index"] = next_index
+
+    await manager.broadcast({
+        "type": "user_message_added",
+        "message": data
+    })
+
     response = await channel_instance.send(data, commands_authorized=True)
+
+    await manager.broadcast({
+        "type": "user_message_confirmed",
+        "index": next_index
+    })
 
     if isinstance(response, dict) and 'error' in response:
         raise HTTPException(status_code=500, detail=response)
@@ -883,6 +896,9 @@ async def send_message(request: Request, user: str = Depends(require_auth)):
     messages = await channel_instance.context.chat.get() or []
     current_id = await channel_instance.context.chat.get_id()
     current_title = await channel_instance.context.chat.get_title()
+
+    await manager.broadcast({"type": "messages_updated", "messages": messages})
+    await manager.broadcast({"type": "stream_complete"})
 
     return {
         'response': response, 'total': len(messages),

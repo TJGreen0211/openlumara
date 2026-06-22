@@ -316,6 +316,9 @@ function handleWebSocketMessage(data) {
         sending_status.textContent = 'Sending...';
         msgEl.querySelector('.message').appendChild(sending_status);
 
+        // play the sound
+        TypewriterAudioManager.play('send_message');
+
         // clean up the upload queue
         if (window.upload_queue) {
             window.upload_queue.wrappers.forEach(w => w.remove());
@@ -401,6 +404,13 @@ function handleWebSocketMessage(data) {
     if (data.type === 'messages_updated') {
         try {
             renderAllMessages(data.messages, false);
+
+            // get last ai wrapper by finding the last ai message
+            const lastAiMsg = data.messages.findLast(msg => msg.role === 'assistant' && !msg.tool_calls);
+            if (lastAiMsg) {
+                window._currentAiWrapper = chat.querySelector(`[data-index="${lastAiMsg.index}"]`);
+                window._currentAiMsgDiv = window._currentAiWrapper.querySelector('.message');
+            }
         } catch (e) {
             console.log(e);
         }
@@ -459,6 +469,7 @@ function handleNewMessage(msg) {
     if (msg.index < lastMessageIndex) return;
 
     msgEl = renderSingleMessage(msg, msg.index, true);
+
     lastMessageIndex = msg.index + 1;
     scrollToBottom();
     updateTokenUsage();
