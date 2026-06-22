@@ -29,6 +29,8 @@ function showApiStatusUpdate(type, message) {
     // Use different styles based on type
     if (type === 'success') {
         msgDiv.className = 'message announce announce_info';
+    } else if (type === 'info') {
+        msgDiv.className = 'message announce announce_info';
     } else {
         msgDiv.className = 'message announce announce_info';
         msgDiv.style.borderLeft = '4px solid #FF0000;';
@@ -41,8 +43,8 @@ function showApiStatusUpdate(type, message) {
     chat.insertBefore(wrapper, typing);
     scrollToBottom();
 
-    // Auto-hide success messages after 5 seconds so they don't clutter chat
-    if (type === 'success') {
+    // Auto-hide success/info messages after 5 seconds so they don't clutter chat
+    if (type === 'success' || type === 'info') {
         setTimeout(hideApiStatus, 5000);
     }
 }
@@ -50,22 +52,28 @@ function showApiStatusUpdate(type, message) {
 function showConnectionStatus(status) {
     hideConnectionStatus();
     const wrapper = document.createElement('div');
-    wrapper.className = 'message-wrapper announce';
+    wrapper.className = 'message-wrapper announce connection-status-banner';
+    if (status === 'reconnecting') {
+        wrapper.classList.add('reconnecting-pulse');
+    }
     wrapper.setAttribute('role', 'status');
     wrapper.setAttribute('aria-live', 'polite');
 
     const msgDiv = document.createElement('div');
 
     let statusText = '';
+    let showReconnectBtn = false;
 
     switch(status) {
         case 'disconnected':
             msgDiv.className = 'message announce announce_error';
             statusText = 'Disconnected from server.';
+            showReconnectBtn = true;
             break;
         case 'reconnecting':
             msgDiv.className = 'message announce announce_info';
             statusText = 'Reconnecting...';
+            showReconnectBtn = true;
             break;
         case 'reconnected':
             msgDiv.className = 'message announce announce_info';
@@ -79,6 +87,17 @@ function showConnectionStatus(status) {
 
     msgDiv.textContent = statusText;
     wrapper.appendChild(msgDiv);
+
+    if (showReconnectBtn) {
+        const btn = document.createElement('button');
+        btn.className = 'reconnect-btn';
+        btn.textContent = 'Reconnect';
+        btn.addEventListener('click', () => {
+            wsReconnecting = true;
+            scheduleWsReconnect();
+        });
+        wrapper.appendChild(btn);
+    }
 
     statusMessageElement = wrapper;
     chat.insertBefore(wrapper, typing);

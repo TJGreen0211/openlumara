@@ -5,6 +5,40 @@ let catchingUpFromBuffer = false;
 let sending_status = null;
 let wsReconnecting = false;
 
+// Send queue: messages waiting to be sent while disconnected
+let sendQueue = [];
+
+/**
+ * Send a message immediately if the socket is open, otherwise queue it.
+ */
+function safeSocketSend(data) {
+    if (window.socket && window.socket.readyState === WebSocket.OPEN) {
+        window.socket.send(JSON.stringify(data));
+    } else {
+        sendQueue.push(data);
+    }
+}
+
+/**
+ * Drain the send queue by transmitting all queued messages over the WebSocket.
+ */
+function drainSendQueue() {
+    if (!window.socket || window.socket.readyState !== WebSocket.OPEN) {
+        return;
+    }
+    const messages = [...sendQueue];
+    sendQueue = [];
+    for (const msg of messages) {
+        try {
+            window.socket.send(JSON.stringify(msg));
+        } catch (e) {
+            // If sending fails, put it back in the queue
+            sendQueue.unshift(msg);
+            break;
+        }
+    }
+}
+
 function connectWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = window.apiToken || '';
@@ -28,6 +62,19 @@ function connectWebSocket() {
         isWsConnected = true;
         wsReconnecting = false;
         updateConnectionStatus('connected');
+        showConnectionStatus('reconnected');
+
+        // sync back up with the backend
+        try {
+            wsSocket.send(JSON.stringify({
+                type: 'reload_messages'
+            }));
+        } catch (e) {
+            console.warn('Failed to send message reload request:', e);
+        }
+
+        // Drain any queued messages
+        drainSendQueue();
     };
 
     wsSocket.onmessage = (event) => {
@@ -46,14 +93,16 @@ function connectWebSocket() {
             window.socket = null;
             isWsConnected = false;
             updateConnectionStatus('disconnected');
+            showConnectionStatus('reconnecting');
+            scheduleWsReconnect();
         }
-        scheduleWsReconnect();
     };
 
     wsSocket.onerror = (error) => {
         if (!wsReconnecting) {
             console.error('WebSocket error:', error);
         }
+        scheduleWsReconnect();
     };
 }
 

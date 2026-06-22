@@ -270,7 +270,6 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
     return None
 
 @app.websocket("/ws")
-@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     # Authenticate before accepting connection
     global channel_instance
@@ -299,6 +298,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     stream_id = data.get("id")
                     if stream_id:
                         stream_cancellations.add(stream_id)
+
+                elif msg_type == "reload_messages":
+                    # send all messages from current chat
+                    # for use with cases where the UI needs to sync back up
+                    # with the backend
+                    await manager.broadcast({
+                        "type": "messages_updated",
+                        "messages": await channel_instance.context.chat.get()
+                    })
 
                 elif msg_type == "rename":
                     new_title = data.get("title")

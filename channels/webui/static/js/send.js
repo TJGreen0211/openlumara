@@ -113,13 +113,13 @@ async function send(providedContent = null) {
             content: payloadBody
         }));
     } else {
-        showApiConfigError("Websocket connection is not ready. Please wait a bit and try again!", 'websocket_not_open');
-        isStreaming = false;
-        isDataStreaming = false;
-        setInputState(false, false, false);
-        if (window.placeholderUserWrapper && window.placeholderUserWrapper.parentNode) {
-            window.placeholderUserWrapper.remove();
-        }
+        // Socket not open — queue the message for later delivery
+        safeSocketSend({
+            type: 'user_message',
+            content: payloadBody
+        });
+        // Show a brief notification that the message is queued
+        showApiStatusUpdate('info', 'Message queued — will send when reconnected.');
     }
 }
 
@@ -293,7 +293,7 @@ const ERROR_MAP = {
         title: 'Stream Interrupted',
         message: 'The response was cut off unexpectedly.',
         action: 'Try clicking "Regenerate" to restart.',
-        icon: 'wifi_off'
+        icon: 'server'
     },
     'server_error': {
         title: 'Server Hiccup',
@@ -306,6 +306,12 @@ const ERROR_MAP = {
         message: 'Unable to reach the server.',
         action: 'Check your internet connection and try again.',
         icon: 'globe'
+    },
+    'websocket_not_open': {
+        title: 'WebSocket Unavailable',
+        message: 'The connection is not ready yet. Your message is queued.',
+        action: 'It will be sent automatically when reconnected.',
+        icon: 'server'
     },
     'default': {
         title: 'Something went wrong',
@@ -321,7 +327,6 @@ function getErrorIcon(type) {
         'lock': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
         'clock': '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
         'alert_circle': '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
-        'wifi_off': '<line x1="1" y1="1" x2="23" y2="23"/><path d="M2 2l20 20"/><path d="M12 12l0 0"/>',
         'globe': '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
         'server': '<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>'
     };
