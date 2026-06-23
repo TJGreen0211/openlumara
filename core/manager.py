@@ -350,6 +350,33 @@ class Manager:
 
         return True
 
+    async def reload_module(self, module_name: str):
+        """
+        Reload a specific module by re-running its setup and re-registering tools.
+        """
+        if module_name not in self.modules:
+            self.log("core", f"Module {module_name} not loaded, cannot reload")
+            return False
+
+        module = self.modules[module_name]
+        self.log("core", f"Reloading module: {module_name}")
+
+        # remove old tools for this module
+        await self.unload_module_tools(module)
+
+        # re-run the module's setup (on_ready usually contains the config-dependent initialization logic)
+        try:
+            await module.on_ready()
+        except Exception as e:
+            self.log("core", f"Error running on_ready for {module_name}: {core.detail_error(e)}")
+            return False
+
+        # re-add the module tools based on the new state (after on_ready's modifications)
+        await self.load_module_tools(module)
+
+        self.log("core", f"Module {module_name} reloaded successfully")
+        return True
+
     async def _initialize_api_connection(self):
         """Initialize API connection with user-friendly error handling."""
         self.log("API", "Connecting to AI..")
@@ -628,20 +655,7 @@ class Manager:
 
         return descriptions, clean_doc
 
-    async def add_module_class(self, module, is_user_module=False):
-        """
-        Adds tools to the manager based on a class with functions.
-        To make tools, just make a class like so:
-        class Mymodule(core.tools.Tools):
-            def search_web(query: str):
-                self.channel.send(your_websearch(query))
-        """
-
-        loaded_module = module(self, is_user_module)
-
-        if self.pure_mode:
-            return loaded_module
-
+    async def load_module_tools(self, module):
         for func_name in vars(module):
             if func_name.startswith("_"):
                 # skip private methods and other private properties
@@ -651,7 +665,7 @@ class Manager:
                 # builtin function
                 continue
 
-            if func_name in loaded_module.disabled_tools:
+            if func_name in module.disabled_tools:
                 continue
 
             try:
@@ -715,7 +729,7 @@ class Manager:
             tool = {
                 "type": "function",
                 "function": {
-                    "name": f"{loaded_module.name}_{func_name}",
+                    "name": f"{module.name}_{func_name}",
                     "parameters": {
                         "type": "object",
                         "properties": func_params_translated,
@@ -731,5 +745,31 @@ class Manager:
                 tool["function"]["description"] = docstring
 
             self.tools.append(tool)
+
+    async def unload_module_tools(self, module):
+        """unloads all modules belonging to the specified module"""
+
+        self.tools = [t for t in self.tools
+                     if not t["function"]["name"].startswith(f"{module.name}_")]
+        self.tool_names = [n for n in self.tool_names
+                          if not n.startswith(f"{module.name}_")]
+
+        return True
+
+    async def add_module_class(self, module, is_user_module=False):
+        """
+        Adds tools to the manager based on a class with functions.
+        To make tools, just make a class like so:
+        class Mymodule(core.tools.Tools):
+            def search_web(query: str):
+                self.channel.send(your_websearch(query))
+        """
+
+        loaded_module = module(self, is_user_module)
+
+        if self.pure_mode:
+            return loaded_module
+
+        await self.load_module_tools(loaded_module)
 
         return loaded_module

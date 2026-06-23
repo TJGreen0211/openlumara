@@ -184,7 +184,7 @@ class Channel:
     def log_error(self, msg: str, e: Exception):
         """console log but with extra spice for errors"""
         if core.debug:
-            self.log("error", f"{msg}: {detail_error(e)}")
+            self.log("error", f"{msg}: {core.detail_error(e)}")
             self.log("error traceback", traceback.format_exception(e))
         else:
             self.log("error", f"{msg}: {e}")
