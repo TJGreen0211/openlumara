@@ -338,7 +338,7 @@ class Coder(core.module.Module):
         return info[1] if info else None
 
     async def list_project_folders(self, project_name: str, depth_limit: int = 5, max_files_per_folder: int = 50):
-        """Get recursive tree view of a project."""
+        """Get recursive tree view of a project. Use to navigate and understand project structure."""
         project_path = self._get_project_path(project_name)
         if not os.path.exists(project_path):
             return self.result("Error: project does not exist", success=False)
@@ -368,7 +368,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def list_project_subfolder(self, project_name: str, sub_path: str = ""):
-        """List immediate contents of a project subfolder."""
+        """List immediate contents of a project subfolder. Use to explore specific directories."""
         target_path = core.sandbox_path(self._get_project_path(project_name), sub_path)
         if not os.path.isdir(target_path):
             return self.result("Error: path does not exist or is not a directory", success=False)
@@ -378,7 +378,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def create_project(self, project_name: str):
-        """Create a new project folder."""
+        """Create a new project folder. Use to initialize a new project workspace."""
         if self.config.get("writing_mode") == "read-only":
             return self.result("Error: Coder is in read-only mode", success=False)
         base_path = self._get_project_path(project_name)
@@ -391,7 +391,7 @@ class Coder(core.module.Module):
             return self.result(f"Error creating project: {e}", success=False)
 
     async def create_file(self, project_name: str, file_path: str, content: str):
-        """Create a new file with syntax validation."""
+        """Create a new file with syntax validation. Use for entirely new files."""
         file_path_str = self._get_file_path(project_name, file_path)
         if os.path.exists(file_path_str):
             return self.result("Error: File already exists.", success=False)
@@ -411,7 +411,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def overwrite_file(self, project_name: str, file_path: str, content: str):
-        """Completely replace a file's content."""
+        """Completely replace a file's content. Only use as a last resort for massive refactors, and ensure you have the full file content before you use this."""
         file_path_str = self._get_file_path(project_name, file_path)
         language = self._get_language_from_ext(file_path_str)
 
@@ -431,7 +431,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def append_to_file(self, project_name: str, file_path: str, content: str):
-        """Append content to a file with syntax validation."""
+        """Append content to the end of a file. Use for adding new code at the bottom."""
         file_path_str = self._get_file_path(project_name, file_path)
         target_dir = os.path.dirname(file_path_str)
 
@@ -460,7 +460,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def execute(self, project_name: str, file_path: str, timeout: int = 30):
-        """Execute a script file."""
+        """Execute a script file. Only use if code execution is explicitly enabled and requested."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -483,7 +483,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def get_outline(self, project_name: str, file_path: str, language: str = None):
-        """List all symbols in a file."""
+        """List all symbols in a file. Always call this first to identify target symbols before reading or editing."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -501,7 +501,7 @@ class Coder(core.module.Module):
         return self.result({"symbols": [{"name": s["name"], "type": s["type"]} for s in symbols]}, success=True)
 
     async def get_symbol(self, project_name: str, file_path: str, symbol_name: str, language: str = None):
-        """Read a specific symbol (function/class/method)."""
+        """Read a specific symbol (function/class/method). Use after get_outline to inspect exact code before making changes."""
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
@@ -525,7 +525,7 @@ class Coder(core.module.Module):
         return found_code
 
     async def edit_symbol(self, project_name: str, file_path: str, symbol_name: str, new_content: str, language: str = None):
-        """Replace a symbol's implementation."""
+        """Replace a single symbol's implementation. Use for all modifications to existing functions, classes, or methods."""
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
@@ -556,7 +556,7 @@ class Coder(core.module.Module):
         return self.result(f"Symbol '{symbol_name}' edited in {file_path}", success=True)
 
     async def add_symbol_before(self, project_name: str, file_path: str, target_symbol_name: str, name: str, content_body: str, language: str = None):
-        """Insert a new symbol before an existing one."""
+        """Insert a new symbol before an existing one. Use for adding new functions, methods, or classes."""
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
@@ -591,7 +591,7 @@ class Coder(core.module.Module):
         return self.result(f"Symbol '{name}' added before '{target_symbol_name}'", success=True)
 
     async def add_symbol_after(self, project_name: str, file_path: str, target_symbol_name: str, name: str, content_body: str, language: str = None):
-        """Insert a new symbol after an existing one."""
+        """Insert a new symbol after an existing one. Use for adding new functions, methods, or classes."""
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
@@ -627,7 +627,7 @@ class Coder(core.module.Module):
         return self.result(f"Symbol '{name}' added after '{target_symbol_name}'", success=True)
 
     async def delete_symbol(self, project_name: str, file_path: str, symbol_name: str, language: str = None):
-        """Remove a symbol from a file."""
+        """Remove a single symbol. Use to delete functions, classes, or methods."""
         file_path_str = self._get_file_path(project_name, file_path)
 
         if not os.path.exists(file_path_str):
@@ -656,7 +656,7 @@ class Coder(core.module.Module):
         return self.result(f"Symbol '{symbol_name}' deleted from {file_path}", success=True)
 
     async def read_file(self, project_name: str, file_path: str, limit: int = None, offset: int = None):
-        """Read file content with pagination."""
+        """Read file content with pagination. ONLY use if symbol-level reading fails or the file lacks parseable symbols."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -687,7 +687,7 @@ class Coder(core.module.Module):
             return self.result(f"Error reading file: {e}", success=False)
 
     async def search_in_file(self, project_name: str, file_path: str, query: str, context_lines: int = 5, max_matches: int = 10):
-        """Search for text within a single file."""
+        """Search for text within a single file. Use for locating exact strings when symbols are unavailable."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -710,7 +710,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def search_replace(self, project_name: str, file_path: str, query: str, replacement: str):
-        """Replace all occurrences of a string in a file."""
+        """Replace all occurrences of a string in a file. ONLY use if symbol-level replacement is impossible."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -733,7 +733,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def edit(self, project_name: str, file_path: str, old_text: str, new_text: str):
-        """Perform a single precise text replacement."""
+        """Perform a single precise text replacement. ONLY use if symbol-level editing fails."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -757,7 +757,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def grep(self, project_name: str, path: str = "", pattern: str = "", case_sensitive: bool = False, max_results: int = None):
-        """Search for text across all files in a project."""
+        """Search for text across files. Returns code snippets with symbol context. Use `get_outline` and `get_symbol` for full code views."""
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.isdir(search_dir):
             return self.result("Error: search directory does not exist", success=False)
@@ -765,6 +765,7 @@ class Coder(core.module.Module):
         try:
             results, total_matches, file_count = [], 0, 0
             search_text = pattern if case_sensitive else pattern.lower()
+
             for root, dirs, files in os.walk(search_dir):
                 dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'venv', '__pycache__', '.git', 'node_modules'}]
                 for filename in sorted(files):
@@ -773,27 +774,59 @@ class Coder(core.module.Module):
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in ('.pyc', '.pyo', '.so', '.dll', '.exe', '.bin', '.db', '.sqlite', '.png', '.jpg', '.gif', '.pdf'):
                         continue
+
+                    language = self._get_language_from_ext(filepath)
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                            for line_num, line in enumerate(f, 1):
-                                if search_text in (line if case_sensitive else line.lower()):
-                                    results.append(f"{rel_path}:{line_num}: {line.rstrip('\n')[:200]}")
-                                    total_matches += 1
-                                    if total_matches >= max_results:
-                                        break
-                    except (IOError, OSError):
+                            lines = f.readlines()
+
+                        # Map 0-based line indices to symbol names if supported
+                        symbol_map = {}
+                        if language != 'generic' and language in self.LANGUAGES:
+                            parse_result = self._parse_file(filepath, language)
+                            if parse_result:
+                                tree, _ = parse_result
+                                lang_config = self.LANGUAGES[language]
+                                target_types = lang_config.get('symbol_types', {})
+
+                                def collect_symbols(node, parent_symbol):
+                                    for child in node.children:
+                                        if child.type in target_types:
+                                            sym_name = None
+                                            for c in child.children:
+                                                if c.type in ['identifier', 'property_identifier', 'name', 'field_identifier']:
+                                                    try: sym_name = c.text.decode('utf-8'); break
+                                                    except: pass
+                                            if sym_name:
+                                                parent_symbol = f"{target_types[child.type]}: {sym_name}"
+                                        # Assign parent_symbol to all lines this node spans
+                                        if parent_symbol:
+                                            for ln in range(child.start_point[0], child.end_point[0] + 1):
+                                                symbol_map[ln] = parent_symbol
+                                        collect_symbols(child, parent_symbol)
+
+                                collect_symbols(tree.root_node, "Global")
+
+                        for i, line in enumerate(lines):
+                            if total_matches >= max_results: break
+                            if search_text in (line if case_sensitive else line.lower()):
+                                sym = symbol_map.get(i, "Global")
+                                snippet = line.rstrip('\n')[:200]
+                                results.append(f"[{sym}] {snippet}")
+                                total_matches += 1
+                    except Exception:
                         continue
                     file_count += 1
-                    if total_matches >= max_results:
-                        break
-                if total_matches >= max_results:
-                    break
+                    if total_matches >= max_results: break
+                if total_matches >= max_results: break
+
             return self.result({"pattern": pattern, "matches": len(results), "files_searched": file_count, "truncated": total_matches > max_results, "results": results}, success=True)
         except Exception as e:
             return self.result(f"Error: {e}", success=False)
 
+
     async def find_files(self, project_name: str, pattern: str = "*", path: str = "", file_type: str = "any"):
-        """Find files matching a glob pattern."""
+        """Find files matching a glob pattern. Use to locate files by name or extension."""
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.exists(search_dir):
             return self.result("Error: search directory does not exist", success=False)
@@ -814,7 +847,7 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def list_backups(self, project_name: str, file_path: str) -> dict:
-        """List available backups for a file."""
+        """List available backups for a file. Use to recover previous versions before major edits."""
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return {"success": False, "error": "File does not exist"}
@@ -858,6 +891,44 @@ class Coder(core.module.Module):
         coding_style = self.config.get("coding_style")
         if coding_style:
             output += f"\n## Coding Style\n{coding_style}\n"
+
+        # Dynamically detect if symbol-level tools are active
+        reading_mode = self.config.get("reading_mode")
+        writing_mode = self.config.get("writing_mode")
+
+        if reading_mode in ("symbols", "both") or writing_mode in ("symbols", "both"):
+            supported_langs = ", ".join(sorted(self.LANGUAGES.keys()))
+            output += f"""
+## Tool Selection Strategy
+
+The coder uses treesitter to automatically parse source code files so that you can target specific classes and functions and efficiently make surgical edits.
+Surgical precision is enabled for: {supported_langs}
+
+For these languages, these instructions apply:
+
+1.  **Discovery Phase (Mandatory):** Before reading or editing, you must locate the target code.
+    -   **Search:** Use `grep` to find code snippets across files.
+    -   **List:** Use `get_outline` to see the structure of a specific file.
+2.  **Surgical Precision (Preferred):**
+    -   **Reading:** Use `get_symbol` to read specific functions/classes. **Do not read the whole file just to see one function.**
+    -   **Editing:** Use `edit_symbol` for precise changes.
+3.  **File-Level (Exceptions Only):** Use `read_file`, `edit`, `search_replace` ONLY when:
+    -   You need to inspect imports, top-level constants, or comments outside symbols.
+    -   The change involves moving code between symbols (e.g. moving a function to a new class).
+    -   Tree-sitter fails to parse a symbol.
+
+**Efficiency Note:** Using symbol-level tools is significantly more efficient for your context window. Reading entire files is considered a fallback strategy and should be avoided unless you are performing a full-file refactor.
+
+## Examples
+✅ CORRECT: "I'll use `grep` to find the function definition first." -> `grep`
+✅ CORRECT: "I'll get the outline to see the class structure." -> `get_outline`
+✅ CORRECT: "I need to see the imports, so I'll read the file." -> `read_file`
+❌ WRONG: "I'll read the file to understand the function." -> `read_file` (Should use `get_symbol`)
+❌ WRONG: "I'll edit the file directly." -> `edit` (Should use `edit_symbol`)
+
+
+"""
+
         if self.config.get("add_project_list_to_system_prompt"):
             try:
                 projects = [f for f in os.listdir(self.sandbox_path) if os.path.isdir(os.path.join(self.sandbox_path, f))]
