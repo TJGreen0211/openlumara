@@ -2261,9 +2261,21 @@ async function saveSettings() {
 
 // Detect if there are changes beyond just theme
 // Detect if there are changes in channel or module settings
+// Detect if there are changes beyond just theme
+// Detect if there are changes in channel or module settings
 function detectChannelOrModuleChanges() {
     for (const key of ['channels', 'modules', 'user_modules']) {
-        if (settingsData[key] && JSON.stringify(settingsData[key]) !== JSON.stringify(settingsOriginal[key])) {
+        const newData = settingsData[key];
+        const oldData = settingsOriginal[key];
+        if (!newData || !oldData) continue;
+
+        // Only check enabled/disabled arrays, not settings values
+        const newEnabled = JSON.stringify(newData.enabled || []);
+        const oldEnabled = JSON.stringify(oldData.enabled || []);
+        const newDisabled = JSON.stringify(newData.disabled || []);
+        const oldDisabled = JSON.stringify(oldData.disabled || []);
+
+        if (newEnabled !== oldEnabled || newDisabled !== oldDisabled) {
             return true;
         }
     }
@@ -2363,6 +2375,7 @@ function showSettingsSuccess() {
 
     form.insertBefore(success, form.firstChild);
     setTimeout(() => success.remove(), 3000);
+    toggleModal('settings');
 }
 
 // Show error message
