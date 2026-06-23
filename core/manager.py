@@ -169,6 +169,7 @@ class Manager:
                         await loaded_module.on_install()
 
                     await loaded_module._start()
+                    await self.load_module_tools(loaded_module)
 
                     self.modules[loaded_module.name] = loaded_module
                     loaded_module_names.append(loaded_module.name)
@@ -200,6 +201,7 @@ class Manager:
                         await loaded_module.on_install()
 
                     await loaded_module._start()
+                    await self.load_module_tools(loaded_module)
 
                     self.modules[loaded_module.name] = loaded_module
                     loaded_module_names.append(loaded_module.name)
@@ -763,5 +765,4 @@ class Manager:
         if self.pure_mode:
             return loaded_module
 
-        await self.load_module_tools(loaded_module)
         return loaded_module
