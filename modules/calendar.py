@@ -43,7 +43,6 @@ class Calendar(core.module.Module):
     async def on_ready(self):
         self.events = core.storage.StorageList("calendar", "json")
 
-    async def on_ready(self):
         # schedule all event notifications
         for event in self.events:
             if event.get("notify"):
