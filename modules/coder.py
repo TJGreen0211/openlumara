@@ -715,7 +715,8 @@ class Coder(core.module.Module):
             return self.result(f"Error reading file: {e}", success=False)
 
     async def search(self, project_name: str, file_path: str, query: str, context_lines: int = 5, max_matches: int = 10):
-        """Search for text within a single file. Use for locating exact strings when symbols are unavailable."""
+        """Search for text within a single file using regex patterns. Use for locating exact strings when symbols are unavailable."""
+        import re
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
@@ -723,16 +724,32 @@ class Coder(core.module.Module):
             with open(file_path_str, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             matches, num_lines = [], len(lines)
-            query_lower = query.lower()
+            
+            # Try to compile as regex first, fall back to simple substring matching
+            compiled_pattern = None
+            try:
+                compiled_pattern = re.compile(query, re.IGNORECASE)
+            except re.error:
+                # Not a valid regex, use simple substring matching (backward compatible)
+                query_lower = query.lower()
+            
             for i, line in enumerate(lines):
                 if len(matches) >= max_matches:
                     break
-                if query_lower in line.lower():
-                    snippet = [f"--- Match at line {i+1} ---"]
-                    for j in range(max(0, i - context_lines), min(num_lines, i + context_lines + 1)):
-                        marker = "  <-- MATCH" if j == i else ""
-                        snippet.append(f"{j+1:4}: {lines[j].rstrip('\n\r')}{marker}")
-                    matches.append("\n".join(snippet))
+                if compiled_pattern:
+                    if compiled_pattern.search(line):
+                        snippet = [f"--- Match at line {i+1} ---"]
+                        for j in range(max(0, i - context_lines), min(num_lines, i + context_lines + 1)):
+                            marker = "  <-- MATCH" if j == i else ""
+                            snippet.append(f"{j+1:4}: {lines[j].rstrip('\n\r')}{marker}")
+                        matches.append("\n".join(snippet))
+                else:
+                    if query_lower in line.lower():
+                        snippet = [f"--- Match at line {i+1} ---"]
+                        for j in range(max(0, i - context_lines), min(num_lines, i + context_lines + 1)):
+                            marker = "  <-- MATCH" if j == i else ""
+                            snippet.append(f"{j+1:4}: {lines[j].rstrip('\n\r')}{marker}")
+                        matches.append("\n".join(snippet))
             return self.result({"matches": len(matches), "file": file_path, "results": "\n\n".join(matches)}, success=True)
         except OSError as e:
             return self.result(f"Error: {e}", success=False)
@@ -761,20 +778,33 @@ class Coder(core.module.Module):
             return self.result(f"Error: {e}", success=False)
 
     async def grep(self, project_name: str, path: str = "", pattern: str = "", case_sensitive: bool = False, max_results: int = None):
-        """Search for text across files. Returns code snippets with symbol context. Use `get_outline` and `get_symbol` for full code views."""
+        """Search for text across files using regex patterns. Returns code snippets with symbol context. Use `get_outline` and `get_symbol` for full code views."""
+        import re
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.isdir(search_dir):
             return self.result("Error: search directory does not exist", success=False)
         max_results = max_results or self.config.get("limits", {}).get("max_grep_results", 50)
+        
+        # Get folder blacklist from config
+        folder_blacklist = set(self.config.get("limits", {}).get("folder_blacklist", ["venv", "__pycache__"]))
+        
         try:
+            # Compile the regex pattern
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                compiled_pattern = re.compile(pattern, flags)
+            except re.error as e:
+                return self.result(f"Error: invalid regex pattern - {e}", success=False)
+
             results, total_matches, file_count = [], 0, 0
-            search_text = pattern if case_sensitive else pattern.lower()
+            symbol_map = {}
+            lines = []
 
             for root, dirs, files in os.walk(search_dir):
-                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'venv', '__pycache__', '.git', 'node_modules'}]
+                # Filter out blacklisted and hidden directories using config
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in folder_blacklist]
                 for filename in sorted(files):
                     filepath = os.path.join(root, filename)
-                    rel_path = os.path.relpath(filepath, search_dir)
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in ('.pyc', '.pyo', '.so', '.dll', '.exe', '.bin', '.db', '.sqlite', '.png', '.jpg', '.gif', '.pdf'):
                         continue
@@ -813,7 +843,7 @@ class Coder(core.module.Module):
 
                         for i, line in enumerate(lines):
                             if total_matches >= max_results: break
-                            if search_text in (line if case_sensitive else line.lower()):
+                            if compiled_pattern.search(line):
                                 sym = symbol_map.get(i, "Global")
                                 snippet = line.rstrip('\n')[:200]
                                 results.append(f"[{sym}] {snippet}")
@@ -830,15 +860,45 @@ class Coder(core.module.Module):
 
 
     async def find_files(self, project_name: str, pattern: str = "*", path: str = "", file_type: str = "any"):
-        """Find files matching a glob pattern. Use to locate files by name or extension."""
+        """Find files matching a glob pattern. Searches recursively through the project directory structure.
+        
+        Args:
+            pattern: Glob pattern to match (e.g., '*.py', '**/*.js', 'src/**/*')
+            path: Subdirectory to search within (optional)
+            file_type: Filter by 'file', 'directory', or 'any' (default)
+        
+        Examples:
+            - '*.py' finds all Python files in the root
+            - '**/*.py' finds all Python files recursively
+            - 'src/**/*' finds all files in src/ and subdirectories
+        """
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.exists(search_dir):
             return self.result("Error: search directory does not exist", success=False)
+        
+        # Get folder blacklist from config
+        folder_blacklist = set(self.config.get("limits", {}).get("folder_blacklist", ["venv", "__pycache__"]))
+        
         try:
-            matches = glob_module.glob(os.path.join(search_dir, pattern), recursive=True)
+            # Normalize the pattern - ensure it supports recursive search
+            # If pattern doesn't contain **, prefix with **/ for recursive matching
+            normalized_pattern = pattern
+            if '**' not in pattern and '/' not in pattern:
+                normalized_pattern = f"**/{pattern}"
+            elif '/' in pattern and '**' not in pattern:
+                normalized_pattern = f"**/{pattern}"
+            
+            matches = glob_module.glob(os.path.join(search_dir, normalized_pattern), recursive=True)
             results = []
             for match in matches:
                 rel_path = os.path.relpath(match, search_dir)
+                # Skip if it's a hidden directory/file
+                if any(part.startswith('.') for part in rel_path.split(os.sep)):
+                    continue
+                # Skip if any path component is in the blacklist
+                path_parts = rel_path.split(os.sep)
+                if any(part in folder_blacklist for part in path_parts):
+                    continue
                 if file_type == "directory" and not os.path.isdir(match): continue
                 if file_type == "file" and not os.path.isfile(match): continue
                 try:
