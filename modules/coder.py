@@ -3,6 +3,7 @@ import os
 import asyncio
 import importlib
 import glob as glob_module
+import regex
 import time
 import shutil
 import stat
@@ -111,6 +112,10 @@ class Coder(core.module.Module):
         self._parser_cache = {}
         self.enabled_tools = []
         self.sandbox_path = os.path.expanduser(str(self.config.get("sandbox_folder", default="~/sandbox"))).rstrip(os.path.sep)
+
+        # prevents ReDoS attacks on every part of the coder that uses regexes
+        # by using the regex library instead of standard 're'
+        self.regex_timeout = 5.0
 
         self.enabled_tools.extend(["list_project_folders", "list_project_subfolder"])
 
@@ -716,10 +721,10 @@ class Coder(core.module.Module):
 
     async def search(self, project_name: str, file_path: str, query: str, context_lines: int = 5, max_matches: int = 10):
         """Search for text within a single file using regex patterns. Use for locating exact strings when symbols are unavailable."""
-        import re
         file_path_str = self._get_file_path(project_name, file_path)
         if not os.path.exists(file_path_str):
             return self.result("Error: file does not exist", success=False)
+        
         try:
             with open(file_path_str, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -728,8 +733,8 @@ class Coder(core.module.Module):
             # Try to compile as regex first, fall back to simple substring matching
             compiled_pattern = None
             try:
-                compiled_pattern = re.compile(query, re.IGNORECASE)
-            except re.error:
+                compiled_pattern = regex.compile(query, regex.IGNORECASE)
+            except regex.error:
                 # Not a valid regex, use simple substring matching (backward compatible)
                 query_lower = query.lower()
             
@@ -737,7 +742,14 @@ class Coder(core.module.Module):
                 if len(matches) >= max_matches:
                     break
                 if compiled_pattern:
-                    if compiled_pattern.search(line):
+                    # regex library has native timeout support to prevent ReDoS
+                    try:
+                        match_found = compiled_pattern.search(line, timeout=self.regex_timeout)
+                    except regex.error as e:
+                        if "timed out" in str(e).lower():
+                            self.log("coder", f"Regex timed out on {file_path}, line {i+1} - possible ReDoS, skipping")
+                        continue
+                    if match_found:
                         snippet = [f"--- Match at line {i+1} ---"]
                         for j in range(max(0, i - context_lines), min(num_lines, i + context_lines + 1)):
                             marker = "  <-- MATCH" if j == i else ""
@@ -779,7 +791,6 @@ class Coder(core.module.Module):
 
     async def grep(self, project_name: str, path: str = "", pattern: str = "", case_sensitive: bool = False, max_results: int = None):
         """Search for text across files using regex patterns. Returns code snippets with symbol context. Use `get_outline` and `get_symbol` for full code views."""
-        import re
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.isdir(search_dir):
             return self.result("Error: search directory does not exist", success=False)
@@ -787,13 +798,13 @@ class Coder(core.module.Module):
         
         # Get folder blacklist from config
         folder_blacklist = set(self.config.get("limits", {}).get("folder_blacklist", ["venv", "__pycache__"]))
-        
+
         try:
-            # Compile the regex pattern
-            flags = 0 if case_sensitive else re.IGNORECASE
+            # Compile the regex pattern with native timeout support
+            flags = 0 if case_sensitive else regex.IGNORECASE
             try:
-                compiled_pattern = re.compile(pattern, flags)
-            except re.error as e:
+                compiled_pattern = regex.compile(pattern, flags)
+            except regex.error as e:
                 return self.result(f"Error: invalid regex pattern - {e}", success=False)
 
             results, total_matches, file_count = [], 0, 0
@@ -843,7 +854,14 @@ class Coder(core.module.Module):
 
                         for i, line in enumerate(lines):
                             if total_matches >= max_results: break
-                            if compiled_pattern.search(line):
+                            # regex library has native timeout support to prevent ReDoS
+                            try:
+                                match_found = compiled_pattern.search(line, timeout=self.regex_timeout)
+                            except regex.error as e:
+                                if "timed out" in str(e).lower():
+                                    self.log("coder", f"Regex timed out on {filepath}, line {i+1} - possible ReDoS, skipping")
+                                continue
+                            if match_found:
                                 sym = symbol_map.get(i, "Global")
                                 snippet = line.rstrip('\n')[:200]
                                 results.append(f"[{sym}] {snippet}")
@@ -854,24 +872,13 @@ class Coder(core.module.Module):
                     if total_matches >= max_results: break
                 if total_matches >= max_results: break
 
-            return self.result({"pattern": pattern, "matches": len(results), "files_searched": file_count, "truncated": total_matches > max_results, "results": results}, success=True)
+            return self.result({"pattern": pattern, "matches": len(results), "truncated": total_matches > max_results, "results": results}, success=True)
         except Exception as e:
             return self.result(f"Error: {e}", success=False)
 
 
     async def find_files(self, project_name: str, pattern: str = "*", path: str = "", file_type: str = "any"):
-        """Find files matching a glob pattern. Searches recursively through the project directory structure.
-        
-        Args:
-            pattern: Glob pattern to match (e.g., '*.py', '**/*.js', 'src/**/*')
-            path: Subdirectory to search within (optional)
-            file_type: Filter by 'file', 'directory', or 'any' (default)
-        
-        Examples:
-            - '*.py' finds all Python files in the root
-            - '**/*.py' finds all Python files recursively
-            - 'src/**/*' finds all files in src/ and subdirectories
-        """
+        """Find files matching a glob pattern. Searches recursively through the project directory structure."""
         search_dir = core.sandbox_path(self._get_project_path(project_name), path) if path else self._get_project_path(project_name)
         if not os.path.exists(search_dir):
             return self.result("Error: search directory does not exist", success=False)
