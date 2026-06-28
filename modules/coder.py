@@ -816,6 +816,7 @@ class Coder(core.module.Module):
                 dirs[:] = [d for d in dirs if not d.startswith('.') and d not in folder_blacklist]
                 for filename in sorted(files):
                     filepath = os.path.join(root, filename)
+                    rel_path = os.path.relpath(filepath, search_dir)
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in ('.pyc', '.pyo', '.so', '.dll', '.exe', '.bin', '.db', '.sqlite', '.png', '.jpg', '.gif', '.pdf'):
                         continue
@@ -864,7 +865,7 @@ class Coder(core.module.Module):
                             if match_found:
                                 sym = symbol_map.get(i, "Global")
                                 snippet = line.rstrip('\n')[:200]
-                                results.append(f"[{sym}] {snippet}")
+                                results.append(f"[{rel_path}] [{sym}] {snippet}")
                                 total_matches += 1
                     except Exception:
                         continue
