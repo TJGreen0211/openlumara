@@ -58,15 +58,36 @@ FAILED_ATTEMPTS = defaultdict(list)
 RATE_LIMIT_WINDOW = 900  # 15 minutes
 MAX_ATTEMPTS = 5
 
-# Set of active Bearer tokens for API access
-ACTIVE_TOKENS: Set[str] = set()
+# Dict of active Bearer tokens for API access: token -> expiry timestamp
+ACTIVE_TOKENS: Dict[str, float] = {}
+TOKEN_EXPIRY_SECONDS = 2592000  # 30 days
+
+def _clean_expired_tokens():
+    """Remove expired tokens from the active set."""
+    now = time.time()
+    expired = [t for t, exp in ACTIVE_TOKENS.items() if now >= exp]
+    for t in expired:
+        ACTIVE_TOKENS.pop(t, None)
 
 # -----------------------------------------------------------------------------
 # FastAPI App Setup
 # -----------------------------------------------------------------------------
 
 webui_config = core.config.get("channels", {}).get("settings", {}).get("webui", {})
-SECRET_KEY = webui_config.get("secret_key", secrets.token_hex(32))
+
+# Persist SECRET_KEY in a file so session cookies survive app restarts.
+# Stored separately from config.yml because the config system may not be
+# initialized at module import time.
+_SECRET_KEY_FILE = os.path.join(core.get_path(), "data", "webui_session_key")
+
+if os.path.exists(_SECRET_KEY_FILE):
+    with open(_SECRET_KEY_FILE, "r") as f:
+        SECRET_KEY = f.read().strip()
+else:
+    SECRET_KEY = secrets.token_hex(32)
+    os.makedirs(os.path.dirname(_SECRET_KEY_FILE), exist_ok=True)
+    with open(_SECRET_KEY_FILE, "w") as f:
+        f.write(SECRET_KEY)
 
 app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -259,6 +280,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
             channel_instance.log("webui", f"WebSocket session auth failed: {core.detail_error(e)}")
 
     # Method 2: Check Bearer token in query parameters
+    _clean_expired_tokens()
     token = websocket.query_params.get('token')
     if token and token in ACTIVE_TOKENS:
         return "token_user"
@@ -489,6 +511,7 @@ async def get_current_user(request: Request):
         return request.session['username']
 
     # Check Bearer Token
+    _clean_expired_tokens()
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         token = auth_header[len('Bearer '):]
@@ -612,7 +635,7 @@ async def api_login(request: Request):
 
     if username == expected_username and password == expected_password:
         token = secrets.token_urlsafe(32)
-        ACTIVE_TOKENS.add(token)
+        ACTIVE_TOKENS[token] = time.time() + TOKEN_EXPIRY_SECONDS
         return {'token': token}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -631,7 +654,7 @@ async def api_logout(request: Request):
     if auth_header and auth_header.startswith('Bearer '):
         token = auth_header[len('Bearer '):]
         if token in ACTIVE_TOKENS:
-            ACTIVE_TOKENS.remove(token)
+            ACTIVE_TOKENS.pop(token, None)
     return {'success': True}
 
 # -----------------------------------------------------------------------------
@@ -1891,7 +1914,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     session_cookie="webui_session",
-    max_age=None,  # Session cookie (deleted when browser closes)
+    max_age=2592000,  # 30 days - persists across browser and app restarts
     same_site="lax",  # CSRF protection
     https_only=False  # Set to True in production with HTTPS
 )

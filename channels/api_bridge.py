@@ -72,7 +72,7 @@ class ApiBridge(core.channel.Channel):
 
     class ChatCompletionRequest(BaseModel):
         model: str
-        messages: List[ChatMessage]
+        messages: List["ApiBridge.ChatMessage"]
         stream: Optional[bool] = False
         temperature: Optional[float] = 1.0
         top_p: Optional[float] = 1.0
@@ -88,7 +88,7 @@ class ApiBridge(core.channel.Channel):
 
     class ModelsResponse(BaseModel):
         object: str = "list"
-        data: List[Model]
+        data: List["Model"]
 
     # -------------------------
     #   EVENT HANDLERS
@@ -114,7 +114,7 @@ class ApiBridge(core.channel.Channel):
     async def run(self):
         """The main loop: Starts the FastAPI server."""
         import socket
-        
+
         app = FastAPI(title="OpenLumara OpenAI Bridge")
 
         # allow requests from any origin
@@ -152,7 +152,7 @@ class ApiBridge(core.channel.Channel):
 
             if not chat_req.messages:
                 raise HTTPException(status_code=400, detail="No messages provided")
-            
+
             last_msg = chat_req.messages[-1]
             ol_message = {"role": last_msg.role, "content": last_msg.content}
 
@@ -171,7 +171,7 @@ class ApiBridge(core.channel.Channel):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((self.host, self.port))
             sock.listen(5)
-            
+
             config = uvicorn.Config(app, host=self.host, port=self.port, log_level="critical")
             self.server = uvicorn.Server(config)
 
@@ -213,7 +213,7 @@ class ApiBridge(core.channel.Channel):
                     "finish_reason": "stop"
                 }],
                 "usage": {
-                    "prompt_tokens": 0, 
+                    "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0
                 }
