@@ -15,30 +15,43 @@ class Chat:
     }
 
     """contains openAI messages array, and can save and load sets of messages from files"""
-    def __init__(self, channel):
-        self.data = core.storage.StorageList(f"{channel.name}_chats", "json")
+    def __init__(self, channel, data_path=None):
         self.channel = channel
+        self.data_path = data_path
         self.current = None
-        self.current_save_path = os.path.join(core.get_data_path(), f"{self.channel.name}_current_chat")
         self.using_api_token_data = False # gets instantly set to True upon first receive of token usage data
         self.token_encoding = None
         self.model_name = None
 
+        if data_path:
+            self.data = core.storage.StorageList(f"{channel.name}_chats", "json", path=data_path)
+            self.current_save_path = os.path.join(data_path, f"{self.channel.name}_current_chat")
+        else:
+            self.data = core.storage.StorageList(f"{channel.name}_chats", "json")
+            self.current_save_path = os.path.join(core.get_data_path(), f"{self.channel.name}_current_chat")
+
+        modified = False
         for index in range(len(self.data) - 1, -1, -1):
             chat = self.data[index]
             messages = chat.get("messages", [])
-            
+
             # find any blank chats and delete them
             if not messages:
                 self.data.pop(index)
+                modified = True
             # find chats that only contain command/responses and delete them
             elif self._is_command_only(messages):
                 self.data.pop(index)
+                modified = True
             # find any missing metadata fields and add them
             else:
                 for key, default_value in self.DEFAULT_DATA.items():
                     if key not in chat.keys():
                         self.data[index][key] = default_value
+                        modified = True
+
+        if modified:
+            self.data.save()
 
         # chat autoresume
         if os.path.exists(self.current_save_path) and core.config.get("core", {}).get("auto_resume_chats"):

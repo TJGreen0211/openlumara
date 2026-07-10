@@ -37,8 +37,23 @@ async function init() {
         });
 
         connectWebSocket();
+        await fetchCurrentUser();
     } catch (err) {
         console.error('Failed to initialize UI and polling:', err);
+    }
+}
+
+async function fetchCurrentUser() {
+    try {
+        const response = await fetch('/api/user/me');
+        if (response.ok) {
+            window.currentUser = await response.json();
+        } else {
+            window.currentUser = { username: 'user', role: 'user' };
+        }
+    } catch (e) {
+        console.warn('[Init] Failed to fetch current user:', e);
+        window.currentUser = { username: 'user', role: 'user' };
     }
 }
 

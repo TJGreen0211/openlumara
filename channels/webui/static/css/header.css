@@ -9,6 +9,17 @@ header {
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
+    z-index: 100;
+    overflow: hidden;
+    max-height: 80px;
+    transition: max-height 0.3s ease, padding 0.3s ease, border-bottom-width 0.3s ease;
+}
+
+header.hidden {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-width: 0;
 }
 
 .header-left {

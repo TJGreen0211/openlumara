@@ -11,8 +11,25 @@ function isScrolledToBottom() {
     return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
 }
 
+// Collapsible header on scroll
+let lastScrollTop = 0;
+const headerEl = document.querySelector('header');
+const chatTitleBar = document.querySelector('.chat-title-bar');
+
+function setHeaderHidden(hidden) {
+    if (hidden) {
+        headerEl.classList.add('hidden');
+        if (chatTitleBar) chatTitleBar.classList.add('hidden');
+    } else {
+        headerEl.classList.remove('hidden');
+        if (chatTitleBar) chatTitleBar.classList.remove('hidden');
+    }
+}
+
 // Listen for scroll events to detect user scrolling up
 chat.addEventListener('scroll', () => {
+    const st = chat.scrollTop;
+
     if (isScrolledToBottom()) {
         // User scrolled back to bottom - re-enable auto-scroll
         autoScrollEnabled = true;
@@ -20,6 +37,15 @@ chat.addEventListener('scroll', () => {
         // User scrolled up - disable auto-scroll
         autoScrollEnabled = false;
     }
+
+    // Hide header when scrolling down, show when scrolling up
+    if (st > lastScrollTop && st > 10) {
+        setHeaderHidden(true);
+    } else if (st < lastScrollTop) {
+        setHeaderHidden(false);
+    }
+
+    lastScrollTop = st <= 0 ? 0 : st;
 }, { passive: true });
 
 function formatTime() {

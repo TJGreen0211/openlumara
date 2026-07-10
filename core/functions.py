@@ -76,6 +76,19 @@ def get_data_path(subpath=None):
 
     return sandbox_path(data_path, subpath) if subpath else data_path
 
+def get_user_data_path(username, subpath=None):
+    """get path to a specific user's data directory under data/users/{username}/"""
+    base = get_data_path()
+    user_path = sandbox_path(base, os.path.join("users", username))
+
+    # create user data directory if it doesn't exist
+    if not os.path.exists(user_path):
+        os.makedirs(user_path, exist_ok=True)
+
+    if subpath:
+        return sandbox_path(user_path, subpath)
+    return user_path
+
 def remove_duplicates(lst: list):
     # removes duplicates from a list
 

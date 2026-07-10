@@ -1109,6 +1109,11 @@ function renderSettingsForm(categories, activeSettingsCategory = null) {
                                 const itemEl = createSettingItem(item);
                                 itemsContainer.appendChild(itemEl);
                             });
+
+                            // Render Users section for WebUI channel
+                            if (activeChannel === 'webui') {
+                                renderUsersSection(itemsContainer);
+                            }
                         } else {
                             // Fallback if no specific settings group exists
                             const msg = document.createElement('div');
@@ -1214,6 +1219,11 @@ function renderSettingsForm(categories, activeSettingsCategory = null) {
                                 const itemEl = createSettingItem(item);
                                 itemsContainer.appendChild(itemEl);
                             });
+
+                            // Render Users section for WebUI channel
+                            if (activeChannel === 'webui') {
+                                renderUsersSection(itemsContainer);
+                            }
                         } else {
                             // Fallback if no specific settings group exists
                             const msg = document.createElement('div');
@@ -4034,4 +4044,285 @@ function createPercentageSlider(key, value) {
 
     wrapper.appendChild(sliderRow);
     return wrapper;
+}
+
+// =============================================================================
+// Users Management Section (Multi-User Mode)
+// =============================================================================
+
+async function renderUsersSection(container) {
+    const currentUser = window.currentUser;
+    if (!currentUser || currentUser.role !== 'admin') return;
+
+    const multiUser = getCurrentValue('channels.settings.webui.multi_user');
+    if (!multiUser) return;
+
+    const section = document.createElement('div');
+    section.className = 'users-management-section';
+    section.style.cssText = 'margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'settings-btn primary';
+    addBtn.style.cssText = 'padding: 8px 16px; font-size: 0.85rem; gap: 6px;';
+    addBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Add User';
+    const title = document.createElement('h3');
+    title.className = 'settings-section-title';
+    title.textContent = 'Users';
+    header.appendChild(title);
+    header.appendChild(addBtn);
+    section.appendChild(header);
+
+    const addForm = document.createElement('div');
+    addForm.className = 'setting-collapsible';
+    addForm.id = 'add-user-form';
+    addForm.style.display = 'none';
+
+    const addFormHeader = document.createElement('div');
+    addFormHeader.className = 'setting-collapsible-header';
+    addFormHeader.innerHTML = '<span class="setting-collapsible-title"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg> New User</span>';
+    addForm.appendChild(addFormHeader);
+
+    const addFormContent = document.createElement('div');
+    addFormContent.className = 'setting-collapsible-content';
+
+    const usernameLabel = document.createElement('label');
+    usernameLabel.className = 'setting-label';
+    usernameLabel.textContent = 'Username';
+    const usernameInput = document.createElement('input');
+    usernameInput.type = 'text';
+    usernameInput.className = 'setting-input';
+    usernameInput.id = 'new-username';
+    usernameInput.placeholder = 'Enter username';
+
+    const passwordLabel = document.createElement('label');
+    passwordLabel.className = 'setting-label';
+    passwordLabel.textContent = 'Password';
+    const passwordInput = document.createElement('input');
+    passwordInput.type = 'password';
+    passwordInput.className = 'setting-input';
+    passwordInput.id = 'new-password';
+    passwordInput.placeholder = 'Enter password';
+
+    const roleLabel = document.createElement('label');
+    roleLabel.className = 'setting-label';
+    roleLabel.textContent = 'Role';
+    const roleSelect = document.createElement('select');
+    roleSelect.className = 'setting-select';
+    roleSelect.id = 'new-role';
+    ['admin', 'user'].forEach(role => {
+        const opt = document.createElement('option');
+        opt.value = role;
+        opt.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+        roleSelect.appendChild(opt);
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'settings-footer';
+    btnRow.style.cssText = 'padding: 12px 0; margin: 0; border-top: none; background: transparent; justify-content: flex-end; gap: 8px;';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'settings-btn secondary';
+    cancelBtn.style.cssText = 'padding: 8px 16px; font-size: 0.85rem;';
+    cancelBtn.textContent = 'Cancel';
+    const createBtn = document.createElement('button');
+    createBtn.className = 'settings-btn primary';
+    createBtn.style.cssText = 'padding: 8px 16px; font-size: 0.85rem;';
+    createBtn.textContent = 'Create';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(createBtn);
+
+    addFormContent.appendChild(usernameLabel);
+    addFormContent.appendChild(usernameInput);
+    addFormContent.appendChild(passwordLabel);
+    addFormContent.appendChild(passwordInput);
+    addFormContent.appendChild(roleLabel);
+    addFormContent.appendChild(roleSelect);
+    addFormContent.appendChild(btnRow);
+    addForm.appendChild(addFormContent);
+    section.appendChild(addForm);
+
+    const usersList = document.createElement('div');
+    usersList.id = 'users-list';
+    usersList.style.cssText = 'display: flex; flex-direction: column; gap: 2px;';
+    section.appendChild(usersList);
+    container.appendChild(section);
+
+    addBtn.onclick = () => {
+        const isVisible = addForm.classList.contains('expanded');
+        if (isVisible) {
+            addForm.classList.remove('expanded');
+            addForm.style.display = 'none';
+        } else {
+            addForm.classList.add('expanded');
+            addForm.style.display = 'block';
+        }
+    };
+    cancelBtn.onclick = () => {
+        addForm.classList.remove('expanded');
+        addForm.style.display = 'none';
+        usernameInput.value = '';
+        passwordInput.value = '';
+    };
+
+    createBtn.onclick = async () => {
+        createBtn.disabled = true;
+        createBtn.textContent = 'Creating...';
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        const role = roleSelect.value;
+        if (!username || !password) {
+            showToast('Username and password required', 'warning');
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create';
+            return;
+        }
+        if (password.length < 4) {
+            showToast('Password must be at least 4 characters', 'warning');
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create';
+            return;
+        }
+        try {
+            const res = await fetch('/api/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role })
+            });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.detail || 'Failed to create user', 'error'); }
+            else {
+                showToast(`User "${username}" created`, 'success');
+                addForm.classList.remove('expanded');
+                addForm.style.display = 'none';
+                usernameInput.value = '';
+                passwordInput.value = '';
+                await loadUsersList(usersList);
+            }
+        } catch (e) { showToast('Network error', 'error'); }
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create';
+    };
+
+    await loadUsersList(usersList);
+    return section;
+}
+
+async function loadUsersList(container) {
+    try {
+        const res = await fetch('/api/users');
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.detail || `Failed to load users (${res.status})`);
+        }
+        const users = await res.json();
+        container.innerHTML = '';
+
+        if (!users.length) {
+            const empty = document.createElement('div');
+            empty.className = 'settings-section-desc';
+            empty.style.cssText = 'text-align: center; padding: 20px;';
+            empty.textContent = 'No users found.';
+            container.appendChild(empty);
+            return;
+        }
+
+        users.forEach(user => {
+            const row = document.createElement('div');
+            row.className = 'toggle-list-item';
+            row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;';
+
+            const info = document.createElement('div');
+            info.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'toggle-list-name';
+            nameSpan.textContent = user.username;
+            const metaSpan = document.createElement('span');
+            metaSpan.className = 'setting-description';
+            metaSpan.style.cssText = 'margin: 0;';
+            metaSpan.textContent = `${user.role} • Created ${new Date(user.created).toLocaleDateString()}`;
+            info.appendChild(nameSpan);
+            info.appendChild(metaSpan);
+
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display: flex; gap: 6px; align-items: center; flex-shrink: 0;';
+
+            const roleDropdown = document.createElement('select');
+            roleDropdown.className = 'setting-select';
+            roleDropdown.style.cssText = 'max-width: 100px; padding: 4px 28px 4px 8px; font-size: 0.8rem;';
+            ['admin', 'user'].forEach(role => {
+                const opt = document.createElement('option');
+                opt.value = role;
+                opt.textContent = role;
+                if (role === user.role) opt.selected = true;
+                roleDropdown.appendChild(opt);
+            });
+            roleDropdown.onchange = async () => {
+                try {
+                    const res = await fetch(`/api/users/${encodeURIComponent(user.username)}/role`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ role: roleDropdown.value })
+                    });
+                    if (!res.ok) {
+                        const data = await res.json();
+                        showToast(data.detail || 'Failed to update role', 'error');
+                        loadUsersList(container);
+                        return;
+                    }
+                    showToast(`Role updated for "${user.username}"`, 'success');
+                    loadUsersList(container);
+                } catch (e) { showToast('Network error', 'error'); }
+            };
+
+            const resetPwBtn = document.createElement('button');
+            resetPwBtn.className = 'settings-btn secondary';
+            resetPwBtn.style.cssText = 'padding: 4px 10px; font-size: 0.8rem;';
+            resetPwBtn.textContent = 'Reset PW';
+            resetPwBtn.onclick = async () => {
+                const newPw = prompt(`Enter new password for "${user.username}":`);
+                if (!newPw || newPw.length < 4) { if (newPw !== null) showToast('Password must be at least 4 characters', 'warning'); return; }
+                try {
+                    const res = await fetch(`/api/users/${encodeURIComponent(user.username)}/password`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: newPw })
+                    });
+                    if (!res.ok) {
+                        const data = await res.json();
+                        showToast(data.detail || 'Failed to reset password', 'error');
+                        return;
+                    }
+                    showToast(`Password reset for "${user.username}"`, 'success');
+                } catch (e) { showToast('Network error', 'error'); }
+            };
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'settings-btn secondary';
+            delBtn.style.cssText = 'padding: 4px 10px; font-size: 0.8rem; color: var(--error);';
+            delBtn.textContent = 'Delete';
+            delBtn.onclick = async () => {
+                if (!confirm(`Delete user "${user.username}"? This will also delete their data.`)) return;
+                try {
+                    const res = await fetch(`/api/users/${encodeURIComponent(user.username)}`, { method: 'DELETE' });
+                    if (!res.ok) {
+                        const data = await res.json();
+                        showToast(data.detail || 'Failed to delete user', 'error');
+                        return;
+                    }
+                    showToast(`User "${user.username}" deleted`, 'success');
+                    loadUsersList(container);
+                } catch (e) { showToast('Network error', 'error'); }
+            };
+
+            actions.appendChild(roleDropdown);
+            actions.appendChild(resetPwBtn);
+            actions.appendChild(delBtn);
+            row.appendChild(info);
+            row.appendChild(actions);
+            container.appendChild(row);
+        });
+    } catch (e) {
+        console.error('Failed to load users:', e);
+    }
 }

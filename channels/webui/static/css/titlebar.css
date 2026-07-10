@@ -11,8 +11,18 @@
     border-bottom: 1px solid var(--border-color);
     height: 44px;
     max-height: 44px;
-    position: relative;
+    z-index: 99;
     flex-wrap: wrap;
+    overflow: hidden;
+    transition: max-height 0.3s ease, height 0.3s ease, padding 0.3s ease, border-bottom-width 0.3s ease;
+}
+
+.chat-title-bar.hidden {
+    max-height: 0;
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-width: 0;
 }
 
 .chat-title-text {
