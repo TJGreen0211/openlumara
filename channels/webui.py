@@ -1066,20 +1066,26 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict, user=None):
                     yield {'type': 'cancelled'}
                     return
 
-                if isinstance(token_data, dict) and token_data.get('type') == 'error':
-                    yield token_data
-                    return
+                if isinstance(token_data, dict):
+                    if token_data.get('type') == 'error':
+                        yield token_data
+                        return
+                    elif token_data.get("type") == "user_message":
+                        try:
+                            user_msg_payload = token_data.copy()
+                            user_msg_payload['index'] = next_index
 
-                # AS SOON AS FIRST TOKEN ARRIVES: Confirm the user message to remove 'sending...'
-                # We use the index we calculated earlier
-                if not user_message_confirmed:
-                    user_message_confirmed = True
-                    if username:
-                        await manager.broadcast_to_user(username, {
-                            "type": "user_message_confirmed",
-                            "index": next_index
-                        })
-                    else:
+                            await manager.broadcast({
+                                "type": "user_message_added",
+                                "message": user_msg_payload,
+                            })
+                        except Exception as e:
+                            channel_instance.log("webui", f"error while sending user message: {core.detail_error(e)}")
+
+                    # AS SOON AS FIRST TOKEN ARRIVES: Confirm the user message to remove 'sending...'
+                    # We use the index we calculated earlier
+                    elif not user_message_confirmed:
+                        user_message_confirmed = True
                         await manager.broadcast({
                             "type": "user_message_confirmed",
                             "index": next_index
