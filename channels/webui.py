@@ -286,6 +286,10 @@ def _ensure_user_store():
     if not os.path.exists(users_file):
         store = UserStore()
         store.migrate_from_config()
+    else:
+        store = UserStore()
+        if not store.get_users():
+            store.migrate_from_config()
 
 def _get_user_store():
     from core.users import UserStore
@@ -701,6 +705,7 @@ async def login_post(request: Request):
 
         if expected_username and expected_password and username == expected_username and password == expected_password:
             request.session['username'] = username
+            request.session['role'] = 'admin'
             authenticated = True
 
     if authenticated:

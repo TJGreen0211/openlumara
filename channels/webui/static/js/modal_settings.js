@@ -3891,7 +3891,9 @@ toggleModal = function(modalName) {
         } else {
             overlay.classList.add('show');
             modal.classList.add('show');
-            loadSettings();
+            fetchCurrentUser().then(() => {
+                loadSettings();
+            });
         }
     } else {
         originalToggleModal(modalName);

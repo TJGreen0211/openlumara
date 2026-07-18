@@ -5,6 +5,9 @@
 // Track whether we should auto-scroll (user hasn't scrolled up)
 let autoScrollEnabled = true;
 
+// Flag to skip scroll event handler when scrolling is programmatic
+let isProgrammaticScroll = false;
+
 // Check if scrolled to bottom (with small threshold for floating point issues)
 function isScrolledToBottom() {
     const threshold = 50; // pixels from bottom to consider "at bottom"
@@ -28,6 +31,11 @@ function setHeaderHidden(hidden) {
 
 // Listen for scroll events to detect user scrolling up
 chat.addEventListener('scroll', () => {
+    if (isProgrammaticScroll) {
+        isProgrammaticScroll = false;
+        return;
+    }
+
     const st = chat.scrollTop;
 
     if (isScrolledToBottom()) {
@@ -55,6 +63,7 @@ function formatTime() {
 function scrollToBottom() {
     if (!autoScrollEnabled) return;
     requestAnimationFrame(() => {
+        isProgrammaticScroll = true;
         chat.scrollTop = chat.scrollHeight;
     });
 }
