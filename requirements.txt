@@ -8,3 +8,4 @@ requests
 httpx
 PyPDF2
 PyMuPDF
+bcrypt

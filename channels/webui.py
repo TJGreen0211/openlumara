@@ -274,6 +274,7 @@ class ConnectionManager:
         self.active_stream_tasks[username] = asyncio.create_task(stream_worker())
 
 manager = ConnectionManager()
+_chat_swap_lock = asyncio.Lock()  # Serializes context.chat swap operations
 
 def _ensure_user_store():
     """Ensure multi-user migration has run when multi_user is enabled."""
@@ -291,18 +292,32 @@ def _ensure_user_store():
         if not store.get_users():
             store.migrate_from_config()
 
+# Module-level singleton for UserStore
+_user_store_instance = None
+
 def _get_user_store():
-    from core.users import UserStore
+    global _user_store_instance
     _ensure_user_store()
-    return UserStore()
+    if _user_store_instance is None:
+        from core.users import UserStore
+        _user_store_instance = UserStore()
+    return _user_store_instance
 
 def _get_chat_for_user(user_dict: dict):
     """Get the appropriate Chat instance for a user based on multi-user mode."""
     if not channel_instance:
         return None
     if channel_instance._is_multi_user():
-        return channel_instance.get_chat(user_dict["username"])
+        return channel_instance.get_chat(user_dict.get("username", "anonymous"))
     return channel_instance.context.chat
+
+def _get_storage_dir_for_user(user_dict: dict) -> str:
+    """Get the data directory for storage endpoints. Admins get full data dir, others get per-user dir."""
+    if user_dict.get("role") == "admin":
+        return core.get_data_path()
+    if channel_instance and channel_instance._is_multi_user():
+        return core.functions.get_user_data_path(user_dict.get("username", "anonymous"))
+    return core.get_data_path()
 
 async def authenticate_websocket(websocket: WebSocket) -> Optional[dict]:
     """
@@ -509,9 +524,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 channel_instance.log("webui", f"WebSocket command error: {core.detail_error(e)}")
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        channel_instance.log("webui", f"WebSocket error: {core.detail_error(e)}")
         manager.disconnect(websocket)
     except Exception as e:
         channel_instance.log("webui", f"WebSocket error: {core.detail_error(e)}")
@@ -780,7 +792,7 @@ async def api_list_users(user: dict = Depends(require_auth)):
     return [{"id": u.id, "username": u.username, "role": u.role, "created": u.created} for u in users]
 
 @app.post("/api/users")
-async def api_create_user(user: dict = Depends(require_auth), request: Request = None):
+async def api_create_user(request: Request, user: dict = Depends(require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     data = await request.json()
@@ -792,7 +804,7 @@ async def api_create_user(user: dict = Depends(require_auth), request: Request =
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.put("/api/users/{username}")
-async def api_update_user(username: str, user: dict = Depends(require_auth), request: Request = None):
+async def api_update_user(request: Request, username: str, user: dict = Depends(require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     data = await request.json()
@@ -814,7 +826,7 @@ async def api_delete_user(username: str, user: dict = Depends(require_auth)):
     return {"success": True}
 
 @app.patch("/api/users/{username}/role")
-async def api_update_user_role(username: str, user: dict = Depends(require_auth), request: Request = None):
+async def api_update_user_role(request: Request, username: str, user: dict = Depends(require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     data = await request.json()
@@ -825,7 +837,7 @@ async def api_update_user_role(username: str, user: dict = Depends(require_auth)
     return {"id": updated.id, "username": updated.username, "role": updated.role, "created": updated.created}
 
 @app.patch("/api/users/{username}/password")
-async def api_reset_user_password(username: str, user: dict = Depends(require_auth), request: Request = None):
+async def api_reset_user_password(request: Request, username: str, user: dict = Depends(require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     data = await request.json()
@@ -836,7 +848,7 @@ async def api_reset_user_password(username: str, user: dict = Depends(require_au
     return {"success": True}
 
 @app.post("/api/user/change-password")
-async def api_change_password(user: dict = Depends(require_auth), request: Request = None):
+async def api_change_password(request: Request, user: dict = Depends(require_auth)):
     data = await request.json()
     store = _get_user_store()
     if not store.authenticate(user["username"], data["current_password"]):
@@ -1007,12 +1019,13 @@ async def token_usage(user: dict = Depends(require_auth)):
         raise HTTPException(status_code=500, detail="Channel not available")
     try:
         chat = _get_chat_for_user(user)
-        original_chat = channel_instance.context.chat
-        channel_instance.context.chat = chat
-        try:
-            usage = await channel_instance.context.get_token_usage()
-        finally:
-            channel_instance.context.chat = original_chat
+        async with _chat_swap_lock:
+            original_chat = channel_instance.context.chat
+            channel_instance.context.chat = chat
+            try:
+                usage = await channel_instance.context.get_token_usage()
+            finally:
+                channel_instance.context.chat = original_chat
         return usage
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1062,45 +1075,58 @@ async def start_ai_stream_task(chat_id: str, payload_body: dict, user=None):
         user_message_confirmed = False
 
         # Use per-user chat for the stream so messages are saved to the correct file
-        original_chat = channel_instance.context.chat
-        channel_instance.context.chat = chat
-        try:
-            async for token_data in channel_instance.send_stream(payload_body, commands_authorized=True):
-                if stream_id in stream_cancellations:
-                    stream_cancellations.discard(stream_id)
-                    yield {'type': 'cancelled'}
-                    return
-
-                if isinstance(token_data, dict):
-                    if token_data.get('type') == 'error':
-                        yield token_data
+        async with _chat_swap_lock:
+            original_chat = channel_instance.context.chat
+            channel_instance.context.chat = chat
+            try:
+                async for token_data in channel_instance.send_stream(payload_body, commands_authorized=True):
+                    if stream_id in stream_cancellations:
+                        stream_cancellations.discard(stream_id)
+                        yield {'type': 'cancelled'}
                         return
-                    elif token_data.get("type") == "user_message":
-                        try:
-                            user_msg_payload = token_data.copy()
-                            user_msg_payload['index'] = next_index
 
-                            await manager.broadcast({
-                                "type": "user_message_added",
-                                "message": user_msg_payload,
-                            })
-                        except Exception as e:
-                            channel_instance.log("webui", f"error while sending user message: {core.detail_error(e)}")
+                    if isinstance(token_data, dict):
+                        if token_data.get('type') == 'error':
+                            yield token_data
+                            return
+                        elif token_data.get("type") == "user_message":
+                            try:
+                                user_msg_payload = token_data.copy()
+                                user_msg_payload['index'] = next_index
 
-                    # AS SOON AS FIRST TOKEN ARRIVES: Confirm the user message to remove 'sending...'
-                    # We use the index we calculated earlier
-                    elif not user_message_confirmed:
-                        user_message_confirmed = True
-                        await manager.broadcast({
-                            "type": "user_message_confirmed",
-                            "index": next_index
-                        })
+                                if username:
+                                    await manager.broadcast_to_user(username, {
+                                        "type": "user_message_added",
+                                        "message": user_msg_payload,
+                                    })
+                                else:
+                                    await manager.broadcast({
+                                        "type": "user_message_added",
+                                        "message": user_msg_payload,
+                                    })
+                            except Exception as e:
+                                channel_instance.log("webui", f"error while sending user message: {core.detail_error(e)}")
 
-                yield token_data
-        except Exception as e:
-            yield {'type': 'error', 'content': core.detail_error(e) if core.debug else str(e)}
-        finally:
-            channel_instance.context.chat = original_chat
+                        # AS SOON AS FIRST TOKEN ARRIVES: Confirm the user message to remove 'sending...'
+                        # We use the index we calculated earlier
+                        elif not user_message_confirmed:
+                            user_message_confirmed = True
+                            if username:
+                                await manager.broadcast_to_user(username, {
+                                    "type": "user_message_confirmed",
+                                    "index": next_index
+                                })
+                            else:
+                                await manager.broadcast({
+                                    "type": "user_message_confirmed",
+                                    "index": next_index
+                                })
+
+                    yield token_data
+            except Exception as e:
+                yield {'type': 'error', 'content': core.detail_error(e) if core.debug else str(e)}
+            finally:
+                channel_instance.context.chat = original_chat
 
     await manager.start_background_stream(chat_id, generator(), username)
     return stream_id
@@ -1137,12 +1163,13 @@ async def send_message(request: Request, user: dict = Depends(require_auth)):
     })
 
     # Use per-user chat for the send operation so messages are saved to the correct file
-    original_chat = channel_instance.context.chat
-    channel_instance.context.chat = chat
-    try:
-        response = await channel_instance.send(data, commands_authorized=True)
-    finally:
-        channel_instance.context.chat = original_chat
+    async with _chat_swap_lock:
+        original_chat = channel_instance.context.chat
+        channel_instance.context.chat = chat
+        try:
+            response = await channel_instance.send(data, commands_authorized=True)
+        finally:
+            channel_instance.context.chat = original_chat
 
     await manager.broadcast_to_user(uname, {
         "type": "user_message_confirmed",
@@ -1694,7 +1721,7 @@ async def list_storage_files(user: dict = Depends(require_auth)):
     """List all storage files in the data folder."""
     global channel_instance
 
-    data_dir = core.get_data_path()
+    data_dir = _get_storage_dir_for_user(user)
     if not os.path.exists(data_dir):
         return {'files': []}
 
@@ -1744,7 +1771,7 @@ async def load_storage_file(file: str, user: dict = Depends(require_auth)):
     """Load a specific storage file."""
     global channel_instance
 
-    data_dir = core.get_data_path()
+    data_dir = _get_storage_dir_for_user(user)
     full_path = os.path.join(data_dir, file)
 
     if not os.path.exists(full_path):
@@ -1806,7 +1833,7 @@ async def save_storage_file(request: Request, user: dict = Depends(require_auth)
     if not file_path:
         raise HTTPException(status_code=400, detail="No file specified")
 
-    data_dir = core.get_data_path()
+    data_dir = _get_storage_dir_for_user(user)
     full_path = os.path.join(data_dir, file_path)
 
     # Security check - prevent path traversal
@@ -1874,7 +1901,7 @@ async def delete_storage_key(request: Request, user: dict = Depends(require_auth
     if not file_path or key is None:
         raise HTTPException(status_code=400, detail="Missing file or key")
 
-    data_dir = core.get_data_path()
+    data_dir = _get_storage_dir_for_user(user)
     full_path = os.path.join(data_dir, file_path)
 
     # Security check - prevent path traversal
@@ -1937,7 +1964,7 @@ async def add_storage_key(request: Request, user: dict = Depends(require_auth)):
     if not file_path or not key:
         raise HTTPException(status_code=400, detail="Missing file or key")
 
-    data_dir = core.get_data_path()
+    data_dir = _get_storage_dir_for_user(user)
     full_path = os.path.join(data_dir, file_path)
 
     # Security check - prevent path traversal
@@ -2087,6 +2114,7 @@ class Webui(core.channel.Channel):
         super().__init__(*args, **kwargs)
 
         self.user_chats: Dict[str, core.chat.Chat] = {}
+        self._push_counter = 0
 
         network_mode = self.config.get("network_mode")
         match network_mode:
@@ -2160,13 +2188,10 @@ class Webui(core.channel.Channel):
 
     async def on_push(self, message: dict):
         """Triggered when a message is pushed (announcements, etc)"""
-        next_index = len(await channel_instance.context.chat.get())-1
-        if next_index < 0:
-            next_index = 0
-
-        message["index"] = next_index
-        self.log("webui", f"sending push message (index: {next_index}) to clients")
-        await manager.broadcast({"type": "push", "message": message, "index": next_index})
+        self._push_counter += 1
+        message["index"] = self._push_counter
+        self.log("webui", f"sending push message (index: {self._push_counter}) to clients")
+        await manager.broadcast({"type": "push", "message": message, "index": self._push_counter})
 
 # Add SessionMiddleware with secure settings
 app.add_middleware(
