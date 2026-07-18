@@ -70,10 +70,12 @@ chat.addEventListener('scroll', () => {
         autoScrollEnabled = false;
     }
 
-    // Hide header when scrolling down, show when scrolling up
+    // Hide header when scrolling down, show when scrolling up.
+    // Never show the header when scrolled to the bottom to avoid bounce loops
+    // (header reappearing pushes content, triggering scroll, hiding header again).
     if (st > lastScrollTop && st > 10) {
         setHeaderHidden(true);
-    } else if (st < lastScrollTop) {
+    } else if (st < lastScrollTop && !isScrolledToBottom()) {
         setHeaderHidden(false);
     }
 
