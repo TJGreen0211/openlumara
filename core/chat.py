@@ -50,6 +50,14 @@ class Chat:
                         self.data[index][key] = default_value
                         modified = True
 
+                # migrate missing timestamp fields
+                if "created" not in chat:
+                    self.data[index]["created"] = datetime.datetime.utcnow().isoformat()
+                    modified = True
+                if "updated" not in chat:
+                    self.data[index]["updated"] = self.data[index].get("created", datetime.datetime.utcnow().isoformat())
+                    modified = True
+
         if modified:
             self.data.save()
 
@@ -131,6 +139,7 @@ class Chat:
             return False
 
         self.data[self.current]["messages"] = []
+        self.data[self.current]["updated"] = datetime.datetime.utcnow().isoformat()
         
         # Reset token_usage since we're clearing the chat
         # API token usage is only valid for the exact context that was sent
@@ -349,6 +358,7 @@ class Chat:
             await self.new()
 
         self.data[self.current]["messages"] = messages
+        self.data[self.current]["updated"] = datetime.datetime.utcnow().isoformat()
         await self.save()
         return True
 
@@ -389,6 +399,7 @@ class Chat:
             new_message["injection"] = "\n\n".join(injections)
 
         self.data[self.current]["messages"].append(new_message)
+        self.data[self.current]["updated"] = datetime.datetime.utcnow().isoformat()
 
         index = len(self.data[self.current]["messages"]) - 1
         await self.save()
@@ -403,6 +414,7 @@ class Chat:
             index = -1
 
         self.data[self.current]["messages"].pop(index)
+        self.data[self.current]["updated"] = datetime.datetime.utcnow().isoformat()
         index = len(self.data[self.current]["messages"]) - 1
         await self.save()
 

@@ -18,8 +18,20 @@ function isScrolledToBottom() {
 let lastScrollTop = 0;
 const headerEl = document.querySelector('header');
 const chatTitleBar = document.querySelector('.chat-title-bar');
+let headerTransitioning = false;
+
+function getHeaderTotalHeight() {
+    let h = headerEl.offsetHeight;
+    if (chatTitleBar) h += chatTitleBar.offsetHeight;
+    return h;
+}
 
 function setHeaderHidden(hidden) {
+    if (headerTransitioning) return;
+    headerTransitioning = true;
+
+    const prevHeight = getHeaderTotalHeight();
+
     if (hidden) {
         headerEl.classList.add('hidden');
         if (chatTitleBar) chatTitleBar.classList.add('hidden');
@@ -27,6 +39,18 @@ function setHeaderHidden(hidden) {
         headerEl.classList.remove('hidden');
         if (chatTitleBar) chatTitleBar.classList.remove('hidden');
     }
+
+    // Compensate scrollTop for the header height change so visual position stays stable
+    requestAnimationFrame(() => {
+        const newHeight = getHeaderTotalHeight();
+        const delta = prevHeight - newHeight;
+        if (delta !== 0) {
+            isProgrammaticScroll = true;
+            chat.scrollTop += delta;
+        }
+    });
+
+    setTimeout(() => { headerTransitioning = false; }, 320);
 }
 
 // Listen for scroll events to detect user scrolling up
