@@ -99,9 +99,6 @@ class Models(core.module.Module):
         if not found:
             return "model does not exist. use models_get_available() first"
 
-        core.config.config["model"]["name"] = found_id
-        core.config.config.save()
-
         self.manager.API.set_model(found_id)
 
         return f"model has been switched to {found_id}"

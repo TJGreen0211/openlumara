@@ -110,6 +110,15 @@ def _convert_type(value: str):
     # Default to string
     return value
 
+def _write_to_nested(data, path, value):
+    """Write value to nested dict at path, creating intermediate dicts."""
+    current = data
+    for key in path[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    current[path[-1]] = value
+
 async def _set_config_value(path: list, value: str, manager=None):
     """
     Sets a configuration value at a nested path.
@@ -145,11 +154,11 @@ async def _set_config_value(path: list, value: str, manager=None):
         # Set the final value
         if not isinstance(current, dict):
             return f"Error: Path {path} is invalid. The parent of '{path[-1]}' is not a dictionary."
-        
+
         current[path[-1]] = typed_value
 
-        # Persist changes to the YAML file
-        core.config.config.save()
+        # Persist changes to the appropriate config
+        core.config.set_user_or_global(path, typed_value)
 
         # Check if this is a module setting change and reload the module
         module_name = None

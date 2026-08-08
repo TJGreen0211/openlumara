@@ -48,8 +48,12 @@ class Config(core.module.Module):
             return None
 
         try:
-            # Deep copy to avoid mutating the actual live configuration
-            config_data = copy.deepcopy(core.config.config)
+            username = core.current_user.get()
+            if username:
+                merged = core.config._merge_user_config_over(dict(core.config.config), username)
+                config_data = copy.deepcopy(merged)
+            else:
+                config_data = copy.deepcopy(core.config.config)
             redacted_config = self._redact_sensitive_info(config_data)
             return json.dumps(redacted_config)
         except Exception as e:
@@ -86,8 +90,8 @@ class Config(core.module.Module):
             # Set the final value
             current[path[-1]] = typed_value
 
-            # Persist changes to the YAML file
-            core.config.config.save()
+            # Persist changes to the appropriate config
+            core.config.set_user_or_global(path, typed_value)
 
             return self.result(f"Config updated: {' -> '.join(path)} = {typed_value}")
         except Exception as e:

@@ -46,7 +46,7 @@ class Channel:
         self.commands = core.commands.Commands(self)
         self._last_cmd_was_temporary = False
 
-        self.context = core.context.Context(self) # each channel has its own context window
+        self._default_context = core.context.Context(self) # each channel has its own context window
         # the path to a channel's chat is: channel -> context -> chat
 
         self.console_buffer = [] # used to log system messages
@@ -79,6 +79,14 @@ class Channel:
     async def init(self):
         """async class constructor. gets called by manager._load_channels()"""
         await self.context.chat.autoload()
+
+    # ------------------
+    # Context
+    # ------------------
+    @property
+    def context(self):
+        """Returns the default context. Override in subclasses for per-user contexts."""
+        return self._default_context
 
     # ------------------
     # Events
@@ -854,9 +862,11 @@ class Channel:
         async for partial_turn in self.turncollector.group_stream(stream):
             yield partial_turn
 
-    async def group_history(self):
+    async def group_history(self, messages=None):
         """
         takes a list of messages and turns it into turns that are identical to the ones shown by get_turns_stream()
         for displaying message history in the same grouped turns format
         """
-        return await self.turncollector.group_history(await self.context.chat.messages.get())
+        if messages is None:
+            messages = await self.context.chat.messages.get()
+        return await self.turncollector.group_history(messages)

@@ -1,9 +1,12 @@
 import os
+import contextvars
 
 quiet = False
 debug = False
 debug_stream = False
 proceed_migration = False
+
+current_user: contextvars.ContextVar[str] = contextvars.ContextVar("current_user", default=None)
 
 from core.functions import *
 import core.exceptions
@@ -22,6 +25,7 @@ if not os.path.exists(user_channel_path):
 # os.environ["TIKTOKEN_CACHE_DIR"] = cache_dir
 
 import core.config
+import core.auth
 import core.storage
 import core.module
 import core.commands

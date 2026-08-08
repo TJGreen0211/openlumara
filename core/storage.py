@@ -11,16 +11,10 @@ class StorageList(list):
     def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, *args):
         super().__init__(*args)
 
-        # default to openlumara data folder if no path specified
-        if not path:
-            path = core.get_data_path()
-
-        self.path = core.sandbox_path(path, name)
+        # store raw values for lazy resolution
         self.name = name
+        self._base_path = path
         self.binary = False
-
-        # create path if it doesnt exist
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
 
         # cache for change detection
         self._last_modified = 0.0
@@ -45,17 +39,30 @@ class StorageList(list):
 
         self.type = file_type
         self.ext = file_ext
-
-        self.path += f".{self.ext}"
+        self._path_resolved = False
 
         if manager:
             self.manager = manager
+
+        # resolve path lazily for load/save
+        self._resolve_path()
 
         if os.path.exists(self.path):
             if autoload and not TEMPORARY:
                 self.load()
         else:
             self.save()
+
+    def _resolve_path(self):
+        """Resolve the final path using get_data_path() for user-scoped data."""
+        if self._path_resolved:
+            return
+
+        base = self._base_path if self._base_path else core.get_data_path()
+        self.path = core.sandbox_path(base, self.name)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.path += f".{self.ext}"
+        self._path_resolved = True
 
     def _write(self, content):
         try:
@@ -98,6 +105,7 @@ class StorageList(list):
 
     def save(self):
         """save content to file"""
+        self._resolve_path()
         if TEMPORARY:
             return True
 
@@ -117,6 +125,7 @@ class StorageList(list):
 
     def load(self, data=None):
         """load content from file or data argument"""
+        self._resolve_path()
         if data is not None:
             self.clear()
             self.extend(data)
@@ -157,17 +166,10 @@ class StorageDict(dict):
     def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, override_temporary=False, *args):
         super().__init__(*args)
 
-        # default to openlumara data folder if no path specified
-        if not path:
-            path = core.get_data_path()
-
-        self.path = core.sandbox_path(path, name)
-
+        # store raw values for lazy resolution
         self.name = name
+        self._base_path = path
         self.binary = False
-
-        # create path if it doesnt exist
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
 
         # this is mainly for the config, so that we can still make changes in temporary mode
         # but who knows what it might be needed for in the future
@@ -196,17 +198,30 @@ class StorageDict(dict):
 
         self.type = file_type
         self.ext = file_ext
-
-        self.path += f".{self.ext}"
+        self._path_resolved = False
 
         if manager:
             self.manager = manager
+
+        # resolve path lazily for load/save
+        self._resolve_path()
 
         if os.path.exists(self.path):
             if autoload and not (TEMPORARY and not self.override_temporary):
                 self.load()
         else:
             self.save()
+
+    def _resolve_path(self):
+        """Resolve the final path using get_data_path() for user-scoped data."""
+        if self._path_resolved:
+            return
+
+        base = self._base_path if self._base_path else core.get_data_path()
+        self.path = core.sandbox_path(base, self.name)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.path += f".{self.ext}"
+        self._path_resolved = True
 
     def _write(self, content):
         try:
@@ -249,6 +264,7 @@ class StorageDict(dict):
 
     def save(self):
         """save content to file"""
+        self._resolve_path()
         if TEMPORARY and not self.override_temporary:
             return True
 
@@ -268,6 +284,7 @@ class StorageDict(dict):
 
     def load(self, data=None):
         """load content from file or data argument"""
+        self._resolve_path()
         if data is not None:
             self.clear()
             self.update(data)
@@ -309,25 +326,36 @@ class StorageText:
     def __init__(self, name: str, manager=None, path=None, autoload=True, *args):
         super().__init__(*args)
 
-        # default to openlumara data folder if no path specified
-        if not path:
-            path = core.get_data_path()
-
-        self.path = core.sandbox_path(path, name)
-
-        # create path if it doesnt exist
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-
+        # store raw values for lazy resolution
+        self.name = name
+        self._base_path = path
         self._data = ""
 
         # cache for change detection
         self._last_modified = 0.0
+        self._path_resolved = False
+
+        if manager:
+            self.manager = manager
+
+        # resolve path lazily for load/save
+        self._resolve_path()
 
         if os.path.exists(self.path):
             if autoload and not TEMPORARY:
                 self.load()
         else:
             self.save()
+
+    def _resolve_path(self):
+        """Resolve the final path using get_data_path() for user-scoped data."""
+        if self._path_resolved:
+            return
+
+        base = self._base_path if self._base_path else core.get_data_path()
+        self.path = core.sandbox_path(base, self.name)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self._path_resolved = True
 
     def __str__(self, *args, **kwargs):
         return self.get()
@@ -336,11 +364,13 @@ class StorageText:
         self._data = str(new_data)
         self.save()
     def get(self):
+        self._resolve_path()
         if not TEMPORARY:
             self.load()
         return str(self._data)
 
     def load(self):
+        self._resolve_path()
         # skip reload if file hasn't changed on disk
         if not self._file_changed():
             self._update_mtime()
@@ -357,6 +387,7 @@ class StorageText:
         return self
 
     def save(self):
+        self._resolve_path()
         if TEMPORARY:
             return self
 

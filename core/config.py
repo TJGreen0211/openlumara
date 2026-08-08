@@ -1,6 +1,7 @@
 import os
 import yaml
 import copy
+import datetime
 import core
 import modules
 import user_modules
@@ -10,6 +11,7 @@ import pkgutil
 import hashlib
 import json
 import inspect
+import shutil
 
 config = None
 _registry_cache = None
@@ -844,6 +846,8 @@ def load(file_path=None):
 def get(*args, **kwargs):
     """Shorthand for accessing nested config values.
     Usage: config.get("api", "url") or config.get("api", "url", default_value)
+
+    Auto-merges per-user config over global config when core.current_user is set.
     """
     global config, default_config
 
@@ -858,9 +862,20 @@ def get(*args, **kwargs):
 
     # Safely resolve to a dictionary
     try:
-        value = dict(config) if config else dict(default_config)
+        value = dict(config) if config else {}
     except (TypeError, ValueError):
-        value = dict(default_config)
+        value = {}
+
+    # Merge with defaults to fill in sections stripped during migration
+    # (e.g., api/model were moved to per-user config, so global config no longer has them)
+    for k, v in default_config.items():
+        if k not in value:
+            value[k] = v
+
+    # Auto-merge per-user config if there's an active user
+    username = core.current_user.get()
+    if username:
+        value = _merge_user_config_over(value, username)
 
     for key in keys:
         if isinstance(value, dict) and key in value:
@@ -868,3 +883,315 @@ def get(*args, **kwargs):
         else:
             return default
     return value
+
+
+# ---------------------
+# Per-user config
+# ---------------------
+
+PER_USER_KEYS = {
+    "api",
+    "model",
+    "appearance",
+    "audio",
+}
+
+PER_USER_CORE_KEYS = {
+    "auto_resume_chats",
+    "cmd_prefix",
+    "tool_timeout",
+}
+
+def _deep_merge(base, override):
+    """Deep merge override into base, returning a new dict."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+def _merge_user_config_over(global_config, username):
+    """Merge per-user config over global config, returning merged dict."""
+    user_config = load_user_config(username)
+    if not user_config:
+        return global_config
+
+    merged = dict(global_config)
+
+    for section in PER_USER_KEYS:
+        if section in user_config:
+            if section in merged and isinstance(merged[section], dict) and isinstance(user_config[section], dict):
+                merged[section] = _deep_merge(merged[section], user_config[section])
+            else:
+                merged[section] = user_config[section]
+
+    if "core" in user_config and isinstance(user_config["core"], dict):
+        if "core" not in merged or not isinstance(merged["core"], dict):
+            merged["core"] = {}
+        for key in PER_USER_CORE_KEYS:
+            if key in user_config["core"]:
+                merged["core"][key] = user_config["core"][key]
+
+    if "modules" in user_config and isinstance(user_config["modules"], dict):
+        if "settings" in user_config["modules"] and isinstance(user_config["modules"]["settings"], dict):
+            if "modules" not in merged or not isinstance(merged["modules"], dict):
+                merged["modules"] = {}
+            if "settings" not in merged["modules"] or not isinstance(merged["modules"]["settings"], dict):
+                merged["modules"]["settings"] = {}
+            merged["modules"]["settings"] = _deep_merge(
+                merged["modules"]["settings"],
+                user_config["modules"]["settings"]
+            )
+
+    return merged
+
+def load_user_config(username):
+    """Load per-user config from {data_folder}/{username}/config.json, with caching."""
+    cache_key = f"uc_{username}"
+    if hasattr(load_user_config, '_cache') and cache_key in load_user_config._cache:
+        cached_data, cached_mtime = load_user_config._cache[cache_key]
+        try:
+            if os.path.getmtime(user_config_path_for_cache(username)) == cached_mtime:
+                return cached_data
+        except OSError:
+            pass
+    user_config_path = core.get_data_path("config.json", user=username)
+    if not os.path.exists(user_config_path):
+        result = {}
+        if not hasattr(load_user_config, '_cache'):
+            load_user_config._cache = {}
+        load_user_config._cache[cache_key] = (result, 0)
+        return result
+    try:
+        with open(user_config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        mtime = os.path.getmtime(user_config_path)
+        if not hasattr(load_user_config, '_cache'):
+            load_user_config._cache = {}
+        load_user_config._cache[cache_key] = (data, mtime)
+        return data
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+def user_config_path_for_cache(username):
+    """Helper to get user config path for mtime check."""
+    return core.get_data_path("config.json", user=username)
+
+def save_user_config(username, config_dict):
+    """Save per-user config to {data_folder}/{username}/config.json."""
+    data_folder = core.get_data_path(user=username)
+    os.makedirs(data_folder, exist_ok=True)
+    user_config_path = os.path.join(data_folder, "config.json")
+    try:
+        with open(user_config_path, "w", encoding="utf-8") as f:
+            json.dump(config_dict, f, indent=2)
+        if hasattr(load_user_config, '_cache'):
+            load_user_config._cache.pop(f"uc_{username}", None)
+        return True
+    except OSError:
+        return False
+
+def set_user_or_global(path, value):
+    """Write a config value to user config or global config based on PER_USER_KEYS."""
+    username = core.current_user.get()
+    if username and len(path) >= 1 and path[0] in PER_USER_KEYS:
+        user_cfg = load_user_config(username)
+        _write_to_nested(user_cfg, path, value)
+        save_user_config(username, user_cfg)
+    else:
+        current = config
+        for key in path[:-1]:
+            if key not in current or not isinstance(current[key], dict):
+                current[key] = {}
+            current = current[key]
+        current[path[-1]] = value
+        config.save()
+
+def _write_to_nested(data, path, value):
+    """Write value to nested dict at path, creating intermediate dicts."""
+    current = data
+    for key in path[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    current[path[-1]] = value
+
+
+# ---------------------
+# Migration
+# ---------------------
+
+def migrate_to_multiuser():
+    """Migrate existing single-user setup to multi-user."""
+    data_folder = core.get_data_path(user=None)
+    users_file = os.path.join(data_folder, "users.json")
+
+    # Check if users.json already exists in the correct format (dict with "users" key)
+    if os.path.exists(users_file):
+        try:
+            with open(users_file, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict) and "users" in existing and isinstance(existing["users"], dict):
+                return  # Already migrated
+            # Old format (list-based) detected, will be converted below
+            core.log("core", "Multi-user migration: old users.json format detected, converting...")
+        except (json.JSONDecodeError, OSError):
+            core.log("core", "Multi-user migration: users.json corrupt, re-creating...")
+
+    core.log("core", "Multi-user migration: starting...")
+
+    # Check for old-format users.json and migrate existing users
+    old_users = []
+    if os.path.exists(users_file):
+        try:
+            with open(users_file, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, list):
+                old_users = raw
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # If old users exist, use the first admin; otherwise fall back to config.yml credentials
+    webui_username = "admin"
+    webui_password = "admin"
+
+    if old_users:
+        for old_user in old_users:
+            if isinstance(old_user, dict) and old_user.get("role") == "admin":
+                webui_username = old_user.get("username", "admin")
+                # Reuse existing password hash by importing directly
+                break
+        else:
+            # No admin found, use first user
+            webui_username = old_users[0].get("username", "admin") if old_users[0] else "admin"
+    else:
+        try:
+            webui_username = config.get("channels", "settings", "webui", "username", default="admin")
+            webui_password = config.get("channels", "settings", "webui", "password", default="admin")
+        except Exception:
+            pass
+
+    if not webui_username:
+        webui_username = "admin"
+    if not webui_password:
+        webui_password = "admin"
+        core.log("core", "Multi-user migration: no password found in config, using default 'admin'")
+
+    user_mgr = core.auth.UserManager(data_folder)
+
+    if old_users:
+        # Import old users with their existing password hashes
+        now = datetime.datetime.now().isoformat()
+        new_users = {}
+        for old_user in old_users:
+            if not isinstance(old_user, dict):
+                continue
+            uname = old_user.get("username")
+            if not uname:
+                continue
+            new_users[uname] = {
+                "password_hash": old_user.get("password_hash", ""),
+                "role": old_user.get("role", "user"),
+                "created_at": old_user.get("created") or now,
+                "last_login": None
+            }
+            user_mgr._ensure_user_dir(uname)
+        data = {"users": new_users}
+        user_mgr._save(data)
+    else:
+        user_mgr.create_user(webui_username, webui_password, "admin")
+
+    user_folder = os.path.join(data_folder, webui_username)
+    os.makedirs(user_folder, exist_ok=True)
+
+    # Build skip set: users.json, admin user dir, and any other user dirs
+    skip_items = {"users.json", webui_username}
+    if old_users:
+        for ou in old_users:
+            if isinstance(ou, dict):
+                skip_items.add(ou.get("username", ""))
+
+    items_to_move = []
+
+    for item in os.listdir(data_folder):
+        if item in skip_items:
+            continue
+        items_to_move.append(item)
+
+    # Copy all files first, then delete originals only if all copies succeed
+    moved = []
+    try:
+        for item in items_to_move:
+            src = os.path.join(data_folder, item)
+            dst = os.path.join(user_folder, item)
+            if os.path.isfile(src):
+                shutil.copy2(src, dst)
+            else:
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            moved.append((src, dst, os.path.isfile(src)))
+
+        # All copies succeeded, now remove originals
+        for src, dst, is_file in moved:
+            if is_file:
+                os.remove(src)
+            else:
+                shutil.rmtree(src)
+    except Exception as e:
+        # Rollback: remove copied items
+        for src, dst, is_file in moved:
+            try:
+                if is_file:
+                    os.remove(dst)
+                else:
+                    shutil.rmtree(dst)
+            except OSError:
+                pass
+        # Remove users.json so migration can retry
+        try:
+            os.remove(users_file)
+        except OSError:
+            pass
+        raise MigrationError(f"Multi-user migration failed: {e}")
+
+    per_user_config = {}
+
+    if "api" in dict(config):
+        per_user_config["api"] = dict(config)["api"]
+    if "model" in dict(config):
+        per_user_config["model"] = dict(config)["model"]
+
+    core_cfg = dict(config).get("core", {})
+    if core_cfg:
+        per_user_config["core"] = {
+            k: v for k, v in core_cfg.items() if k != "data_folder"
+        }
+
+    modules_cfg = dict(config).get("modules", {})
+    if modules_cfg and "settings" in modules_cfg:
+        per_user_config["modules"] = {"settings": modules_cfg["settings"]}
+
+    if per_user_config:
+        save_user_config(webui_username, per_user_config)
+
+    raw = dict(config)
+    for key in list(raw.keys()):
+        if key in PER_USER_KEYS:
+            raw.pop(key, None)
+
+    if "core" in raw:
+        raw["core"] = {
+            k: v for k, v in raw["core"].items()
+            if k not in PER_USER_CORE_KEYS
+        }
+
+    config.load(raw)
+    config.save()
+
+    core.log("core", f"Multi-user migration: complete. Admin user: {webui_username}")
+
+
+class MigrationError(Exception):
+    """Raised when data migration fails."""
+    pass

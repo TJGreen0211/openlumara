@@ -4,7 +4,7 @@ import datetime
 import os
 
 class Chat:
-    def __init__(self, channel):
+    def __init__(self, channel, username=None):
         self.path = os.path.join("chats", channel.name)
         self.channel = channel
 
@@ -23,15 +23,18 @@ class Chat:
                         core.proceed_migration = True
 
                     print("Type 'MIGRATE' exactly in capital letters")
-                    
+
             self._migrate_if_needed()
 
+        # Chat index is per-user — each user has their own set of chats
         self.data = core.storage.StorageList(os.path.join(self.path, "index"), "msgpack")
+
         self.messages = None # initialized by autoload()
 
         # store currently loaded chat index
         self.current = None
-        self.current_save_path = core.get_data_path(os.path.join(self.path, f"current"))
+        # current_save_path is per-user (core.current_user already set)
+        self.current_save_path = core.get_data_path(os.path.join(self.path, "current"))
 
     async def autoload(self):
         """loads the last used chat if applicable, otherwise it creates a new chat. basically the class's async constructor"""
@@ -58,6 +61,7 @@ class Chat:
         self.current = index
 
         # store current index into a simple file, for chat autoloading later
+        os.makedirs(os.path.dirname(self.current_save_path), exist_ok=True)
         with open(self.current_save_path, "w") as f:
             f.write(str(index))
 
@@ -78,27 +82,27 @@ class Chat:
         import msgpack
         import shutil
         from pathlib import Path
-        
+
         old_chats_file = core.get_data_path(f"{self.channel.name}_chats.json")
-        
+
         if not os.path.exists(old_chats_file):
             return  # No old format detected
-        
+
         print(f"[MIGRATE] Old format detected for '{self.channel.name}', migrating...")
-        
+
         # Read old chats
         with open(old_chats_file, 'r', encoding='utf-8') as f:
             old_chats = json.load(f)
-        
+
         if not isinstance(old_chats, list):
             print(f"[MIGRATE] Invalid old format, skipping")
             return
-        
+
         # Create new directory structure
         new_channel_dir = core.get_data_path(os.path.join("chats", self.channel.name))
         os.makedirs(new_channel_dir, exist_ok=True)
         os.makedirs(os.path.join(new_channel_dir, "history"), exist_ok=True)
-        
+
         # Migrate each chat
         new_chats = []
         for old_chat in old_chats:
@@ -106,13 +110,13 @@ class Chat:
             if not chat_id:
                 print(f"skipping {chat_id}")
                 continue
-            
+
             # Save messages to separate file
             messages = old_chat.get('messages', [])
             messages_path = os.path.join(new_channel_dir, "history", f"{chat_id}.json")
             with open(messages_path, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(messages, indent=2, ensure_ascii=False))
-            
+
             # Build new metadata
             new_chats.append({
                 "id": chat_id,
@@ -124,12 +128,12 @@ class Chat:
                 "created": old_chat.get("created", ""),
                 "updated": old_chat.get("updated", ""),
             })
-        
+
         # Save new index
         index_path = os.path.join(new_channel_dir, "index.mp")
         with open(index_path, 'wb') as f:
             f.write(msgpack.packb(new_chats))
-        
+
         # Handle current chat
         old_current_file = core.get_data_path(f"{self.channel.name}_current_chat")
         if os.path.exists(old_current_file):
@@ -146,14 +150,14 @@ class Chat:
         # Move old files to backup
         backup_dir = core.get_data_path("chat_migration_backups")
         os.makedirs(backup_dir, exist_ok=True)
-        
+
         # Move chats file
         old_chats_file = core.get_data_path(f"{self.channel.name}_chats.json")
         if os.path.exists(old_chats_file):
             backup_name = f"{self.channel.name}_chats.json.bak"
             shutil.move(old_chats_file, os.path.join(backup_dir, backup_name))
             print(f"[MIGRATE] Backed up old chats file to {backup_name}")
-        
+
         print(f"[MIGRATE] Migrated {len(new_chats)} chats for '{self.channel.name}'")
 
     async def update_timestamp(self):
@@ -204,11 +208,11 @@ class Chat:
             raise Exception("No chat is currently loaded!")
 
         await self.messages.clear()
-        
+
         # Reset token_usage since we're clearing the chat
         # API token usage is only valid for the exact context that was sent
         await self.set("token_usage", 0)
-        
+
         await self.save()
 
         # start a system prompt warmup so that the response is instant (if the user types slowly... lol)
@@ -317,7 +321,7 @@ class Chat:
                         for part in content:
                             if part.get("type") == "text":
                                 items.append(('content', part.get('text').strip()))
-                
+
                 # handle toolcalls
                 if toolcalls:
                     for toolcall in toolcalls:
@@ -336,7 +340,7 @@ class Chat:
                     current_block_type = item_type
                     current_block_items = []
                 current_block_items.append(item_content)
-            
+
             # don't forget the last block
             if current_block_items:
                 blocks.append(current_block_items)
@@ -370,10 +374,10 @@ class Chat:
     async def search(self, query: str, max_results: int = 100):
         """search across all chats for messages matching the query"""
         import json
-        
+
         results = []
         query_lower = query.lower()
-        
+
         found_chats = []
         for chat_meta in self.data:
             found = dict(chat_meta)
@@ -381,17 +385,17 @@ class Chat:
             chat_id = chat_meta.get("id")
             if not chat_id:
                 continue
-            
+
             if query_lower in chat_meta.get("title").lower():
                 found["title_match"] = True
-            
+
             # Load messages from the history file
             history_path = core.get_data_path(os.path.join(self.path, "history", f"{chat_id}.json"))
             if not os.path.exists(history_path):
                 if found.get("title_match"):
                     found_chats.append(found)
                 continue
-            
+
             try:
                 with open(history_path, 'r', encoding='utf-8') as f:
                     messages = json.load(f)
@@ -399,50 +403,50 @@ class Chat:
                 if found.get("title_match"):
                     found_chats.append(found)
                 continue
-            
+
             # Search through messages
             found_messages = []
             for msg_index, message in enumerate(messages):
                 content = message.get("content", "")
                 if not content:
                     continue
-                
+
                 # Handle multimodal content - extract text parts
                 if isinstance(content, list):
                     content = " ".join(
-                        part.get("text", "") 
-                        for part in content 
+                        part.get("text", "")
+                        for part in content
                         if isinstance(part, dict) and part.get("type") == "text"
                     )
-                
+
                 if not isinstance(content, str) or not content.strip():
                     continue
-                
+
                 # Case-insensitive substring search
                 if query_lower in content.lower():
                     # Find the match position for snippet generation
                     match_pos = content.lower().find(query_lower)
-                    
+
                     # Generate snippet with context
                     snippet_start = max(0, match_pos - 50)
                     snippet_end = min(len(content), match_pos + len(query) + 50)
                     snippet = content[snippet_start:snippet_end]
-                    
+
                     # Add ellipsis if truncated
                     if snippet_start > 0:
                         snippet = "..." + snippet
                     if snippet_end < len(content):
                         snippet = snippet + "..."
-                    
+
                     found_messages.append(snippet)
-            
+
             if found_messages:
                 found.update({
                     "messages_found": len(found_messages),
                     "message_snippets": found_messages
                 })
                 found_chats.append(found)
-                    
+
             if len(found_chats) >= max_results:
                 return found_chats
 
@@ -451,7 +455,7 @@ class Chat:
         # Use stable sort: first by date descending, then by title_match (True first)
         found_chats.sort(key=lambda x: x["updated"] or "", reverse=True)
         found_chats.sort(key=lambda x: not x.get("title_match"))  # not True=False=0 sorts before not False=True=1
-        
+
         return found_chats
 
     async def set(self, key, value, index = None):
@@ -464,7 +468,7 @@ class Chat:
         if key in self.data[index].keys():
             self.data[index][key] = value
             return True
-        
+
         raise Exception(f"{key} is not a valid chat property")
 
     def get_all(self):

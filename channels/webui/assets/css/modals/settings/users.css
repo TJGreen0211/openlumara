@@ -1,0 +1,209 @@
+.user-management-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+
+    .user-management-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+
+        h4 {
+            margin: 0;
+            font-size: 16px;
+            color: var(--text-primary);
+        }
+    }
+
+    .add-user-form {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+
+        .form-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+    }
+
+    .users-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+
+        thead th {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 2px solid var(--border-color);
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        tbody td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: middle;
+        }
+
+        .role-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 500;
+
+            &.role-admin {
+                background: var(--accent-bg);
+                color: var(--accent);
+            }
+
+            &.role-user {
+                background: var(--bg-tertiary);
+                color: var(--text-secondary);
+            }
+        }
+
+        .actions-cell {
+            display: flex;
+            gap: 4px;
+        }
+    }
+
+    .btn-icon {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        background: var(--button-bg);
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.15s ease;
+
+        &:hover {
+            background: var(--button-hover);
+            color: var(--text-primary);
+        }
+
+        &.btn-danger:hover {
+            background: var(--error-bg);
+            color: var(--error);
+            border-color: var(--error-border);
+        }
+    }
+
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-dialog {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        min-width: 320px;
+        max-width: 90vw;
+
+        h4 {
+            margin: 0 0 16px;
+            font-size: 16px;
+        }
+
+        p {
+            margin: 0 0 20px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+    }
+
+    .edit-form {
+        .form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+
+            label {
+                font-size: 13px;
+                color: var(--text-secondary);
+            }
+        }
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+
+    .btn-small {
+        padding: 6px 14px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        background: var(--button-bg);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.15s ease;
+
+        &:hover {
+            background: var(--button-hover);
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        &.btn-secondary {
+            background: transparent;
+            border-color: transparent;
+        }
+
+        &.btn-danger {
+            color: var(--error);
+            border-color: var(--error-border);
+
+            &:hover {
+                background: var(--error-bg);
+            }
+        }
+    }
+
+    .input-field,
+    .select-field {
+        padding: 8px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 14px;
+        outline: none;
+
+        &:focus {
+            border-color: var(--accent);
+        }
+    }
+
+    .select-field {
+        min-width: 100px;
+    }
+}

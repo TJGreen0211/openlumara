@@ -107,7 +107,8 @@ class AutoBackup(core.module.Module):
     async def _perform_backup(self):
         """Perform a single backup operation."""
         enable_notifications = self.config.get("enable_notifications")
-        data_folder = core.get_data_path()
+        username = core.current_user.get()
+        data_folder = core.get_data_path(user=username) if username else core.get_data_path()
 
         if not data_folder or not os.path.exists(data_folder):
             error_msg = f"Backup failed: Data folder not found.\n"
@@ -209,7 +210,8 @@ class AutoBackup(core.module.Module):
         """
         interval = self.config.get("backup_interval_days")
         enable_notifications = self.config.get("enable_notifications")
-        data_folder = core.get_data_path()
+        username = core.current_user.get()
+        data_folder = core.get_data_path(user=username) if username else core.get_data_path()
 
         # Get list of existing backups
         try:

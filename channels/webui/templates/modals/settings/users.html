@@ -1,0 +1,110 @@
+<!-- USER MANAGEMENT: Only shown for webui channel drill-down when user is admin -->
+<template x-if="$store.users && $store.users.isAdmin && activeChannel === 'webui' && activeCategory === 'channels'">
+    <div class="user-management-section" x-data="{
+        showAddForm: false,
+        newUsername: '',
+        newPassword: '',
+        newRole: 'user',
+        editingUser: null,
+        editField: null,
+        editValue: '',
+        deletingUser: null
+    }">
+        <div class="user-management-header">
+            <h4>User Management</h4>
+            <button type="button" class="btn-small" @click="showAddForm = true; newUsername = ''; newPassword = ''; newRole = 'user'" x-show="!showAddForm">+ Add User</button>
+            <button type="button" class="btn-small btn-secondary" @click="showAddForm = false" x-show="showAddForm">Cancel</button>
+        </div>
+
+        <template x-if="$store.users.error">
+            <div class="error-msg" x-text="$store.users.error"></div>
+        </template>
+
+        <!-- Add User Form -->
+        <template x-if="showAddForm">
+            <div class="add-user-form" @submit.prevent="$store.users.createUser(newUsername, newPassword, newRole).then(() => { showAddForm = false; newUsername = ''; newPassword = ''; newRole = 'user'; })">
+                <div class="form-row">
+                    <input type="text" x-model="newUsername" placeholder="Username" required class="input-field">
+                    <input type="password" x-model="newPassword" placeholder="Password" required class="input-field">
+                    <select x-model="newRole" class="select-field">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                    <button type="submit" class="btn-small" :disabled="$store.users.loading">Create</button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Users Table -->
+        <table class="users-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Last Login</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="user in $store.users.users" :key="user.username">
+                    <tr>
+                        <td x-text="user.username"></td>
+                        <td>
+                            <span class="role-badge" :class="'role-' + user.role" x-text="user.role"></span>
+                        </td>
+                        <td x-text="user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'"></td>
+                        <td class="actions-cell">
+                            <button type="button" class="btn-icon" title="Change role" @click="editingUser = user.username; editField = 'role'; editValue = user.role">R</button>
+                            <button type="button" class="btn-icon" title="Change password" @click="editingUser = user.username; editField = 'password'; editValue = ''">P</button>
+                            <button type="button" class="btn-icon btn-danger" title="Delete user" @click="deletingUser = user" x-show="user.username !== document.querySelector('html').getAttribute('data-user-username')">D</button>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+
+        <!-- Edit Dialog -->
+        <template x-if="editingUser">
+            <div class="modal-overlay" @click.self="editingUser = null">
+                <div class="modal-dialog">
+                    <h4>Edit User: <span x-text="editingUser"></span></h4>
+                    <div class="edit-form" @submit.prevent="$store.users.updateUser(editingUser, { [editField]: editValue }).then(() => { editingUser = null; editField = null; editValue = ''; })">
+                        <template x-if="editField === 'role'">
+                            <div class="form-row">
+                                <label>New Role:</label>
+                                <select x-model="editValue" class="select-field">
+                                    <option value="user">User</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            </div>
+                        </template>
+                        <template x-if="editField === 'password'">
+                            <div class="form-row">
+                                <label>New Password:</label>
+                                <input type="password" x-model="editValue" placeholder="Enter new password" class="input-field" required>
+                            </div>
+                        </template>
+                        <div class="form-actions">
+                            <button type="submit" class="btn-small" :disabled="$store.users.loading || (editField === 'password' && !editValue)">Save</button>
+                            <button type="button" class="btn-small btn-secondary" @click="editingUser = null">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- Delete Confirmation Dialog -->
+        <template x-if="deletingUser">
+            <div class="modal-overlay" @click.self="deletingUser = null">
+                <div class="modal-dialog">
+                    <h4>Delete User</h4>
+                    <p>Are you sure you want to delete <strong x-text="deletingUser.username"></strong>? This will also delete all their data.</p>
+                    <div class="form-actions">
+                        <button type="button" class="btn-small btn-danger" @click="$store.users.deleteUser(deletingUser.username).then(() => { deletingUser = null; })" :disabled="$store.users.loading">Delete</button>
+                        <button type="button" class="btn-small btn-secondary" @click="deletingUser = null">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</template>

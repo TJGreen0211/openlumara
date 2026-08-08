@@ -6,14 +6,14 @@ class Context:
     # will cause context.get() to cut off messages before this cutoff point
     SUMMARIZATION_CUTOFF = {"_metadata": {"signal": "SUMMARIZATION_CUTOFF"}}
 
-    def __init__(self, channel):
+    def __init__(self, channel, username=None):
         self.channel = channel
         self.model_name = None
         self.using_api_token_data = False
         self.token_encoding = None
 
         # UI-agnostic chat history system - save/load context windows from save file!
-        self.chat = core.chat.Chat(self.channel)
+        self.chat = core.chat.Chat(self.channel, username=username)
 
     async def get(self, system_prompt=True, end_prompt=True, history=True, prevent_recursion=False):
         """

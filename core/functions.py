@@ -64,10 +64,15 @@ def get_path(path: str = "", sandbox=True):
         else:
             return os.path.join(project_root, path)
 
-def get_data_path(subpath=None):
-    """get path to the data directory. contains all persistent data used by the framework"""
+def get_data_path(subpath=None, user=None):
+    """get path to the data directory. contains all persistent data used by the framework
 
-    data_path = core.config.get("core", {}).get("data_folder", "data")
+    If user is not provided, reads from core.current_user contextvar.
+    If user is set, prepends {username}/ to the path for per-user data isolation.
+    If user is None, returns global data path.
+    """
+
+    data_path = dict(core.config.config).get("core", {}).get("data_folder", "data") if core.config.config else "data"
 
     # if it's a relative path, resolve it from the project root
     if not os.path.isabs(data_path):
@@ -76,6 +81,17 @@ def get_data_path(subpath=None):
     # create it if it doesn't exist
     if not os.path.exists(data_path):
         os.makedirs(data_path, exist_ok=True)
+
+    # if no explicit user provided, try to get from context
+    if user is None:
+        user = core.current_user.get()
+
+    # if user is set, prepend to path
+    if user:
+        user_path = os.path.join(data_path, user)
+        if not os.path.exists(user_path):
+            os.makedirs(user_path, exist_ok=True)
+        data_path = user_path
 
     return sandbox_path(data_path, subpath) if subpath else data_path
 

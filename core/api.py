@@ -162,8 +162,7 @@ class APIClient():
 
     def set_model(self, name: str):
         core.config.config["model"]["name"] = name
-        core.config.save()
-
+        core.config.set_user_or_global(["model", "name"], name)
         return True
 
     async def _request(self, context, tools=None, stream=False, use_thinking=True, **kwargs):
