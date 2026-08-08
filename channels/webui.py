@@ -202,7 +202,7 @@ class Webui(core.channel.Channel):
 
         # Store log in buffer for history
         self.logs.append({"category": category, "message": message})
-        
+
         # Broadcast log messages to all connected webui clients
         # Since on_log is sync but manager.broadcast is async, we schedule it as a task
         log_message = {
@@ -220,7 +220,7 @@ class Webui(core.channel.Channel):
     async def on_shutdown(self):
         # broadcast first so clients know we're going away
         await self.websocket_manager.broadcast({"type": "shutdown"})
-        
+
         # then properly stop uvicorn
         # this is a flag exposed by uvicorn itself, which causes it to start gracefully shutting down when set
         self.server.should_exit = True
@@ -253,18 +253,18 @@ def serialize_for_json(obj):
 def get_recursive_assets(assets_path, ext, skip: list = []):
     """Recursively list asset files with paths relative to server root."""
     files = []
-    
+
     for root, dirs, filenames in os.walk(assets_path):
         # Skip files and directories marked for skipping
         filenames[:] = [f for f in filenames if os.path.basename(f) not in skip]
         dirs[:] = [d for d in dirs if d not in skip]
-        
+
         for filename in filenames:
             if filename.endswith(f".{ext}"):
                 full_path = os.path.join(root, filename)
                 rel_path = os.path.relpath(full_path, assets_path)
                 files.append(rel_path)
-    
+
     return sorted(files)
 
 def inject_indexes_into_messages(lst: list):
@@ -413,12 +413,12 @@ async def create_fastapi(channel):
             request.session["_csrf"] = secrets.token_hex(16)
 
             return fastapi.responses.RedirectResponse(url="/", status_code=303)
-        
+
         # on failure, record the login attempt
         if client_ip not in channel.login_attempts:
             channel.login_attempts[client_ip] = []
         channel.login_attempts[client_ip].append(now)
-        
+
         return channel.templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
 
     # ---- logout
@@ -591,7 +591,7 @@ async def create_fastapi(channel):
     async def get_module_info():
         """Returns the schemas (descriptions, settings schemas, etc) for all modules and core config sections"""
         module_info = {}
-        
+
         # Add module/channel settings schemas
         for module_name, module_data in core.config.get_module_structure().items():
             metadata = module_data.get("metadata", {})
@@ -603,7 +603,7 @@ async def create_fastapi(channel):
                     "unsafe": metadata.get("unsafe", False),
                     "settings_schema": settings_schema
                 }
-        
+
         # Add core config sections settings schemas
         core_structure = core.config.get_core_settings_structure()
         for section_name, section_data in core_structure.items():
@@ -779,7 +779,7 @@ async def create_fastapi(channel):
             return api_result("Failed to delete user", success=False)
 
         return api_result(success=True)
-    
+
     @app.post("/api/reconnect")
     async def reconnect():
         """Disconnects and then reconnects the API."""
@@ -842,7 +842,7 @@ async def create_fastapi(channel):
         """Returns full theme data for a specific family"""
         themes_dir = os.path.join(channel.path, "themes")
         filepath = os.path.join(themes_dir, f"{family_name}.json")
-        
+
         if not os.path.exists(filepath):
             return api_result(f"Theme family '{family_name}' not found", success=False)
 
@@ -1220,7 +1220,7 @@ class WebSocketManager:
                 elif partial.get("type") == "turn":
                     await self.broadcast({
                         "type": "turn_stream",
-                        "turns": partial.get("content")
+                        "turn": partial.get("content")
                     }, username=ws_username)
         finally:
             # always finalize the stream, no matter what

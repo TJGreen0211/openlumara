@@ -192,6 +192,8 @@ class StorageDict(dict):
                 file_ext = "json"
             case "yaml":
                 file_ext = "yml"
+            case "markdown":
+                file_ext = "md"
             case "msgpack":
                 file_ext = "mp"
                 self.binary = True
@@ -262,6 +264,50 @@ class StorageDict(dict):
         except OSError:
             pass
 
+    def _parse_nested_keys(self, flat_dict):
+        """Convert flat keys like 'ideas/openlumara/topic' into nested dict structure."""
+        result = {}
+        for key, value in flat_dict.items():
+            # normalize separators to / to handle Windows-style paths
+            parts = key.replace("\\", "/").split("/")
+            current = result
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
+        return result
+
+    def _flatten_nested_keys(self, nested_dict, prefix=""):
+        """Convert nested dict into flat keys like 'ideas/openlumara/topic'."""
+        result = {}
+        for key, value in nested_dict.items():
+            full_key = f"{prefix}/{key}" if prefix else key
+            if isinstance(value, dict):
+                result.update(self._flatten_nested_keys(value, full_key))
+            else:
+                result[full_key] = value
+
+        return result
+
+    def _delete_nested_key(self, flat_key):
+        """Delete a key from the nested dict structure."""
+        # normalize the key to ensure consistent splitting
+        parts = flat_key.replace("\\", "/").split("/")
+
+        current = self
+        # traverse down to the parent dictionary of the target key
+        for part in parts[:-1]:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                # the path doesn't exist, nothing to delete
+                return
+
+        # delete the target key from the parent dictionary
+        if isinstance(current, dict) and parts[-1] in current:
+            del current[parts[-1]]
+
     def save(self):
         """save content to file"""
         self._resolve_path()
@@ -273,6 +319,62 @@ class StorageDict(dict):
                 self._write(json.dumps(dict(self), indent=2))
             case "yaml":
                 self._write(yaml.safe_dump(dict(self), default_flow_style=False, sort_keys=False, allow_unicode=True))
+            case "markdown":
+                # NOTE to readers: i suck at recursive programming, so this is where i heavily use AI assistance. ~Rose22
+
+                # recursive file structure
+                # keys like "ideas/openlumara/topic" become nested directories
+                if not os.path.exists(self.path):
+                    os.makedirs(self.path, exist_ok=True)
+
+                # flatten nested dict to path keys
+                flat_items = self._flatten_nested_keys(dict(self))
+                failed_keys = []
+
+                for key, content in list(flat_items.items()):
+                    try:
+                        name = core.sandbox_path(self.path, f"{key}.md")
+                    except ValueError as e:
+                        # if validation fails, delete the key from the in-memory dicts to keep them clean.
+                        self._delete_nested_key(key)
+                        del flat_items[key]
+                        failed_keys.append((key, str(e)))
+
+                        continue  # Skip saving this file
+
+                    file_dir = os.path.dirname(name)
+
+                    if not os.path.exists(file_dir):
+                        os.makedirs(file_dir, exist_ok=True)
+
+                    with open(name, "w", encoding="utf-8") as f:
+                        f.write(content)
+
+                # Raise an error if any keys were skipped due to validation failure
+                if failed_keys:
+                    error_msg = "Failed to save the following keys due to validation errors:\n" + "\n".join([f"- {k}: {e}" for k, e in failed_keys])
+                    raise ValueError(error_msg)
+
+                # remove files that were deleted
+                for root, dirs, files in os.walk(self.path, topdown=False):
+                    for filename in files:
+                        if filename.endswith(".md"):
+                            full_path = os.path.join(root, filename)
+                            rel_path = os.path.relpath(full_path, self.path)
+
+                            # remove the .md extension
+                            path_no_ext = rel_path[:-3]
+
+                            # normalize path to make it cross-platform
+                            normalized = os.path.normpath(path_no_ext)
+                            logical_key = "/".join(normalized.split(os.sep))
+
+                            if logical_key not in flat_items:
+                                os.remove(full_path)
+
+                    # remove empty directories
+                    if root != self.path and not os.listdir(root):
+                        os.rmdir(root)
             case "msgpack":
                 self._write(msgpack.packb(dict(self)))
             case "text":
@@ -291,21 +393,44 @@ class StorageDict(dict):
             return True
 
         # skip reload if file hasn't changed on disk
-        if not self._file_changed():
+        if self.type not in ["markdown"] and not self._file_changed():
             self._update_mtime()
             return True
 
         self.clear()
 
-        data = self._read()
-        if not data:
-            return None
+        if self.type not in ["markdown"]:
+            data = self._read()
+            if not data:
+                return None
 
         match self.type:
             case "json":
                 self.update(json.loads(data))
             case "yaml":
                 self.update(yaml.safe_load(data))
+            case "markdown":
+                # recursive file structure
+                flat_dict = {}
+                for root, dirs, files in os.walk(self.path):
+                    for filename in files:
+                        if filename.endswith(".md"):
+                            full_path = os.path.join(root, filename)
+                            rel_path = os.path.relpath(os.path.join(root, filename), self.path)
+
+                            # remove .md extension
+                            path_without_ext = rel_path[:-3]
+
+                            # normalize path to make it cross-platform
+                            normalized_path = os.path.normpath(path_without_ext)
+                            key = "/".join(normalized_path.split(os.sep))
+
+                            with open(full_path, "r", encoding="utf-8") as f:
+                                flat_dict[key] = str(f.read())
+
+                # convert flat path keys to nested dict structure
+                nested_dict = self._parse_nested_keys(flat_dict)
+                self.update(nested_dict)
             case "msgpack":
                 self.update(msgpack.unpackb(data))
             case "text":

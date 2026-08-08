@@ -256,6 +256,10 @@ class Channel:
         """
         content_blocks = []
 
+        # if the message was a list... this was already multimodal, so dont modify
+        if isinstance(message, list):
+            return {"role": "user", "content": message}
+
         if not message and not files:
             # wtf why would you do that
             return None
@@ -426,41 +430,49 @@ class Channel:
         await self._set_as_active_channel()
         user_message = message
 
-        # process any commands
-        is_cmd = user_message.strip().lower().startswith(
-            core.config.get("core", "cmd_prefix").strip().lower()
-        )
+        # sometimes legacy parts of the openlumara framework still send dicts.
+        # that is not supposed to happen, and i need to find the code that does it
+        # so, TODO: find the legacy code that calls channel.send()/send_stream() with dicts
+        # but for now.. to avoid breaking everything, i'll convert
+        if isinstance(user_message, dict):
+            user_message = user_message.get("content", "")
 
-        if is_cmd:
-            try:
-                cmd_response = await self.commands.process_input(user_message, authorized=commands_authorized)
-            except Exception as e:
-                self.log(self.name, f"Error while executing command: {core.detail_error(e)}")
-                # no need to add a message to context here, as process_input() already does that
-                return {"type": "error", "content": str(core.detail_error(e))}
+        if isinstance(user_message, str):
+            # process any commands
+            is_cmd = user_message.strip().lower().startswith(
+                core.config.get("core", "cmd_prefix").strip().lower()
+            )
 
-            if cmd_response:
-                # process_input already adds to context
-                return {"type": "cmd_response", "content": str(cmd_response), "is_cmd": True}
-            else:
-                return {"type": "blank"}
-
-        # apply any on_user_message() hooks
-        for module_name, module in self.manager.modules.items():
-            if hasattr(module, "on_user_message"):
+            if is_cmd:
                 try:
-                    if asyncio.iscoroutinefunction(module.on_user_message):
-                        usr_msg_result = await module.on_user_message(user_message)
-                    else:
-                        usr_msg_result = module.on_user_message(user_message)
+                    cmd_response = await self.commands.process_input(user_message, authorized=commands_authorized)
                 except Exception as e:
-                    self.log("module error", f"{module_name}: in on_user_message(): {core.detail_error(e)}")
+                    self.log(self.name, f"Error while executing command: {core.detail_error(e)}")
+                    # no need to add a message to context here, as process_input() already does that
+                    return {"type": "error", "content": str(core.detail_error(e))}
 
-                if usr_msg_result is False:
-                    await self.context.chat.messages.add({"role": "user", "content": user_message})
-                    return {"type": "module_intercept"}
-                elif usr_msg_result is not None:
-                    user_message = usr_msg_result
+                if cmd_response:
+                    # process_input already adds to context
+                    return {"type": "cmd_response", "content": str(cmd_response), "is_cmd": True}
+                else:
+                    return {"type": "blank"}
+
+            # apply any on_user_message() hooks
+            for module_name, module in self.manager.modules.items():
+                if hasattr(module, "on_user_message"):
+                    try:
+                        if asyncio.iscoroutinefunction(module.on_user_message):
+                            usr_msg_result = await module.on_user_message(user_message)
+                        else:
+                            usr_msg_result = module.on_user_message(user_message)
+                    except Exception as e:
+                        self.log("module error", f"{module_name}: in on_user_message(): {core.detail_error(e)}")
+
+                    if usr_msg_result is False:
+                        await self.context.chat.messages.add({"role": "user", "content": user_message})
+                        return {"type": "module_intercept"}
+                    elif usr_msg_result is not None:
+                        user_message = usr_msg_result
 
         # apply multimodal content if applicable
         user_message_processed = await self._process_multimodal(message=user_message, files=files)
@@ -706,148 +718,236 @@ class Channel:
         assistant_message = self._build_final_assistant_message(final_content, final_reasoning)
         await self._send_postprocess(assistant_message)
 
-    async def format_stream_for_text(self, stream, chunk_size=None, use_markdown=True, strings: dict = None):
+    async def format_stream_for_text(self, stream, chunk_size=None, use_markdown=True, strings: dict = None, show_indicators=True):
         """
-        helper function so that channels don't need to implement this themselves...
-        takes care of properly displaying all the agentic turns
-        and nicely formatting it so it looks close to the webUI's presentation of it
+        Formats a stream of turn segments into text deltas for text-based channels.
         """
         def text_to_token(text):
-            return {"type": "content", "content": text}
+            return {"type": "formatted", "content": text}
 
-        currently_reasoning = False
         show_reasoning = self.config.get("show_reasoning")
-        last_token_was_newline = False
-        char_counter = 0
-
+        
         if not strings:
             if use_markdown:
                 strings = {
                     "thinking_header": "**Thinking**",
-                    "thinking_str": "*thinking..*",
-                    "conclusion_header": "**Conclusion**",
-                    "processing_tool": "(processing results..)",
-                    "thinking_newline": "\n> "
+                    "thinking_newline": "\n> ",
+                    "conclusion_header": "",
+                    "separator": "",
+                    "tool_call_header": "🔧 calling tool *{tool_name}*"
                 }
             else:
                 strings = {
-                    "thinking_header": "--- Thinking ---",
-                    "thinking_str": "thinking..",
-                    "conclusion_header": "--- Conclusion ---",
-                    "processing_tool": "\n(processing results..)",
-                    "thinking_newline": "\n"
+                    "thinking_header": "Thinking:",
+                    "thinking_newline": "\n-> ",
+                    "conclusion_header": "",
+                    "separator": "-"*8,
+                    "tool_call_header": "🔧 calling tool {tool_name}"
                 }
 
-        string_type = "markdown" if use_markdown else "no_markdown"
-
-        async for token in stream:
-            token_type = token.get("type")
-            content = token.get("content", "")
-
-            if token_type == "prompt_progress":
-                yield token
-            elif token_type == "error":
-                yield token
-
-            # # collapse consecutive newlines
-            try:
-                # format the reasoning to look all fancy
-                if show_reasoning:
-                    newline_str = "\n" if not currently_reasoning else strings["thinking_newline"]
-                else:
-                    newline_str = "\n"
-
-                # collapse more than 2 newlines to just 2
-                content = regex.sub(r'\n{3,}', '\n\n', content)
-                content = content.replace("\n", newline_str)
-            except:
-                pass
-
-            # ensure formatting displays correctly even when split into chunks
+        first_turn = True
+        last_turn_type = None
+        currently_reasoning = False
+        shown_reasoning_indicator = False
+        
+        # Per-tool-call tracking: {tool_id: {key: formatted_value}}
+        last_tool_state = {}
+        last_content = {}
+        
+        # track characters for chunk boundaries
+        char_counter = 0
+        
+        async def check_chunk_boundary():
+            nonlocal char_counter
             if chunk_size and char_counter >= chunk_size:
-                # signal to our caller that we're starting a new chunk
                 yield {"type": "new_chunk", "content": ""}
                 char_counter = 0
 
-                if currently_reasoning and show_reasoning and use_markdown:
-                    yield text_to_token("> ")
-                    char_counter += len("> ") # what we just emitted counts as a token
+        async for token in self.group_stream(stream):
+            # always yield the raw token for manual processing by the channel
+            if token.get("type") == "token":
+                yield token.get("content")
 
-            # show thinking header
-            if token_type == "reasoning" and not currently_reasoning:
-                if show_reasoning:
-                    # think_str = "\n## Thinking:\n> "
-                    think_str = strings["thinking_header"]
+            if token.get("type") != "turn":
+                continue
+            
+            segment = token.get("content")
+            if not segment:
+                continue
+            
+            segment_type = segment.get("type")
+            
+            if segment.get("role") != "assistant":
+                continue
+            
+            if segment_type != last_turn_type:
+                if first_turn:
+                    first_turn = False
                 else:
-                    think_str = strings["thinking_str"]
-                currently_reasoning = True
+                    if strings.get("separator"):
+                        # create a new chunk if needed
+                        async for _ in check_chunk_boundary():
+                            yield _
+                        yield text_to_token("\n"+strings["separator"]+"\n")
+                        char_counter += len("\n"+strings["separator"]+"\n")
 
-                char_counter += len(think_str)
-                yield text_to_token(think_str)
+                last_content = {}
+                
+                if segment_type == "reasoning" and show_reasoning:
+                    currently_reasoning = True
+                    # create a new chunk if needed
+                    async for _ in check_chunk_boundary():
+                        yield _
 
-                char_counter += len(strings["thinking_newline"])
-                yield text_to_token(strings["thinking_newline"])
+                    yield text_to_token(strings["thinking_header"])
+                    char_counter += len(strings["thinking_header"])
+                    yield text_to_token(strings["thinking_newline"])
+                    char_counter += len(strings["thinking_newline"])
+                elif segment_type == "content" and currently_reasoning:
+                    currently_reasoning = False
+                    # create a new chunk if needed
+                    async for _ in check_chunk_boundary():
+                        yield _
 
-            # show conclusion header
-            if token_type == "content" and show_reasoning and currently_reasoning:
-                header_str = "\n"+strings["conclusion_header"]
-                if use_markdown:
-                    # add an extra newline for markdown's newline quirks
-                    header_str = "\n"+header_str
+                    yield text_to_token(strings["conclusion_header"])
+                    char_counter += len(strings["conclusion_header"])
+                    yield text_to_token("\n")
+                    char_counter += len("\n")
+                elif segment_type == "tool_calls":
+                    # Will be handled per-tool below
+                    pass
 
-                char_counter += len(header_str)
-                yield text_to_token(header_str)
+            if segment_type == "reasoning":
+                if show_reasoning:
+                    current = segment.get("reasoning_content") or ""
+                    delta = current[len(last_content.get("reasoning", "")):]
+                    if delta:
+                        # create a new chunk if needed
+                        async for _ in check_chunk_boundary():
+                            yield _
 
-                char_counter += len("\n")
-                yield text_to_token("\n")
+                        delta = delta.replace("\n", strings["thinking_newline"])
+                        yield text_to_token(delta)
+                        char_counter += len(delta)
+                    if "last_content" not in dir():
+                        last_content = {}
+                    last_content["reasoning"] = current
+                elif not shown_reasoning_indicator:
+                    if show_indicators:
+                        # create a new chunk if needed
+                        async for _ in check_chunk_boundary():
+                            yield _
 
-            if token_type in ["content", "tool_calls", "tool"] and currently_reasoning:
-                # we can have multiple reasoning blocks
-                currently_reasoning = False
+                        yield text_to_token("thinking..\n")
+                        char_counter += len("thinking..\n")
+                    shown_reasoning_indicator = True
 
-            # show tool result text
-            # if token_type == "tool":
-            #     tool_result_str = strings["processing_tool"]
-            #     char_counter += len(tool_result_str)
-            #     yield text_to_token(tool_result_str)
+            elif segment_type == "content":
+                shown_reasoning_indicator = False
 
-            if self.config.get("stream_tool_calls") and token_type == "tool_call_delta":
-                # Extract the accumulated tool call from the delta
-                tc_list = token.get("tool_calls", [])
-                if tc_list:
-                    tc = tc_list[0]
-                    func = tc.get("function")
+                current = segment.get("content") or ""
+                content_index = 0
 
-                    # Render the partial/full tool call fancy style
-                    tool_delta_str = await self._render_tool_token(func, func.get("arguments"))
+                if last_content:
+                    content_index = len(last_content.get("content", ""))
 
-                    # fix fake newlines
-                    tool_delta_str = tool_delta_str.replace("\\n", "\n")
+                delta = current[content_index:]
+                if delta:
+                    # create a new chunk if needed
+                    async for _ in check_chunk_boundary():
+                        yield _
+                    yield text_to_token(delta)
+                    char_counter += len(delta)
+                if "last_content" not in dir():
+                    last_content = {}
+                last_content["content"] = current
 
-                    char_counter += len(tool_delta_str)
-                    yield text_to_token(tool_delta_str)
-            elif token_type == "tool":
-                char_counter += len("\n\n")
-                yield text_to_token("\n\n")
-            elif not self.config.get("stream_tool_calls") and token_type == "tool_calls":
-                char_counter += len("\n")
-                yield text_to_token("\n")
+            elif segment_type == "tool_calls":
+                tool_calls = segment.get("tool_calls") or []
+                
+                for tc in tool_calls:
+                    tc_id = tc.get("id", "")
+                    if not tc_id:
+                        continue
+                        
+                    tool_name = tc.get("function", {}).get("name", "unknown")
+                    args_str = tc.get("function", {}).get("arguments", "")
+                    
+                    # Check if we need to print the tool header (new tool or name changed)
+                    prev_state = last_tool_state.get(tc_id, {})
+                    prev_name = prev_state.get("_name")
+                    
+                    if prev_name != tool_name:
+                        # New tool or name changed - print header
+                        header = strings["tool_call_header"].format(tool_name=tool_name)
+                        # create a new chunk if needed
+                        async for _ in check_chunk_boundary():
+                            yield _
+                        yield text_to_token("\n")
+                        char_counter += len("\n")
+                        yield text_to_token(header)
+                        char_counter += len(header)
+                    
+                    # Parse the current arguments as partial JSON
+                    try:
+                        current_args = partial_json_parser.loads(args_str, allow_partial=partial_json_parser.Allow.ALL)
+                        if not isinstance(current_args, dict):
+                            current_args = {}
+                    except Exception:
+                        current_args = {}
+                    
+                    # Get previous parsed args
+                    prev_args = prev_state.get("_args", {})
+                    
+                    # Compare keys and yield deltas
+                    all_keys = set(list(prev_args.keys()) + list(current_args.keys()))
+                    for key in all_keys:
+                        prev_val = prev_args.get(key)
+                        current_val = current_args.get(key)
+                        
+                        if prev_val is None:
+                            # New key - print the whole key: value
+                            val_str = json.dumps(current_val) if isinstance(current_val, (dict, list)) else str(current_val)
+                            # create a new chunk if needed
+                            async for _ in check_chunk_boundary():
+                                yield _
 
-                tool_calls = token.get("tool_calls")
-                for tool_call in tool_calls:
-                    tool_str = self.tc_manager.display_call(tool_call)+"\n"
-                    char_counter += len(tool_str)
-                    yield text_to_token(tool_str)
+                            yield text_to_token("\n")
+                            char_counter += len("\n")
+                            yield text_to_token(f"**{key}**: ")
+                            char_counter += len(f"**{key}**: ")
+                            yield text_to_token(val_str)
+                            char_counter += len(val_str)
+                            yield text_to_token("\n")
+                            char_counter += len("\n")
+                        elif current_val is None:
+                            # Key removed (shouldn't happen during streaming but handle it)
+                            pass
+                        else:
+                            # Key exists in both - check for value change
+                            prev_val_str = json.dumps(prev_val) if isinstance(prev_val, (dict, list)) else str(prev_val)
+                            current_val_str = json.dumps(current_val) if isinstance(current_val, (dict, list)) else str(current_val)
+                            
+                            if prev_val_str != current_val_str:
+                                # Value changed - yield the delta
+                                if current_val_str.startswith(prev_val_str):
+                                    delta = current_val_str[len(prev_val_str):]
+                                else:
+                                    delta = current_val_str
+                                if delta:
+                                    # create a new chunk if needed
+                                    async for _ in check_chunk_boundary():
+                                        yield _
+                                    yield text_to_token(delta)
+                                    char_counter += len(delta)
+                    
+                    # Update state
+                    last_tool_state[tc_id] = {
+                        "_name": tool_name,
+                        "_args": current_args
+                    }
 
-                yield text_to_token("\n")
-                char_counter += len("\n")
-
-            if token_type == "content":
-                yield text_to_token(content)
-                char_counter += len(content)
-            if token_type == "reasoning" and show_reasoning:
-                char_counter += len(content)
-                yield text_to_token(content)
+            last_turn_type = segment_type
 
     async def group_stream(self, stream):
         """

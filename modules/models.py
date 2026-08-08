@@ -66,7 +66,6 @@ class Models(core.module.Module):
     @core.module.command("model")
     async def model(self, args: list):
          """Switches to model <name>.
-       0
          Args:
              args: the model name or empty to show current model
          """

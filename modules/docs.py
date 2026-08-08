@@ -16,9 +16,9 @@ class Docs(core.module.Module):
     }
 
     async def on_ready(self):
-        self.folders = self.config.get("folders") or []
-        if self.folders:
-            for folder in self.folders:
+        folders = self.config.get("folders")
+        if folders:
+            for folder in folders:
                 os.makedirs(core.get_path(os.path.expanduser(folder)).rstrip(os.path.sep), exist_ok=True)
 
         if self.config.get("insert_system_prompt"):
@@ -26,22 +26,22 @@ class Docs(core.module.Module):
 
     async def _get_folder_names(self):
         """translates the folder path list into basenames for the AI"""
-        if not self.folders:
+        folders = self.config.get("folders")
+        if not folders:
             return []
 
-        paths = [f.rstrip(os.path.sep) for f in self.folders]
+        paths = [f.rstrip(os.path.sep) for f in folders]
         return [os.path.basename(f) for f in paths]
 
     async def _get_folder_path(self, folder: str):
         """resolves a folder basename to its full path"""
-        if not self.folders:
+        folders = self.config.get("folders")
+        if not folders:
             return None
 
-        for f in self.folders:
+        for f in folders:
             if os.path.basename(f.rstrip(os.path.sep)) == folder.rstrip(os.path.sep):
                 return core.get_path(os.path.expanduser(f)).rstrip(os.path.sep)
-
-        return None
 
     async def on_system_prompt(self):
         folders = await self._get_folder_names()
@@ -52,17 +52,21 @@ class Docs(core.module.Module):
     async def get_topics(self):
         return self.result(await self._get_folder_names())
 
-    async def list(self, folder: str, path: str = None):
+    async def list(self, folder: str, subfolder: str = None):
         try:
             folder_path = await self._get_folder_path(folder)
             if not folder_path:
-                return self.result(f"Documentation folder '{folder}' not found", success=False)
+                return self.result(f"Folder '{folder}' does not exist within the docs module configuration.", success=False)
             
-            base_path = core.sandbox_path(folder_path, path or "")
+            # remove the folder from the requested path in case the AI decided to double-add it
+            if subfolder and subfolder.startswith(folder):
+                subfolder = subfolder[len(folder):]
+
+            base_path = core.sandbox_path(folder_path, subfolder or "")
             
             contents = os.listdir(base_path)
             
-            prefix = f"{path}/" if path else ""
+            prefix = f"{subfolder}/" if subfolder else ""
             dirs = sorted([f"{prefix}{d}" for d in contents if os.path.isdir(os.path.join(base_path, d))])
             files = sorted([f"{prefix}{f}" for f in contents if os.path.isfile(os.path.join(base_path, f))])
             
@@ -77,8 +81,12 @@ class Docs(core.module.Module):
 
     async def read(self, folder: str, path: str):
         folder_path = await self._get_folder_path(folder)
+        # remove the folder from the requested path in case the AI decided to double-add it
+        if path.startswith(folder):
+            path = path[len(folder):]
+
         if not folder_path:
-            return self.result(f"Documentation folder '{folder}' not found", success=False)
+            return self.result(f"Folder '{folder}' does not exist within the docs module configuration.", success=False)
         
         target_path = core.sandbox_path(folder_path, path)
             

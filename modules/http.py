@@ -947,9 +947,10 @@ class Http(core.module.Module):
         """Replaces IPv4 and IPv6 addresses with [CENSORED_IP]."""
         if not isinstance(text, str):
             return text
-
-        text = text.replace(self.server_ipv4, "[CENSORED_IP]")
-        text = text.replace(self.server_ipv6, "[CENSORED_IP]")
+        if self.server_ipv4 is not None:
+            text = text.replace(self.server_ipv4, "[CENSORED_IP]")
+        if self.server_ipv6 is not None:
+            text = text.replace(self.server_ipv6, "[CENSORED_IP]")
         return text
 
     # ==================== SSRF Protection ====================

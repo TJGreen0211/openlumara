@@ -1,6 +1,9 @@
 import os
 import contextvars
 
+version = 1.0
+
+firstrun = False
 quiet = False
 debug = False
 debug_stream = False
@@ -38,5 +41,12 @@ import core.channel
 
 import core.modules
 import core.api
+
+# handle first run
+firstrun_path = core.get_data_path("firstrun")
+if not os.path.exists(firstrun_path):
+    firstrun = True
+    with open(firstrun_path, 'w', encoding="utf-8") as f:
+        f.write("")
 
 import core.manager

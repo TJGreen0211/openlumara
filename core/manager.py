@@ -35,12 +35,19 @@ class Manager:
         self._restart_requested = False
         self._prevent_double_shutdown = False
 
+        self.started = False
+
     def _remove_async_task(self, task):
         self._async_tasks.discard(task)
         self.log("task", f"background task completed: {task.get_name()}")
 
     def log(self, category: str, message: str):
         """propagate the output to every channel"""
+        if not self.started and not core.quiet:
+            cat_str = rf"[{category.upper()}] " if category else ""
+            print(f"{cat_str}{message}")
+            return
+
         for name, channel in self.channels.items():
             channel.on_log(category, message)
 
@@ -189,9 +196,8 @@ class Manager:
         if enabled_user_modules:
             import user_modules
 
-        self.log("core", "Loading core channels..")
         if not core.quiet:
-            print("[CORE] Loading core channels..") # cheating here because at this point none of the channels are actually here yet lol
+            self.log("core", "Loading core channels..")
         await self._load_channels(self.channels, channels, enabled_channels)
 
         if not self.channel:
@@ -266,14 +272,6 @@ class Manager:
                 # reload config
                 core.config.load()
 
-        # start the channels (execute their .run() method)
-        for channel_name, channel in self.channels.items():
-            self.log("core", f"Starting channel {channel_name}")
-
-            await channel.on_ready()
-            self._async_tasks.add(asyncio.create_task(channel.run()))
-            self._async_tasks.add(asyncio.create_task(channel._start_push_queue()))
-
         # Attempt API connection but don't fail if it doesn't work
         """Initialize API connection"""
         self.log("API", "Connecting..")
@@ -285,6 +283,16 @@ class Manager:
         # run everything
         self.log("core", "Startup complete")
         self.log("", "-"*40)
+
+        # start the channels (execute their .run() method)
+        for channel_name, channel in self.channels.items():
+            self.log("core", f"Starting channel {channel_name}")
+
+            await channel.on_ready()
+            self._async_tasks.add(asyncio.create_task(channel.run()))
+            self._async_tasks.add(asyncio.create_task(channel._start_push_queue()))
+
+        self.started = True
 
         try:
             # actually run everything
@@ -364,6 +372,7 @@ class Manager:
         # wait so that everything's properly gone
         await asyncio.sleep(1)
 
+        self.started = False
         self.log("core", "Shutdown complete")
 
     async def toggle_module(self, module_name: str, autorestart=True):

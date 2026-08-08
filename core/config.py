@@ -39,7 +39,7 @@ core_settings_schema = {
     },
     "api": {
         "url": {
-            "default": "http://localhost:5001/v1",
+            "default": "http://API_URL_HERE/v1",
             "description": "The base URL for the API endpoint. Get this from your chosen software (such as [llamacpp](https://llama.app/), [koboldcpp](https://koboldai.org/cpp), [lemonade](https://lemonade-server.ai/), or any other software you may prefer) or from your cloud API provider."
         },
         "key": {

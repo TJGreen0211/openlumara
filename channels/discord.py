@@ -59,6 +59,9 @@ class Client(discord.Client):
                             state.full_content = ""
                         continue
 
+                    if token.get("type") != "formatted":
+                        continue
+
                     word = token.get("content")
                     if not word or not isinstance(word, str):
                         continue
@@ -136,7 +139,11 @@ class Client(discord.Client):
                             # send the pure command to the AI
                             # command authorization checks were moved to the core framework
                             # so that it's much more secure
-                            content = f"{cmd_prefix}{' '.join(cmd)}"
+                            content = f"{cmd_prefix}{cmd}"
+                            if args:
+                                content += " "+' '.join(args)
+
+                            self.ai_channel.log(self.ai_channel.name, content)
                         else:
                             orig_content = str(content)
                             content = ""

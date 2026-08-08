@@ -68,9 +68,10 @@ class AutoBackup(core.module.Module):
                 
                 # Calculate how long to wait based on last backup time
                 wait_time = await self._calculate_wait_time(interval_seconds)
-                
+                wait_days = int(wait_time / 86400)
+
                 if wait_time > 0:
-                    self.channel.log(self.name, f"Waiting {wait_time:.0f} seconds until next backup")
+                    self.channel.log(self.name, f"Waiting {wait_days} day(s) until next backup")
                     await asyncio.sleep(wait_time)
 
                 # Check again after sleep in case settings changed
@@ -178,8 +179,9 @@ class AutoBackup(core.module.Module):
         
         if not last_backup_str or last_backup_str == "None" or last_backup_str == "":
             # No previous backup exists, wait for full interval
-            self.channel.log(self.name, "No previous backup found, performing initial backup.")
-            return 0
+            interval = self.config.get("backup_interval_days")
+            interval_seconds = interval * 86400  # convert days to seconds
+            return interval_seconds
         
         try:
             last_backup_time = datetime.fromisoformat(last_backup_str)
@@ -190,7 +192,6 @@ class AutoBackup(core.module.Module):
                 self.channel.log(self.name, "Backup interval has passed, backing up immediately")
                 return 0
             
-            self.channel.log(self.name, f"Last backup was {elapsed:.0f}s ago, {remaining:.0f}s remaining until next backup")
             return remaining
             
         except (ValueError, TypeError) as e:

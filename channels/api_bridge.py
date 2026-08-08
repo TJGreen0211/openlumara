@@ -229,7 +229,7 @@ class ApiBridge(core.channel.Channel):
                     token_type = token.get("type")
                     token_content = token.get("content")
 
-                    if token_type == "content":
+                    if token_type == "formatted":
                         yield f"data: {self._openai_chunk(chat_id, created_time, model, token_content)}\n\n"
             finally:
                 yield "data: [DONE]\n\n"

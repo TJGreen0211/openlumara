@@ -16,10 +16,7 @@ def log(category: str, msg: str):
 
     so this is a last resort
     """
-    if not core.manager.global_instance:
-        print(f"[{category.upper()}] {msg}", flush=True)
-    else:
-        core.manager.global_instance.log(category, msg)
+    print(f"[{category.upper()}] {msg}", flush=True)
 
 def detail_error(e: Exception):
     """provides more detail about an exception, but in a compact format"""
