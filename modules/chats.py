@@ -33,7 +33,6 @@ class Chats(core.module.Module):
 
         return self.result(cats)
 
-    # AI tool version
     async def organize(self, new_name: str, category: str, tags: list = None):
         """Lets you rename, categorize, and tag the current chat. If the chat fits within an existing category (defined in your system prompt), use that one. If a fitting category does not exist, create a new one."""
         if not new_name:
@@ -50,58 +49,9 @@ class Chats(core.module.Module):
     async def _search(self, query: str, max_results: int = 20):
         return await self.channel.context.chat.search(query, max_results)
 
-    # command version
-    @core.module.command("search")
-    async def cmd_search(self, args: list):
-        """Searches within your chat history"""
-        query = " ".join(args)
-        found = await self._search(query)
-        if not found:
-            return "no results found"
-
-        output = "" if not found else f"Found these chats containing '{query}':\n\n"
-        for chat in found:
-            date_str = datetime.datetime.fromisoformat(chat.get('updated')).strftime("%x %X")
-            output += f"[{date_str}] [{chat.get('id')}] {chat.get('title')}\n"
-
-        return output
-
-    # AI tool version
     async def search(self, query: str):
         """Searches within all previous chats the user ever had with you. Very useful for recalling information from the past! Use only if user explicitly requests it, or if you can't find a past event the user is referring to within your current context!"""
         found = await self._search(query)
         if not found:
             return self.result("no results found")
         return self.result(found)
-
-    async def _compress(self):
-        await self.manager.channel.push("Compressing your chat history..")
-        context = await self.manager.channel.context.get()
-
-        # use API.send() to skip all the usual convenience logic
-        response = await self.manager.API.send(context+[{"role": "user", "content": "Please summarize our conversation so far up to this point. The purpose is to compress current context into a summary that will be used to continue the chat."}], use_tools=False, use_thinking=False)
-
-        if not response:
-            return None
-
-        # add special cutoff message that gets handled by the context manager
-        await self.manager.channel.context.chat.messages.add(self.manager.channel.context.SUMMARIZATION_CUTOFF)
-
-        # add AI's summarization
-        await self.manager.channel.context.chat.messages.add({"role": "assistant", "content": response.get("content")})
-
-        return True
-
-    @core.module.command("compress")
-    async def cmd_compress(self, args: list):
-        """compress your chat history by summarizing it"""
-        compressed = await self._compress()
-        if not compressed:
-            return "failed to compress chat"
-
-        return "Chat history compressed."
-
-    async def compress(self):
-        """Will compress current chat's history down to a summary. Use if user wants to compress context down when the token limit is approaching."""
-        await self._compress()
-        return self.result("Chat history compressed.")

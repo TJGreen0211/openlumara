@@ -54,6 +54,11 @@ class Cli(core.channel.Channel):
             "description": "Whether to show a bar at the bottom of the CLI, with stuff like current token use, current model, etc",
             "default": True
         },
+        "show_chat_title": {
+            "description": "Whether to show the chat title in the bottom bar",
+            "default": True,
+            "depends": "show_status_bar"
+        },
         "show_model_name": {
             "description": "Whether to show the model name in the bottom bar",
             "default": True,
@@ -127,8 +132,10 @@ class Cli(core.channel.Channel):
                 self.console.print("5. You're done. Enjoy!")
             self.console.print("-"*40)
 
-        self.console.print("Type /new to start a new session, /help for help, /chats to see your chats")
-        self.console.print("Type /quit or /exit to quit")
+        cmd_prefix = core.config.get("core", "cmd_prefix")
+
+        self.console.print(f"Type {cmd_prefix}new to start a new session, {cmd_prefix}help for help, {cmd_prefix}chats to see your chats")
+        self.console.print(f"Type {cmd_prefix}quit or {cmd_prefix}exit to quit")
         self.console.print(plaintext("-"*40))
 
         # install rich's traceback handler
@@ -159,6 +166,7 @@ class Cli(core.channel.Channel):
         if not self.config.get("show_status_bar"):
             return None
 
+        chat_title = self.context.chat.get('title') or "New chat"
         model = self.manager.API.get_model() or "model not set"
         max_tokens = core.config.get('api', 'max_context')
         api_url = core.config.get('api', 'url')
@@ -166,11 +174,12 @@ class Cli(core.channel.Channel):
         tokens_percent = self._token_usage / max_tokens
         token_bar = self._token_bar(tokens_percent, width=20)
 
+        title_str = chat_title[:25] + (".." if len(chat_title)>25 else "") if self.config.get("show_chat_title") else ""
         model_str = f"▣ {model}" if self.config.get("show_model_name") else ""
         token_bar_str = f"◉ Tokens: {token_bar} {self._token_usage}/{max_tokens}" if self.config.get("show_token_usage") else ""
         api_url_str = f"⇄ {api_url}" if self.config.get("show_api_url") else ""
 
-        total_bar = [s for s in (model_str, token_bar_str, api_url_str) if s]
+        total_bar = [s for s in (title_str, model_str, token_bar_str, api_url_str) if s]
         total_bar_str = " | ".join(total_bar)
         return prompt_toolkit.formatted_text.HTML(total_bar_str)
 
@@ -255,7 +264,7 @@ class Cli(core.channel.Channel):
                     token_content = token.get("content")
 
                     if token_type == "error":
-                        self.console.print("[red][bold]ERROR:[/bold] {token_content}[/red]")
+                        self.console.print(f"[red][bold]ERROR:[/bold] {token_content}[/red]")
                         continue
                     elif token_type in ("user_message", "token_usage"):
                         continue

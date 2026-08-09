@@ -11,19 +11,6 @@ class Chat:
         # Auto-migrate if old format detected
         old_chats_file = core.get_data_path(f"{channel.name}_chats.json")
         if os.path.exists(old_chats_file):
-            if not core.proceed_migration:
-                print("-"*40)
-                print("Found old chat history files! In order for them to work in the new version of openlumara, they need to be migrated.")
-                print(f"\033[1;31m!! PLEASE MAKE A BACKUP OF YOUR DATA FOLDER, SO THAT YOU WON'T POTENTIALLY LOSE YOUR CHATS !!\033[0m")
-                print()
-                print("Then, when you're ready, type MIGRATE in caps into this prompt:")
-                while not core.proceed_migration:
-                    confirm = input("migrate?> ")
-                    if confirm.strip() == "MIGRATE":
-                        core.proceed_migration = True
-
-                    print("Type 'MIGRATE' exactly in capital letters")
-
             self._migrate_if_needed()
 
         # Chat index is per-user — each user has their own set of chats
@@ -81,6 +68,7 @@ class Chat:
         import json
         import msgpack
         import shutil
+        import sys
         from pathlib import Path
 
         old_chats_file = core.get_data_path(f"{self.channel.name}_chats.json")
@@ -89,6 +77,23 @@ class Chat:
             return  # No old format detected
 
         print(f"[MIGRATE] Old format detected for '{self.channel.name}', migrating...")
+
+        backup_dir = core.get_data_path("chat_migration_backups")
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # copy the old chat file to the backup folder
+        # but if it fails for ANY reason, inform the user and abort openlumara
+        backup_name = f"{self.channel.name}_chats.json.bak"
+        backup_path = os.path.join(backup_dir, backup_name)
+
+        try:
+            shutil.copy2(old_chats_file, backup_path)
+            if not os.path.exists(backup_path):
+                raise Exception("Backup file not created")
+            print(f"[MIGRATE] Backed up old file to {backup_name}")
+        except Exception as e:
+            self.channel.log("core", f"FATAL ERROR: Could not back up chats file for channel {self.channel.name}. Aborting: {core.detail_error(e)}")
+            sys.exit(1)
 
         # Read old chats
         with open(old_chats_file, 'r', encoding='utf-8') as f:
@@ -147,16 +152,8 @@ class Chat:
             except:
                 pass
 
-        # Move old files to backup
-        backup_dir = core.get_data_path("chat_migration_backups")
-        os.makedirs(backup_dir, exist_ok=True)
-
-        # Move chats file
-        old_chats_file = core.get_data_path(f"{self.channel.name}_chats.json")
-        if os.path.exists(old_chats_file):
-            backup_name = f"{self.channel.name}_chats.json.bak"
-            shutil.move(old_chats_file, os.path.join(backup_dir, backup_name))
-            print(f"[MIGRATE] Backed up old chats file to {backup_name}")
+        # and finally, once everything is confirmed safe, remove the old file
+        os.remove(old_chats_file)
 
         print(f"[MIGRATE] Migrated {len(new_chats)} chats for '{self.channel.name}'")
 

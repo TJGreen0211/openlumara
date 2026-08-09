@@ -85,7 +85,8 @@ class MyModule(core.module.Module):
 | :--- | :--- |
 | `/new` | Starts a completely new chat session. |
 | `/clear` | Clears the current chat history. |
-| `/chats` | Lists the last 20 saved chats with IDs and titles. |
+| `/chats` | Lists the last 10 saved chats with IDs and titles. |
+| `/chats <n>` | Shows page n of results. |
 | `/chat <ID>` | Loads a specific chat by its ID. |
 | `/chat` (no args) | Shows current chat info (title, category, tags, custom data). |
 | `/chat rename <name>` | Renames the current chat. |
