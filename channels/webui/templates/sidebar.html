@@ -2,16 +2,47 @@
 <div id="category-list" x-ref="category-list"
     x-show="!$store.ui.isMobile || $store.ui.showCategories" x-cloak
     >
-    <div class="list">
-        <template x-for="category in $store.chat.categories" :key="category">
-            <ul :class="{'item': true, 'active': category == $store.chat.selectedCategory, 'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory}" @click="
-                if ($store.stream.state !== 'idle') { return }
+    <div class="list" x-data="{ creatingCategory: false, newCategoryName: '' }">
+        <template x-if="creatingCategory">
+            <div class="item new-category-input">
+                <span class="icon">
+                    {% include 'svg/chat.svg' %}
+                </span>
+                <input
+                    x-ref="newCategoryInput"
+                    type="text"
+                    placeholder="Category name"
+                    x-model="newCategoryName"
+                    @keydown.enter="if (newCategoryName.trim()) { $store.chat.newCategory(newCategoryName.trim()); } creatingCategory = false; newCategoryName = ''"
+                    @keydown.escape="creatingCategory = false; newCategoryName = ''"
+                    @blur="setTimeout(() => { if (creatingCategory) { creatingCategory = false; newCategoryName = ''; } }, 150)"
+                    class="rename-input"
+                    x-init="$nextTick(() => $refs.newCategoryInput?.focus())"
+                >
+                <span class="item-actions" style="opacity: 1;">
+                    <button @click="if (newCategoryName.trim()) { $store.chat.newCategory(newCategoryName.trim()); } creatingCategory = false; newCategoryName = ''" class="action-btn save" title="Create">
+                        {% include 'svg/checkmark.svg' %}
+                    </button>
+                    <button @click="creatingCategory = false; newCategoryName = ''" class="action-btn cancel" title="Cancel">
+                        {% include 'svg/cross.svg' %}
+                    </button>
+                </span>
+            </div>
+        </template>
 
-                $store.chat.selectCategory(category);
-                if ($store.ui.isMobile) {
-                    await $store.ui.toggleMobileSidebarView();
-                }
-                ">
+        <template x-for="category in $store.chat.categories" :key="category">
+            <ul :class="{'item': true, 'active': category == $store.chat.selectedCategory, 'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory, 'drop-target': $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory}"
+                @click="
+                    if ($store.stream.state !== 'idle') { return }
+
+                    $store.chat.selectCategory(category);
+                    if ($store.ui.isMobile) {
+                        await $store.ui.toggleMobileSidebarView();
+                    }
+                "
+                @dragover.prevent="$store.chat.draggedChatId && category !== $store.chat.draggedChatCategory"
+                @drop.prevent="if ($store.stream.state === 'idle' && $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory) { $store.chat.moveChatToCategory($store.chat.draggedChatId, category); $store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null; }"
+            >
                 <span class="icon">
                     <template x-if="category === 'general'">
                         {% include 'svg/home.svg' %}
@@ -23,6 +54,11 @@
                 <span class="title" x-text="category"></span>
             </ul>
         </template>
+
+        <button class="sidebar-btn add-category-btn" :disabled="$store.stream.state !== 'idle' || creatingCategory" @click="creatingCategory = true">
+            {% include 'svg/add.svg' %}
+            <span>New Category</span>
+        </button>
     </div>
 
     {% if login_enabled %}
@@ -59,18 +95,21 @@
                 >
                     <!-- give selected chats a nice border via the CSS class -->
                     <div
-                        x-data="{ 
-                            active: false, 
-                            renaming: false, 
+                        x-data="{
+                            active: false,
+                            renaming: false,
                             renameValue: ''
                         }"
                         :id="`chat-${chat.id}`"
                         class="item"
                         :class="{
-                            'active': chat.id === $store.chat.selectedChat, 
+                            'active': chat.id === $store.chat.selectedChat,
                             'disabled': $store.stream.state !== 'idle' && chat.id !== $store.chat.selectedChat,
                             'renaming': renaming
                         }"
+                        :draggable="$store.stream.state === 'idle' && !renaming"
+                        @dragstart="$store.chat.draggedChatId = chat.id; $store.chat.draggedChatCategory = chat.category; $event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/plain', chat.id)"
+                        @dragend="$store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null"
                         @click="
                             if (!renaming) {
                                 active = !active;

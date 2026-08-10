@@ -388,3 +388,116 @@
         background: var(--bg-tertiary, #2a2a2a);
     }
 }
+
+/* Category drop target highlight during drag */
+#category-list .item.drop-target {
+    background: rgba(var(--primary-rgb), 0.25);
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius-sm);
+}
+
+/* Draggable chat items */
+#chat-list .chats .item[draggable="true"] {
+    cursor: grab;
+}
+
+#chat-list .chats .item[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+#chat-list .chats .item[draggable="false"] {
+    cursor: not-allowed;
+}
+
+/* New category input in category list */
+#category-list .new-category-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    margin-bottom: 4px;
+
+    .icon {
+        width: 18px;
+        height: 18px;
+        opacity: 0.9;
+        flex-shrink: 0;
+    }
+
+    .rename-input {
+        flex: 1;
+        min-width: 0;
+        background: var(--bg-secondary);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        padding: 4px 8px;
+        font-size: 0.9rem;
+        font-family: inherit;
+        outline: none;
+        transition: all 0.2s ease;
+        height: 28px;
+
+        &:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+        }
+    }
+
+    .item-actions {
+        display: flex;
+        gap: 4px;
+
+        .action-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            padding: 0;
+            background: transparent;
+            border: none;
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+
+            svg {
+                width: 12px;
+                height: 12px;
+            }
+
+            &.save {
+                background: var(--accent);
+                color: var(--bg-primary);
+            }
+
+            &.cancel {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border-color);
+            }
+        }
+    }
+}
+
+/* Add category button */
+#category-list .add-category-btn {
+    margin-top: 4px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    min-height: auto;
+
+    svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+}

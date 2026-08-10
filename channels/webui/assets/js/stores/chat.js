@@ -13,6 +13,9 @@ CHAT_STORE = {
     selectedChat: null,
     selectedCategory: 'general',
 
+    draggedChatId: null,
+    draggedChatCategory: null,
+
     turnHistory: [],
     editingMessageIndex: null,
     editContent: '',
@@ -132,6 +135,23 @@ CHAT_STORE = {
         await this.reloadChat();
     },
 
+    async newCategory(categoryName) {
+        await simpleApiPost('/api/chat/new', { category: categoryName });
+
+        const result = await simpleApiFetch('/api/chat/current');
+        if (!result) { return; }
+
+        this.chat = result;
+        this.selectedChat = result.id;
+        this.selectedCategory = result.category;
+        this.currentTokenUsage = result.token_usage;
+        this.turnHistory = result.turn_history;
+
+        await this.reloadCategories();
+        await this.reloadChats();
+        await this.reloadChat();
+    },
+
     async renameChat(chat_id, newTitle) {
         await simpleApiPost(`/api/chat/rename/${chat_id}`, {title: newTitle});
         await this.reloadChats();
@@ -142,6 +162,21 @@ CHAT_STORE = {
 
         await simpleApiPost(`/api/chat/delete/${chat_id}`);
         await this.reloadChats();
+    },
+
+    async moveChatToCategory(chatId, targetCategory) {
+        if (chatId === null || targetCategory === null) return;
+        if (chatId && targetCategory && this.draggedChatCategory === targetCategory) return;
+
+        await simpleApiPost(`/api/chat/category/${chatId}`, { category: targetCategory });
+
+        if (this.selectedChat === chatId) {
+            this.selectedCategory = targetCategory;
+            this.chat.category = targetCategory;
+        }
+
+        await this.reloadChats();
+        await this.reloadCategories();
     },
 
     async reloadChat() {
