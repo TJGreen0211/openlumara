@@ -915,10 +915,18 @@ def _deep_merge(base, override):
 def _merge_user_config_over(global_config, username):
     """Merge per-user config over global config, returning merged dict."""
     user_config = load_user_config(username)
-    if not user_config:
-        return global_config
 
+    # Fill in missing sections from defaults (e.g. api/model were migrated
+    # to per-user config so global config may not contain them).
     merged = dict(global_config)
+    for k, v in default_config.items():
+        if k not in merged:
+            merged[k] = copy.deepcopy(v)
+
+    if not user_config:
+        return merged
+
+    merged = dict(merged)
 
     for section in PER_USER_KEYS:
         if section in user_config:

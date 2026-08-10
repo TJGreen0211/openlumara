@@ -585,7 +585,13 @@ async def create_fastapi(channel):
         if username:
             merged = core.config._merge_user_config_over(global_config, username)
             return api_result(merged)
-        return api_result(global_config)
+
+        # No username: still fill in defaults for sections migrated to per-user config.
+        merged = dict(global_config)
+        for k, v in core.config.default_config.items():
+            if k not in merged:
+                merged[k] = v
+        return api_result(merged)
 
     @app.get("/api/settings/get_module_info")
     async def get_module_info():
