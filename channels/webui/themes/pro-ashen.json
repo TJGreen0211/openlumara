@@ -1,0 +1,63 @@
+{
+  "_comment": "this theme is originally by Daniel Fichtinger, and can be found at https://ashen.style/",
+  "dark": {
+    "--bg-primary": "#121212",
+    "--bg-secondary": "#121212",
+    "--bg-tertiary": "#191919",
+    "--bg-message-user": "linear-gradient(135deg, #1a1a1a 0%, #161616 100%)",
+    "--bg-message-ai": "#151515",
+    "--bg-message-announce": "linear-gradient(135deg, #1a1a1a 0%, #151515 100%)",
+    "--bg-message-command": "linear-gradient(135deg, #1a1614 0%, #151210 100%)",
+    "--bg-message-command-response": "linear-gradient(135deg, #1a1418 0%, #151016 100%)",
+    "--bg-input": "#161616",
+    "--bg-code": "#151515",
+    "--bg-sidebar": "#0f0f0f",
+
+    "--border-color": "#1e1e1e",
+    "--border-message": "#252525",
+    "--border-user": "#2a2a2a",
+    "--border-sidebar": "#161616",
+
+    "--text-primary": "#b4b4b4",
+    "--text-secondary": "rgba(180, 180, 180, 0.8)",
+    "--text-muted": "#848484",
+    "--text-code": "#c8c8c8",
+
+    "--accent": "#df6464",
+    "--accent-glow": "rgba(216, 124, 74, 0.2)",
+    "--accent-secondary": "#d87c4a",
+
+    "--error": "#C53030",
+    "--error-bg": "linear-gradient(135deg, #201010 0%, #180808 100%)",
+    "--error-border": "#C53030",
+    "--important": "#E5A72A",
+    "--important-bg": "linear-gradient(135deg, #201810 0%, #181008 100%)",
+    "--important-border": "#E5A72A",
+    "--info": "#c4693d",
+    "--info-bg": "linear-gradient(135deg, #1a1410 0%, #151008 100%)",
+    "--info-border": "#c4693d",
+
+    "--button-bg": "linear-gradient(135deg, #212121 0%, #1a1a1a 100%)",
+    "--button-hover": "linear-gradient(135deg, #2a2a2a 0%, #212121 100%)",
+    "--button-stop": "linear-gradient(135deg, #2a1212 0%, #1e0808 100%)",
+    "--button-stop-hover": "linear-gradient(135deg, #3a1818 0%, #2a1212 100%)",
+    "--button-stop-glow": "rgba(197, 48, 48, 0.25)",
+
+    "--scrollbar": "#2a2a2a",
+    "--scrollbar-hover": "#333333",
+
+    "--shadow-soft": "0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.4)",
+    "--shadow-medium": "0 4px 6px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4)",
+    "--shadow-strong": "0 10px 15px rgba(0, 0, 0, 0.7), 0 4px 6px rgba(0, 0, 0, 0.5)",
+    "--shadow-glow": "0 0 20px rgba(216, 124, 74, 0.05)",
+
+    "--tool-bg": "#191919",
+    "--tool-bg-secondary": "#151515",
+    "--tool-border": "#1e1e1e",
+    "--tool-border-hover": "#2a2a2a",
+    "--tool-pending-bg": "rgba(180, 180, 180, 0.03)",
+    "--tool-pending-color": "#b4b4b4",
+    "--tool-completed-bg": "rgba(216, 124, 74, 0.08)",
+    "--tool-completed-color": "#d87c4a"
+  }
+}

@@ -103,9 +103,9 @@ class Characters(core.module.Module):
         if not character:
             return f"character {name} does not exist!"
 
-        response = await self.switch(character)
-
         char_name = self._find_char_name(name)
+
+        response = await self.switch(char_name)
         return f"character switched to {char_name}"
 
     async def on_system_prompt(self):
@@ -213,7 +213,7 @@ class Characters(core.module.Module):
                 return self.result("character data not found and auto conversion of legacy character format failed", False)
 
             char_data = {
-                "name": name,
+                "name": self._find_char_name(name),
                 "description": char.get("identity")
             }
 

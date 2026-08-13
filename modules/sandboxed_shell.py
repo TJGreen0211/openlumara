@@ -1,35 +1,29 @@
 import asyncio
+import hashlib
 import json
 import os
 import shutil
 import signal
 import sys
-import uuid
 
 import core
 
 
 class SandboxedShell(core.module.Module):
     """
-    Lets your AI safely run shell commands in a disposable sandboxed container.
-    The container is persistent for the duration of the application session.
-    Runs asynchronously to prevent blocking the framework.
+    Lets your AI safely run shell commands in a persistent sandboxed docker/podman container
     """
 
     header = "Shell"
 
     settings = {
         "internet_access": {
-            "default": False,
-            "description": "Whether the sandbox container has access to the internet"
-        },
-        "read_only": {
             "default": True,
-            "description": "Whether the container filesystem is read-only. If enabled, /tmp is mounted as tmpfs for temporary writes."
+            "description": "Whether the sandbox container has access to the internet"
         },
         "persistent_data": {
             "default": True,
-            "description": "When on, the /data folder in the sandbox is persistent (and mapped to your host system). When off, it's a temporary folder in RAM (tmpfs)"
+            "description": "When on, the home folder inside the sandbox is persistent and mapped to the folder you specify. When off, it's a temporary folder in RAM (tmpfs)"
         },
         "sandbox_path": {
             "default": "~/sandbox",
@@ -38,11 +32,11 @@ class SandboxedShell(core.module.Module):
         },
         "temporary_filesystem_size_limit": {
             "default": "512m",
-            "description": "Maximum size for the temporary sandbox disk (e.g., 512m, 2g). Only works when persistent_data is off.",
+            "description": "Maximum size for the temporary sandbox disk (e.g., 512m, 2g)",
             "depends": {"persistent_data": False}
         },
         "execution_timeout": {
-            "default": 10,
+            "default": 30,
             "description": "Maximum amount of time (in seconds) a process inside the shell is allowed to run for"
         },
         "output_limit": {
@@ -59,16 +53,30 @@ class SandboxedShell(core.module.Module):
             "description": "Maximum amount of RAM use to allow (example: 150kb, 256m, 2gb)"
         },
         "max_processes": {
-            "default": 10,
+            "default": 200,
             "description": "Maximum amount of processes to allow"
         },
+        "method": {
+            "default": "dockerfile",
+            "type": "select",
+            "options": {
+                "dockerfile": "Use a dockerfile to set up your container. A default dockerfile is provided, but you can point this at any dockerfile on your filesystem",
+                "image": "Use a docker container image (such as from https://hub.docker.com/)"
+            }
+        },
+        "dockerfile_path": {
+            "default": "modules/sandboxed_shell/Dockerfile",
+            "description": "Path to a Dockerfile to build a custom image from.",
+            "depends": {"method": "dockerfile"}
+        },
         "image": {
-            "default": "python:3.11-slim",
-            "description": "Container image to use for the sandbox"
+            "default": "debian:stable-slim",
+            "description": "Container image to use for the sandbox",
+            "depends": {"method": "image"}
         },
         "run_as_user": {
             "default": "",
-            "description": "User ID to run the container processes as. If left empty, the ID of the host user running OpenLumara will be used."
+            "description": "User ID to run the container processes as. Defaults to your current host user's uid for safe file ownership."
         }
     }
 
@@ -152,78 +160,235 @@ class SandboxedShell(core.module.Module):
     async def on_system_prompt(self):
         return "".join(self._get_setup())
 
-    async def on_background(self):
-        """Monitors container memory usage and kills/restarts if limit is exceeded."""
-        # Parse the configured memory limit once to avoid repeated string parsing
-        limit_str = self.config.get("memory_limit", default="256m")
-        limit_bytes = self._parse_memory_string(limit_str)
-        if not limit_bytes:
-            limit_bytes = 268435456  # Fallback to 256MB in bytes
+    async def _build_image(self, force=False):
+        """Builds a Docker image from the configured Dockerfile.
+        
+        Args:
+            force: If True, always build regardless of hash match.
+        """
+        if self.config.get("method") != "dockerfile":
+            self.log("sandbox_shell", "Not using dockerfile method, skipping build.")
+            return None
 
-        while True:
+        dockerfile_path = self.config.get("dockerfile_path")
+        if not dockerfile_path:
+            self.log("sandbox_shell", "No dockerfile_path configured.")
+            return None
+
+        img_name = "openlumara_sandbox"
+        img_tag = "latest"
+        full_image = f"{img_name}:{img_tag}"
+
+        # expand user home dir if present
+        dockerfile_path = os.path.expanduser(dockerfile_path)
+
+        # if path is relative to openlumara root, find the root
+        if not os.path.isabs(dockerfile_path):
+            # try to find openlumara root by checking if it's relative to this module
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            candidate = os.path.join(module_dir, '..', '..', dockerfile_path)
+            if os.path.isfile(candidate):
+                dockerfile_path = os.path.abspath(candidate)
+
+        if not os.path.isfile(dockerfile_path):
+            self.log("sandbox_shell", f"Dockerfile not found at {dockerfile_path}, skipping build.")
+            return None
+
+        # compute current hash
+        current_hash = self._get_dockerfile_hash(dockerfile_path)
+        stored_hash = self._load_image_hash()
+
+        if not force and stored_hash == current_hash:
+            # check if image exists
             try:
-                await asyncio.sleep(1)
+                stdout, _, _, _ = await self._run_async_cmd(
+                    [self.runtime, 'images', '--format', '{{.Repository}}:{{.Tag}}', full_image],
+                    timeout=5.0, limit=256
+                )
+                if full_image in stdout.decode('utf-8'):
+                    self.log("sandbox_shell", f"Image {full_image} is up to date (hash unchanged), skipping build.")
+                    return full_image
+            except Exception:
+                pass
 
-                if not self.container_name or not self.runtime:
-                    continue
+        if force:
+            self.log("sandbox_shell", f"Force rebuild requested for {dockerfile_path}")
+        elif stored_hash != current_hash:
+            self.log("sandbox_shell", f"Dockerfile changed, rebuilding image {full_image}")
 
-                # fetch current memory usage of the container
-                try:
-                    current_mem_bytes = None
+        use_buildx = shutil.which("buildx") is not None
 
-                    # 1. try cgroup v2 and v1 paths
-                    for cgroup_path in ['/sys/fs/cgroup/memory.current',
-                                        '/sys/fs/cgroup/memory/memory.usage_in_bytes']:
-                        try:
-                            stdout, _, _, _ = await self._run_async_cmd(
-                                [self.runtime, 'exec', self.container_name, 'cat', cgroup_path],
-                                timeout=5.0, limit=1024
-                            )
-                            current_mem_bytes = float(stdout)
-                            break
-                        except Exception:
-                            continue
+        if use_buildx:
+            self.log("sandbox_shell", "Using BuildKit (buildx) for image build.")
+            build_env = os.environ.copy()
+            build_env["DOCKER_BUILDKIT"] = "1"
+        else:
+            self.log("sandbox_shell", "buildx not found, using legacy builder.")
+            build_env = os.environ.copy()
 
-                    # fallback to runtime stats if cgroup reads failed
-                    if current_mem_bytes is None:
-                        try:
-                            stdout, _, _, _ = await self._run_async_cmd(
-                                [self.runtime, 'stats', '--no-stream', '--format', '{{json .}}', self.container_name],
-                                timeout=5.0, limit=1024
-                            )
-                            stats_json = json.loads(stdout.decode('utf-8'))
-                            current_mem_bytes = stats_json.get("MemUsage", 0)
-                        except Exception:
-                            pass
+        try:
+            if sys.platform == "win32":
+                process = await asyncio.create_subprocess_exec(
+                    self.runtime, 'build', '-t', full_image, '-f', dockerfile_path, '.',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=build_env
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    self.runtime, 'build', '-t', full_image, '-f', dockerfile_path, '.',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    preexec_fn=os.setsid,
+                    env=build_env
+                )
 
-                    # skip loop iteration if we couldn't get a valid memory value
-                    if not current_mem_bytes:
-                        self.log(self.name, "Warning: Could not get RAM usage. Memory overflow attacks could occur.")
-                        continue
+            stdout_lines = []
+            timed_out = False
+            try:
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    line_text = line.decode('utf-8', errors='replace').strip()
+                    if line_text:
+                        stdout_lines.append(line_text)
+                        self.log("sandbox_shell", f"[build] {line_text}")
+            except asyncio.TimeoutError:
+                timed_out = True
+                await self._kill_process_tree(process)
 
-                    if current_mem_bytes and current_mem_bytes > limit_bytes:
-                        self.log("sandbox_shell", f"Memory limit exceeded ({current_mem_bytes} > {limit_bytes} bytes). Killing container.")
-                        await self._kill_container()
-                        self.container_name = None
+            await process.wait()
+            exit_code = process.returncode if process.returncode is not None else -1
 
-                        self.log("sandbox_shell", "Restarting container due to memory limit...")
-                        await self.on_ready()
-                except Exception as e:
-                    self.log("sandbox_shell", f"Error checking memory stats: {e}")
-            except Exception as e:
-                self.log("sandbox_shell", f"Background loop error: {e}")
-                await asyncio.sleep(5)  # Backoff to prevent tight loop on errors
+            if exit_code != 0:
+                self.log("sandbox_shell", f"Image build failed (exit code {exit_code})")
+                for line in stdout_lines[-20:]:
+                    self.log("sandbox_shell", f"[build] {line}")
+                return None
 
-    async def _kill_container(self):
-        """Kills and removes the container."""
+            # save the hash after successful build
+            self._save_image_hash(current_hash)
+            self.log("sandbox_shell", f"Image {full_image} built successfully.")
+            return full_image
+
+        except Exception as e:
+            self.log("sandbox_shell", f"Error building image: {e}")
+            return None
+
+    async def _start_container(self):
+        """Starts the persistent sandbox container."""
+        if not self.runtime:
+            return
+
+        method = self.config.get("method", default="dockerfile")
+        dockerfile_path = self.config.get("dockerfile_path")
+        img = self.config.get("image", default="debian:stable-slim")
+
+        if method == "dockerfile":
+            if dockerfile_path:
+                built_image = await self._build_image()
+                if built_image:
+                    img = built_image
+                else:
+                    self.log("sandbox_shell", "Build failed, using default image.")
+            else:
+                self.log("sandbox_shell", "No dockerfile_path set, using default image.")
+
+        elif method == "image":
+            self.log("sandbox_shell", f"Using image method with: {img}")
+        else:
+            self.log("sandbox_shell", f"Unknown method: {method}, using default image.")
+
+        # check if container already exists and is running
+        try:
+            stdout, _, _, _ = await self._run_async_cmd(
+                [self.runtime, 'ps', '--format', '{{.Names}}', '--filter', f'name={self.container_name}'],
+                timeout=5.0, limit=256
+            )
+            if self.container_name in stdout.decode('utf-8'):
+                self.log("sandbox_shell", f"Container {self.container_name} already running.")
+                return
+        except Exception:
+            pass
+
+        # remove any leftover container with the same name
+        try:
+            await self._run_async_cmd(
+                [self.runtime, 'rm', '-f', self.container_name],
+                timeout=10.0
+            )
+        except Exception:
+            pass
+
+        uid = self.config.get("run_as_user") or self.host_user_uid
+        gid = self.config.get("run_as_user") or self.host_user_gid
+
+        cmd = [self.runtime, 'run', '-d', '--init', '--name', self.container_name]
+
+        if self.use_gvisor:
+            cmd.extend(['--runtime', 'runsc'])
+            if self.runtime == "podman":
+                cmd.extend(["--runtime-flag", "ignore-cgroups"])
+
+        cmd.extend([
+            '--user', f"{uid}:{gid}",
+            '--cap-drop', 'ALL',
+            '--cap-add', 'KILL',
+            '--security-opt', 'no-new-privileges:true',
+            '--cpus', str(self.config.get("cpu_limit", default=0.5)),
+            '--memory', self.config.get("memory_limit", default="512m"),
+            '--pids-limit', str(self.config.get("max_processes", default=10)),
+            '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
+            '--stop-timeout', '1'
+        ])
+
+        home_dir = "/home/lumara"
+        dockerfile_mount = f"{home_dir}/Dockerfile"
+
+        if self.config.get("persistent_data", default=True):
+            selinux_flag = ":Z" if sys.platform != "win32" else ""
+            cmd.extend(['-v', f"{self.host_workspace}:{home_dir}{selinux_flag}"])
+        else:
+            limit = self.config.get("temporary_filesystem_size_limit", default="512m")
+            cmd.extend(['--tmpfs', f"{home_dir}:size={limit}"])
+
+        # mount dockerfile read-only if using dockerfile method
+        if method == "dockerfile" and dockerfile_path:
+            expanded_path = os.path.expanduser(dockerfile_path)
+            if not os.path.isabs(expanded_path):
+                module_dir = os.path.dirname(os.path.abspath(__file__))
+                expanded_path = os.path.abspath(os.path.join(module_dir, '..', '..', expanded_path))
+            if os.path.isfile(expanded_path):
+                cmd.extend(['-v', f"{expanded_path}:{dockerfile_mount}:ro"])
+                self.log("sandbox_shell", f"Mounted Dockerfile read-only at {dockerfile_mount}")
+
+        cmd.extend(['-w', home_dir, img])
+
+        self.log(self.name, "starting using command: "+' '.join(cmd))
+
+        try:
+            stdout, stderr, exit_code, _ = await self._run_async_cmd(cmd, timeout=30.0, limit=1024 * 1024)
+            if stderr:
+                self.log("sandbox_shell", f"ERROR: {stderr}")
+                self.container_name = None
+                return
+
+            self.log("sandbox_shell", f"Container {self.container_name} started (UID: {uid}, Image: {img}, method: {method}).")
+        except Exception as e:
+            self.log("sandbox_shell", f"Error starting container: {e}")
+            self.container_name = None
+
+    async def _stop_container(self):
+        """Stops and removes the container."""
         if self.container_name:
             try:
-                await self._run_async_cmd([self.runtime, 'kill', self.container_name], timeout=5.0)
-            except:
+                await self._run_async_cmd([self.runtime, 'stop', self.container_name], timeout=10.0)
+            except Exception:
                 pass
             try:
                 await self._run_async_cmd([self.runtime, 'rm', '-f', self.container_name], timeout=10.0)
-            except:
+            except Exception:
                 pass
 
     def _parse_memory_string(self, mem_str):
@@ -249,11 +414,40 @@ class SandboxedShell(core.module.Module):
         except ValueError:
             return 0
 
+    def _get_dockerfile_hash(self, path):
+        """Compute md5 hash of a dockerfile for change detection."""
+        md5 = hashlib.md5()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                md5.update(chunk)
+        return md5.hexdigest()
+
+    def _load_image_hash(self):
+        """Load the stored hash of the last built dockerfile."""
+        try:
+            with open(self.image_hash_path, 'r') as f:
+                return f.read().strip()
+        except (FileNotFoundError, IOError):
+            return None
+
+    def _save_image_hash(self, hash_val):
+        """Save the hash of the currently built dockerfile."""
+        try:
+            os.makedirs(os.path.dirname(self.image_hash_path), exist_ok=True)
+            with open(self.image_hash_path, 'w') as f:
+                f.write(hash_val)
+        except IOError as e:
+            self.log("sandbox_shell", f"Failed to save image hash: {e}")
+
     async def on_ready(self):
         """Starts the persistent container when the module is ready."""
         self.runtime = None
         self.container_name = None
         self.use_gvisor = False
+        self.container_name = "openlumara_shell"
+
+        # hash tracking file location
+        self.image_hash_path = core.get_data_path(os.path.join("sandboxed_shell", "docker_image_hash"))
 
         if shutil.which("podman"):
             self.runtime = "podman"
@@ -264,70 +458,29 @@ class SandboxedShell(core.module.Module):
             self.log("sandbox_shell", "Neither docker nor podman are available!")
             return
 
-        self.host_workspace = os.path.expanduser(self.config.get("sandbox_path", default="~/sandbox"))
+        self.host_workspace = core.get_path(
+            os.path.expanduser(self.config.get("sandbox_path", default="~/sandbox"))
+        )
         os.makedirs(self.host_workspace, exist_ok=True)
 
-        # Check for gVisor (runsc) availability
+        # resolve host user uid for safe file ownership
+        self.host_user_uid = os.getuid()
+        self.host_user_gid = os.getgid()
+
         if shutil.which("runsc"):
             self.use_gvisor = True
             self.log("sandbox_shell", "gVisor (runsc) detected. Sandbox will use gVisor for enhanced security.")
         else:
-            self.log("sandbox_shell", "Warning: gVisor (runsc) not found. Sandbox is running with standard isolation. To install gVisor for better security, see: https://gvisor.dev/docs/user_guide/install/")
+            self.log("sandbox_shell", "Warning: gVisor (runsc) not found. Sandbox is running with standard isolation.")
 
-        if not self.runtime:
-            return
-
-        uid = self.config.get("run_as_user", default="")
-        if not uid:
-            try:
-                uid = str(os.getuid())
-            except AttributeError:
-                uid = "1000"
-
-        img = self.config.get("image", default="python:3.11-slim")
-        self.container_name = "openlumara_shell"
-
-        cmd = [self.runtime, 'run', '-d', '--rm', '--init', '--name', self.container_name]
-
-        if self.use_gvisor:
-            cmd.extend(['--runtime', 'runsc'])
-            if self.runtime == "podman":
-                cmd.extend(["--runtime-flag", "ignore-cgroups"])
-
-        cmd.extend([
-            '--user', uid,
-            '--cpus', str(self.config.get("cpu_limit", default=0.5)),
-            '--memory', self.config.get("memory_limit", default="256m"),
-            '--pids-limit', str(self.config.get("max_processes", default=10)),
-            '--network', 'bridge' if self.config.get("internet_access", default=False) else 'none',
-            '--stop-timeout', '1'
-        ])
-
-        if self.config.get("read_only", default=True):
-            cmd.extend(['--read-only', '--tmpfs', '/tmp'])
-
-        if self.config.get("persistent_data", default=True):
-            selinux_flag = ":Z" if sys.platform != "win32" else ""
-            cmd.extend(['-v', f"{self.host_workspace}:/data{selinux_flag}"])
-        else:
-            limit = self.config.get("temporary_filesystem_size_limit", default="512m")
-            cmd.extend(['--tmpfs', f"/data:size={limit}"])
-
-        cmd.extend(['-w', '/data', img, 'tail', '-f', '/dev/null'])
-
-        try:
-            stdout, stderr, exit_code, _ = await self._run_async_cmd(cmd, timeout=30.0, limit=1024 * 1024)
-            self.log("sandbox_shell", f"Persistent container {self.container_name} started (UID: {uid}).")
-        except Exception as e:
-            self.log("sandbox_shell", f"Error during container startup: {e}")
-            self.container_name = None
+        await self._start_container()
 
     async def on_shutdown(self):
-        """Cleans up the container when the application shuts down."""
+        """Stops and removes the container when the application shuts down."""
         if self.container_name and self.runtime:
-            self.log("sandbox_shell", f"Shutting down persistent container {self.container_name}...")
+            self.log("sandbox_shell", f"Shutting down container {self.container_name}...")
             try:
-                await self._kill_container()
+                await self._stop_container()
                 self.container_name = None
                 self.log("sandbox_shell", "Container removed.")
             except Exception as e:
@@ -424,17 +577,59 @@ class SandboxedShell(core.module.Module):
         return str(result)
 
     def _get_setup(self):
-        return (
-            f"Runtime: {self.runtime or 'Not available'}\n"
-            f"Container Name: {self.container_name or 'Not running'}\n"
-            f"User ID: {self.config.get('run_as_user', default='') or 'Host User'}\n"
-            f"Image: {self.config.get('image', default='python:3.11-slim')}\n",
-            f"Internet Access: {'enabled' if self.config.get('internet_access') else 'disabled'}\n",
-            f"Persistent Data: {self.config.get('persistent_data', default=True)}\n",
+        uid = self.config.get('run_as_user') or self.host_user_uid
+        gid = self.config.get('run_as_user') or self.host_user_gid
+        method = self.config.get('method', default='dockerfile')
+        lines = [
+            f"Runtime: {self.runtime or 'Not available'}",
+            f"Container Name: {self.container_name or 'Not running'}",
+            f"User ID: {uid}",
+            f"method: {method}",
+            f"Internet Access: {'enabled' if self.config.get('internet_access') else 'disabled'}",
+            f"Persistent Data: {self.config.get('persistent_data', default=True)}",
             f"gVisor Enabled: {self.use_gvisor}"
-        )
+        ]
+        if method == "dockerfile":
+            dockerfile_path = self.config.get('dockerfile_path')
+            if dockerfile_path:
+                expanded = os.path.expanduser(dockerfile_path)
+                if not os.path.isabs(expanded):
+                    module_dir = os.path.dirname(os.path.abspath(__file__))
+                    expanded = os.path.abspath(os.path.join(module_dir, '..', '..', expanded))
+                exists = "exists" if os.path.isfile(expanded) else "NOT FOUND"
+                lines.append(f"Dockerfile: {dockerfile_path} ({exists})")
+            else:
+                lines.append("Dockerfile: (not set)")
+        elif method == "image":
+            lines.append(f"Image: {self.config.get('image')}")
+        return "\n".join(lines)
 
     @core.module.command("shell_setup", send_to_ai=True)
     async def cmd_setup(self, args):
         """Show details about your sandbox setup."""
         return self._get_setup()
+
+    @core.module.command("shell_build", send_to_ai=True, help={
+        "": "rebuilds the sandbox image from the configured Dockerfile"
+    })
+    async def cmd_build(self, args):
+        """Build or rebuild the sandbox image from the Dockerfile."""
+        if not self.runtime:
+            return "Docker or podman not available."
+
+        method = self.config.get("method", default="dockerfile")
+        if method != "dockerfile":
+            return "Not using dockerfile method. Switch to 'dockerfile' in module config to use this command."
+
+        dockerfile_path = self.config.get("dockerfile_path")
+        if not dockerfile_path:
+            return "No Dockerfile configured. Set 'dockerfile_path' in module config."
+
+        built_image = await self._build_image(force=True)
+        if built_image:
+            # restart container with the new image
+            await self._stop_container()
+            await self._start_container()
+            return "Image rebuilt successfully. Container restarted with new image."
+        else:
+            return "Image build failed. Check logs for details."

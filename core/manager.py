@@ -36,6 +36,7 @@ class Manager:
         self._restart_requested = False
         self._prevent_double_shutdown = False
 
+        self.log_buffer = []
         self.started = False
 
     def _remove_async_task(self, task):
@@ -51,6 +52,7 @@ class Manager:
         ) and not core.quiet:
             cat_str = rf"[{category.upper()}] " if category else ""
             print(f"{cat_str}{message}", flush=True)
+            self.log_buffer.append((category, message))
             return
 
         for name, channel in self.channels.items():
@@ -62,11 +64,16 @@ class Manager:
             channel.log_error(message, e)
 
     def _drain_log_buffers(self):
-        if core.modules.log_buffer:
-            for category, message in core.modules.log_buffer:
-                self.log(category, message)
-            # clear it so we can re-run this to get more from the buffer
-            core.modules.log_buffer.clear()
+        if self.log_buffer:
+            for category, message in self.log_buffer:
+                for name, channel in self.channels.items():
+                    if name == "cli":
+                        # skip
+                        continue
+
+                    channel.on_log(category, message)
+
+            self.log_buffer.clear()
 
     async def _load_channels(self, storage, channels, enabled_channels, is_user_channels=False):
         # install dependencies
@@ -236,10 +243,6 @@ class Manager:
         global global_instance
         global_instance = self
 
-        # display any error messages that were emitted
-        # by the framework before the manager was initialized
-        self._drain_log_buffers()
-
         self.log("core", "Loading modules..")
         if enabled_modules:
             await self._load_modules(self.modules, modules, enabled_modules)
@@ -316,6 +319,9 @@ class Manager:
             await cli_chan.on_ready()
             self._async_tasks.add(asyncio.create_task(cli_chan.run()))
             self._async_tasks.add(asyncio.create_task(cli_chan._start_push_queue()))
+
+        # send all print()'ed logs to the channels as actual log events
+        self._drain_log_buffers()
 
         self.started = True
 
