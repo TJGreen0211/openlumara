@@ -2,7 +2,38 @@
 <div id="category-list" x-ref="category-list"
     x-show="!$store.ui.isMobile || $store.ui.showCategories" x-cloak
     >
-    <div class="list" x-data="{ creatingCategory: false, newCategoryName: '' }">
+    <div class="list" x-data="{
+        creatingCategory: false,
+        newCategoryName: '',
+        saving: false,
+        async save() {
+            if (!this.newCategoryName.trim()) { this.cancel(); return; }
+            this.saving = true;
+            await $store.chat.newCategory(this.newCategoryName.trim());
+            this.saving = false;
+            this.creatingCategory = false;
+            this.newCategoryName = '';
+        },
+        cancel() {
+            if (this.saving) return;
+            this.creatingCategory = false;
+            this.newCategoryName = '';
+        },
+        handleBlur() {
+            var self = this;
+            setTimeout(function() {
+                if (self.creatingCategory && self.newCategoryName.trim()) {
+                    self.save();
+                } else if (self.creatingCategory) {
+                    self.cancel();
+                }
+            }, 150);
+        }
+    }">
+        <button class="add-cat-btn" :disabled="$store.stream.state !== 'idle' || creatingCategory" @click="creatingCategory = true" title="New category">
+            {% include 'svg/add.svg' %}
+        </button>
+
         <template x-if="creatingCategory">
             <div class="item new-category-input">
                 <span class="icon">
@@ -13,17 +44,17 @@
                     type="text"
                     placeholder="Category name"
                     x-model="newCategoryName"
-                    @keydown.enter="if (newCategoryName.trim()) { $store.chat.newCategory(newCategoryName.trim()); } creatingCategory = false; newCategoryName = ''"
-                    @keydown.escape="creatingCategory = false; newCategoryName = ''"
-                    @blur="setTimeout(() => { if (creatingCategory) { creatingCategory = false; newCategoryName = ''; } }, 150)"
+                    @keydown.enter="save()"
+                    @keydown.escape="cancel()"
+                    @blur="handleBlur()"
                     class="rename-input"
                     x-init="$nextTick(() => $refs.newCategoryInput?.focus())"
                 >
                 <span class="item-actions" style="opacity: 1;">
-                    <button @click="if (newCategoryName.trim()) { $store.chat.newCategory(newCategoryName.trim()); } creatingCategory = false; newCategoryName = ''" class="action-btn save" title="Create">
+                    <button @click="save()" class="action-btn save" title="Create">
                         {% include 'svg/checkmark.svg' %}
                     </button>
-                    <button @click="creatingCategory = false; newCategoryName = ''" class="action-btn cancel" title="Cancel">
+                    <button @click="cancel()" class="action-btn cancel" title="Cancel">
                         {% include 'svg/cross.svg' %}
                     </button>
                 </span>
@@ -54,11 +85,6 @@
                 <span class="title" x-text="category"></span>
             </ul>
         </template>
-
-        <button class="sidebar-btn add-category-btn" :disabled="$store.stream.state !== 'idle' || creatingCategory" @click="creatingCategory = true">
-            {% include 'svg/add.svg' %}
-            <span>New Category</span>
-        </button>
     </div>
 
     {% if login_enabled %}

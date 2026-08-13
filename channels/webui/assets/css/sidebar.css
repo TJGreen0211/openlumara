@@ -483,21 +483,44 @@
     }
 }
 
-/* Add category button */
-#category-list .add-category-btn {
-    margin-top: 4px;
-    margin-bottom: 8px;
-    font-size: 0.85rem;
-    padding: 8px 12px;
-    min-height: auto;
+/* Compact add-category button at top of list */
+#category-list > .list > .add-cat-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
 
     svg {
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
+        opacity: 0.9;
+        flex-shrink: 0;
+        stroke: currentColor;
+    }
+
+    &:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
     }
 
     &:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+
+        &:hover {
+            background: transparent;
+            color: var(--text-secondary);
+        }
     }
 }
