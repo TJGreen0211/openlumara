@@ -391,9 +391,13 @@
 
 /* Category drop target highlight during drag */
 #category-list .item.drop-target {
-    background: rgba(var(--primary-rgb), 0.25);
-    border: 1px dashed var(--accent);
+    background: rgba(var(--primary-rgb), 0.3);
+    border: 2px solid var(--accent);
     border-radius: var(--radius-sm);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent);
+    transform: scale(1.03);
 }
 
 /* Draggable chat items */

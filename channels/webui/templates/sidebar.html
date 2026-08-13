@@ -62,7 +62,7 @@
         </template>
 
         <template x-for="category in $store.chat.categories" :key="category">
-            <ul :class="{'item': true, 'active': category == $store.chat.selectedCategory, 'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory, 'drop-target': $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory}"
+            <ul :class="{'item': true, 'active': category == $store.chat.selectedCategory, 'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory, 'drop-target': $store.chat.dragHoverCategory === category && category !== $store.chat.draggedChatCategory}"
                 @click="
                     if ($store.stream.state !== 'idle') { return }
 
@@ -71,8 +71,8 @@
                         await $store.ui.toggleMobileSidebarView();
                     }
                 "
-                @dragover.prevent="$store.chat.draggedChatId && category !== $store.chat.draggedChatCategory"
-                @drop.prevent="if ($store.stream.state === 'idle' && $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory) { $store.chat.moveChatToCategory($store.chat.draggedChatId, category); $store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null; }"
+                @dragover.stop.prevent="$store.chat.draggedChatId && category !== $store.chat.draggedChatCategory && ($store.chat.dragHoverCategory = category)"
+                @drop.prevent="if ($store.stream.state === 'idle' && $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory) { $store.chat.moveChatToCategory($store.chat.draggedChatId, category); $store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null; $store.chat.dragHoverCategory = null; }"
             >
                 <span class="icon">
                     <template x-if="category === 'general'">
@@ -135,7 +135,7 @@
                         }"
                         :draggable="$store.stream.state === 'idle' && !renaming"
                         @dragstart="$store.chat.draggedChatId = chat.id; $store.chat.draggedChatCategory = chat.category; $event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/plain', chat.id)"
-                        @dragend="$store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null"
+                        @dragend="$store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null; $store.chat.dragHoverCategory = null"
                         @click="
                             if (!renaming) {
                                 active = !active;

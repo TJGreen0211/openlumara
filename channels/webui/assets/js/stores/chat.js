@@ -15,6 +15,7 @@ CHAT_STORE = {
 
     draggedChatId: null,
     draggedChatCategory: null,
+    dragHoverCategory: null,
 
     turnHistory: [],
     editingMessageIndex: null,
