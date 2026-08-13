@@ -33,7 +33,7 @@ core_settings_schema = {
             "description": "The prefix used to determine whether something is a command. For example, when it's set to `/`, all commands must be prefixed with `/` as in `/help`. If you set it to `!`, it will be `!help` instead."
         },
         "tool_timeout": {
-            "default": 15,
+            "default": 30,
             "description": "Timeout in seconds for tool execution. This applies per individual tool, and is used to forcefully kill off tools that run too long."
         }
     },

@@ -213,3 +213,72 @@ class Calendar(core.module.Module):
 
         self.events.pop(index)
         return self.result(f"event {id} deleted")
+
+    @core.module.command("calendar", send_to_ai=False)
+    async def cmd_calendar(self, args: list):
+        """Look up calendar events in a date range. Without dates, uses configured range."""
+        today = datetime.datetime.today()
+
+        # No args = configured range
+        if not args:
+            date_range = int(self.config.get("range", default=7))
+            include_past = self.config.get("include_past_events")
+            if include_past:
+                past_boundary = today - datetime.timedelta(days=date_range)
+            else:
+                past_boundary = today
+            future_boundary = today + datetime.timedelta(days=date_range)
+        else:
+            # Custom range
+            try:
+                past_boundary = datetime.datetime.fromisoformat(args[0])
+                future_boundary = datetime.datetime.fromisoformat(args[1]) if len(args) > 1 else past_boundary + datetime.timedelta(days=1)
+            except ValueError:
+                return "Error: Invalid date format. Use ISO format (e.g., 2024-01-15)."
+
+        matches = []
+        for event in self.events:
+            try:
+                event_date = datetime.datetime.fromisoformat(event["date"])
+                if past_boundary <= event_date <= future_boundary:
+                    matches.append(event)
+            except (ValueError, KeyError):
+                continue
+
+        if not matches:
+            return "No events found in this range."
+
+        output = []
+        for event in matches:
+            date_str = datetime.datetime.fromisoformat(event['date']).strftime("%x at %X")
+            output.append(f"{date_str}: {event['title']}")
+
+        return "\n".join(output)
+
+    async def read_calendar_range(self, start_date: str, end_date: str):
+        """Read calendar events within a date range. Both dates are required."""
+        today = datetime.datetime.today()
+
+        try:
+            past_boundary = datetime.datetime.fromisoformat(start_date)
+            future_boundary = datetime.datetime.fromisoformat(end_date)
+        except ValueError:
+            return self.result("Error: Invalid date format. Use ISO format (e.g., 2024-01-15).", success=False)
+
+        matches = []
+        for event in self.events:
+            try:
+                event_date = datetime.datetime.fromisoformat(event["date"])
+                if past_boundary <= event_date <= future_boundary:
+                    matches.append(event)
+            except (ValueError, KeyError):
+                continue
+
+        if not matches:
+            return self.result("No events found in this range.", success=False)
+
+        output = []
+        for event in matches:
+            output.append(f"{event.get('id')}: on {event['date']}: {event['title']}")
+
+        return self.result("\n".join(output))
