@@ -546,7 +546,12 @@ async def create_fastapi(channel):
     async def chat_new(request: fastapi.Request):
         """Creates a new chat"""
         uctx, _ = await _get_uctx(request)
-        return api_result(await uctx.chat.new())
+        try:
+            body = await request.json()
+            category = body.get('category', 'general') if body else 'general'
+        except Exception:
+            category = 'general'
+        return api_result(await uctx.chat.new(category=category))
 
     @app.post("/api/chat/rename/{chat_id}")
     async def chat_rename(chat_id: str, request: fastapi.Request):
@@ -574,6 +579,25 @@ async def create_fastapi(channel):
         uctx, _ = await _get_uctx(request)
         await uctx.chat.delete(chat_id)
         return api_result(success=True)
+
+    @app.post("/api/chat/category/{chat_id}")
+    async def chat_set_category(chat_id: str, request: fastapi.Request):
+        """Changes the category of a chat by its ID"""
+        try:
+            data = await request.json()
+            new_category = data.get('category', 'general').strip()
+            if not new_category:
+                return api_result("Category cannot be empty", success=False)
+
+            index = channel.context.chat._find_index(chat_id)
+            if index is None:
+                return api_result("Chat not found", success=False)
+
+            await channel.context.chat.set("category", new_category, index=index)
+
+            return api_result(success=True)
+        except Exception as e:
+            return api_result(str(e), success=False)
 
     # --- Settings
     # -- GET
