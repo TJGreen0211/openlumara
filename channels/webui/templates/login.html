@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - OpenLumara</title>
+    <title>Login - TJ GPT</title>
     <link rel="stylesheet" href="{{ url_for('assets', path='css/base/base.css') }}">
     <link rel="stylesheet" href="{{ url_for('assets', path='css/base/variables.css') }}">
     <link rel="stylesheet" href="{{ url_for('assets', path='css/login.css') }}">
@@ -11,7 +11,7 @@
 <body>
     <div class="login-wrapper">
         <div class="login-card">
-            <h1>OpenLumara</h1>
+            <h1>TJ GPT</h1>
             <form method="POST" action="/login" @submit="loading = true">
                 {% if error %}
                     <div class="error-msg">{{ error }}</div>

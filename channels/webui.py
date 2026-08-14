@@ -81,7 +81,7 @@ class Webui(core.channel.Channel):
             "depends": "enable_chat_header"
         },
         "title": {
-            "default": "OpenLumara",
+            "default": "TJ GPT",
             "depends": {"enable_chat_header": True, "enable_title": True}
         },
         "enable_chat_titlebar": {
