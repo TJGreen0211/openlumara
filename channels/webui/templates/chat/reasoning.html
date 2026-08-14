@@ -1,4 +1,4 @@
-<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed}" x-data="{collapsed: !$store.ui.expandReasoning}" @click="collapsed = !collapsed">
+<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed, 'is-reasoning-active': message.type === 'reasoning'}" x-data="{collapsed: !$store.ui.expandReasoning}" @click="collapsed = !collapsed">
     <div class="header">
         {% include 'svg/thought_bubble.svg' %}
         <span class="text">

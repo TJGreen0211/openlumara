@@ -103,6 +103,12 @@
     50% { opacity: 1; transform: scale(1); }
 }
 
+@keyframes thoughtIconBounce {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    25% { transform: scale(1.15) rotate(-4deg); }
+    75% { transform: scale(1.15) rotate(4deg); }
+}
+
 /* ==========================================================================
  *  Chat - Token Usage Bar
  *  ========================================================================== */
