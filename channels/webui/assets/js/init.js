@@ -16,6 +16,7 @@ document.addEventListener('alpine:init', async () => {
     Alpine.store('theme', THEME_STORE);
     Alpine.store('audio', AUDIO_STORE);
     Alpine.store('upload', UPLOAD_STORE);
+    Alpine.store('voice', VOICE_STORE);
     if (typeof USERS_STORE !== 'undefined') {
         Alpine.store('users', USERS_STORE);
     }
@@ -41,6 +42,9 @@ document.addEventListener('alpine:init', async () => {
 
     // fetch any relevant system data (like system logs, max context, etc)
     await Alpine.store('system').loadData();
+
+    // load settings for feature flags (voice_enabled, etc)
+    await Alpine.store('settings').init();
 
     // fetch current chat
     await Alpine.store('chat').load();

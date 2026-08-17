@@ -66,6 +66,15 @@ core_settings_schema = {
             "type": "object",
             "default": {},
             "description": "Additional custom fields to send with API requests. You can put anything in here that your chosen API supports!"
+        },
+        "voice_enabled": {
+            "default": True,
+            "description": "Enable microphone voice input in the chat. Toggle off to hide the mic button."
+        },
+        "voice_url": {
+            "type": "text",
+            "default": "",
+            "description": "Optional override for the speech-to-text API base URL. Leave empty to use the main API URL. Must support the OpenAI /audio/transcriptions endpoint (e.g., whisper)."
         }
     },
     "model": {

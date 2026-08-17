@@ -24,6 +24,7 @@ import fastapi, fastapi.templating, fastapi.staticfiles
 import starlette, starlette.middleware.sessions
 import uvicorn
 import base64
+import httpx
 
 # security libraries
 import secrets
@@ -662,6 +663,40 @@ async def create_fastapi(channel):
             return api_result(str(result), success=False)
 
         return api_result(result)
+
+    @app.post("/api/voice/transcribe")
+    async def voice_transcribe(request: fastapi.Request):
+        body = await request.json()
+        audio_b64 = body.get("audio_data", "")
+        audio_format = body.get("format", "webm")
+
+        api_config = core.config.get("api", {})
+        voice_url = api_config.get("voice_url", "") or api_config.get("url", "")
+        api_key = api_config.get("key", "")
+
+        if not audio_b64:
+            return api_result("No audio data provided", success=False)
+
+        if not voice_url or voice_url == "http://API_URL_HERE/v1":
+            return api_result("Voice API not configured. Set api.url or api.voice_url in Settings -> Api.", success=False)
+
+        audio_bytes = base64.b64decode(audio_b64)
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)) as client:
+            try:
+                resp = await client.post(
+                    f"{voice_url}/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    files={"file": ("audio.webm", audio_bytes, f"audio/{audio_format}")},
+                    data={"model": "whisper-1"}
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                return api_result({"text": result.get("text", "")}, success=True)
+            except httpx.HTTPStatusError as e:
+                return api_result(f"Transcription failed: {e.response.text}", success=False)
+            except Exception as e:
+                return api_result(str(e), success=False)
 
     # -- POST
     @app.post("/api/settings/save")

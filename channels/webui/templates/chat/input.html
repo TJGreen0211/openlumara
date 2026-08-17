@@ -5,6 +5,7 @@
 </button>
 <input type="file" x-ref="file-input" @change="$store.upload.addFile($event)" x-show="false" x-cloak aria-hidden="true" multiple>
 
+<div id="input-wrapper">
 <textarea 
     id="user-input" 
     x-ref="user-input"
@@ -31,6 +32,37 @@
     @focus="$autosize($el)"
     @blur="$el.style.height = '48px'"
 ></textarea>
+
+<button id="voice-record"
+    aria-label="Voice input"
+    :title="$store.voice.error || ($store.voice.recording ? 'Click to stop recording' : ($store.voice.transcribing ? 'Transcribing...' : 'Click to start voice input'))"
+    :disabled="$store.stream.state != 'idle' || $store.voice.transcribing"
+    :class="{
+        'recording': $store.voice.recording,
+        'loading': $store.voice.transcribing
+    }"
+    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled"
+    @click="await $store.chat.transcribeVoice()">
+    <svg x-show="!$store.voice.recording && !$store.voice.transcribing"
+        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+    </svg>
+    <svg x-show="$store.voice.recording"
+        xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+    </svg>
+    <svg x-show="$store.voice.transcribing" class="spin-icon"
+        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        stroke-width="2">
+        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+        <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+    </svg>
+</button>
+</div>
 
 <button id="send" aria-label="Send message"
     @click="

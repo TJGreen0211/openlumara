@@ -55,9 +55,15 @@
             }
         }
 
-        #user-input {
+        #input-wrapper {
             flex: 1;
-            padding: 14px 20px;
+            position: relative;
+            min-width: 0;
+        }
+
+        #user-input {
+            width: 100%;
+            padding: 14px 52px 14px 20px;
             height: 48px;
             min-height: auto;
             resize: vertical;
@@ -149,6 +155,58 @@
             }
         }
 
+        #voice-record {
+            padding: 0;
+            width: 36px;
+            height: 36px;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            border-radius: var(--radius-sm, 6px);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-sizing: border-box;
+            overflow: visible;
+            white-space: nowrap;
+
+            svg {
+                width: 20px;
+                height: 20px;
+                flex-shrink: 0;
+            }
+
+            .spin-icon {
+                animation: spin 0.8s linear infinite;
+            }
+
+            &:hover:not(:disabled) {
+                color: var(--accent);
+            }
+
+            &:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            &.recording {
+                color: var(--error, #ef4444);
+                animation: voicePulse 1.5s ease-in-out infinite;
+            }
+
+            &.loading {
+                opacity: 0.7;
+                cursor: wait;
+            }
+        }
+
         #stop {
             background: var(--error-bg);
             border: 1px solid var(--error-border);
@@ -232,5 +290,18 @@ body.token-bar-hidden #chat-window #input {
 
 #file-input {
     display: none;
+}
+
+/* ==========================================================================
+ *  Voice Record Button Pulse Animation
+ *  ========================================================================== */
+
+@keyframes voicePulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
 }
 
