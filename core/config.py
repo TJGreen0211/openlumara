@@ -74,7 +74,7 @@ core_settings_schema = {
         "voice_url": {
             "type": "text",
             "default": "",
-            "description": "Optional override for the speech-to-text API base URL. Leave empty to use the main API URL. Must support the OpenAI /audio/transcriptions endpoint (e.g., whisper)."
+            "description": "Optional override for the speech-to-text endpoint. This is the full URL that receives the recorded audio (as a 16kHz mono WAV in the request body) and returns the transcribed text, for example the /inference endpoint of a whisper.cpp server. Leave empty to use the main API URL."
         }
     },
     "model": {

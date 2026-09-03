@@ -295,6 +295,18 @@ def api_result(obj = None, success: bool = True):
 
     return {"data": result, "success": success}
 
+def parse_transcription(resp):
+    """Parses a transcription response: JSON with a text field (OpenAI-compatible, whisper.cpp /inference_json) or plain text (whisper.cpp /inference)."""
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            for key in ("text", "transcription", "result"):
+                if isinstance(data.get(key), str):
+                    return data[key].strip()
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return resp.text.strip()
+
 async def create_fastapi(channel):
     app = fastapi.FastAPI()
 
@@ -666,9 +678,10 @@ async def create_fastapi(channel):
 
     @app.post("/api/voice/transcribe")
     async def voice_transcribe(request: fastapi.Request):
+        """Sends the recorded audio (in memory, never written to disk) to the voice_url endpoint and returns the transcribed text."""
         body = await request.json()
         audio_b64 = body.get("audio_data", "")
-        audio_format = body.get("format", "webm")
+        audio_format = body.get("format", "wav")
 
         api_config = core.config.get("api", {})
         voice_url = api_config.get("voice_url", "") or api_config.get("url", "")
@@ -682,17 +695,24 @@ async def create_fastapi(channel):
 
         audio_bytes = base64.b64decode(audio_b64)
 
+        # voice_url is the full transcription endpoint (e.g. whisper.cpp server's /inference),
+        # so we post directly to it without appending a path
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        # whisper.cpp's server expects the audio as a multipart 'file' field,
+        # with response_format=text for a plain-text response
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)) as client:
             try:
                 resp = await client.post(
-                    f"{voice_url}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    files={"file": ("audio.webm", audio_bytes, f"audio/{audio_format}")},
-                    data={"model": "whisper-1"}
+                    voice_url,
+                    headers=headers,
+                    files={"file": (f"audio.{audio_format}", audio_bytes, f"audio/{audio_format}")},
+                    data={"response_format": "text"}
                 )
                 resp.raise_for_status()
-                result = resp.json()
-                return api_result({"text": result.get("text", "")}, success=True)
+                return api_result({"text": parse_transcription(resp)}, success=True)
             except httpx.HTTPStatusError as e:
                 return api_result(f"Transcription failed: {e.response.text}", success=False)
             except Exception as e:

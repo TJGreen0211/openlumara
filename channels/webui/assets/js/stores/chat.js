@@ -260,33 +260,11 @@ CHAT_STORE = {
         const voice = Alpine.store('voice');
 
         if (voice.recording) {
-            const audio = await voice.stopRecording();
-            if (!audio || !audio.data) return;
-
-            voice.transcribing = true;
-            voice.error = null;
-
-            try {
-                const result = await simpleApiPost('/api/voice/transcribe', {
-                    audio_data: audio.data,
-                    format: audio.format
-                });
-                if (result && result.text) {
-                    this.user_input = this.user_input
-                        ? this.user_input.trim() + " " + result.text.trim()
-                        : result.text.trim();
-                }
-            } catch (err) {
-                voice.error = err || "Transcription failed";
-                console.error('Voice transcription failed:', err);
-            } finally {
-                voice.transcribing = false;
-            }
+            // stops capture and commits the final full-recording transcription into the input
+            await voice.stopRecording();
         } else {
-            const started = await voice.startRecording();
-            if (!started) {
-                // Error already set by voice store
-            }
+            // starts capture; live rolling-window previews flow into the input while recording
+            await voice.startRecording();
         }
     },
 
