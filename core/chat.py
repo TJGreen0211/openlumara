@@ -1,5 +1,6 @@
 import core
 import ulid
+import asyncio
 import datetime
 import os
 
@@ -33,6 +34,28 @@ class Chat:
 
                 if target_index < len(self.data):
                     await self._set_current(target_index)
+
+                    # restore this chat's slot cache from the AI server (no-op if none
+                    # exists), but only if it was saved under the model currently being
+                    # served - a cache from a different model must never be loaded
+                    restore_future = None
+                    if self._slot_cache_valid_for_model(target_index):
+                        try:
+                            restore_future = self.channel.manager.API.restore_chat_cache(self.data[target_index].get("id"))
+                        except Exception as e:
+                            self.channel.log_error("failed to queue chat slot restore", e)
+                    else:
+                        # stale cache from a previous model - drop the local file if we
+                        # know where it lives, so it doesn't linger on disk forever
+                        try:
+                            self.channel.manager.API.remove_slot_cache_file(self.data[target_index].get("id"))
+                        except Exception:
+                            pass
+
+                    # wait for the restore (bounded) so a first request doesn't race
+                    # it and reprocess the entire prompt
+                    await self._await_slot_op(restore_future)
+
                     return
             except Exception as e:
                 self.channel.log_error("couldn't autoresume chat", e)
@@ -62,6 +85,57 @@ class Chat:
                 return index
 
         return None
+
+    async def _await_slot_op(self, future, timeout=5.0):
+        """wait (with a hard timeout) for a queued slot op (save/restore/erase) to
+        complete on the AI server, so that the next completion request is guaranteed
+        to run after it. best effort.
+        returns True only if the server actually confirmed the op"""
+        if future is None:
+            return False
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout) is True
+        except asyncio.TimeoutError:
+            self.channel.log("core", "saving the chat context to the AI server took too long, continuing without waiting for it")
+        except Exception:
+            pass
+
+        return False
+
+    def _stamp_slot_cache_model(self, index):
+        """record which model a chat's slot cache was saved under, so that a later
+        restore can detect that the served model has since changed. only call this
+        once the AI server has confirmed the save"""
+        if index is None or index >= len(self.data):
+            return
+
+        chat = self.data[index]
+        metadata = chat.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            chat["metadata"] = metadata
+
+        metadata["slot_cache_model"] = core.config.get("model", "name")
+        self.data.save()
+
+    def _slot_cache_valid_for_model(self, index):
+        """returns True if the chat's slot cache (if it exists) was saved under the
+        model currently being served. llama.cpp's save files carry no model identity
+        of their own, so restoring a cache made with a different model would silently
+        load that model's KV state into the current one"""
+        if index is None or index >= len(self.data):
+            return False
+
+        chat = self.data[index]
+        metadata = chat.get("metadata")
+        fingerprint = metadata.get("slot_cache_model") if isinstance(metadata, dict) else None
+
+        # never stamped (eg. saved before this check existed) - don't trust it
+        if not fingerprint:
+            return False
+
+        return fingerprint == core.config.get("model", "name")
 
     def _migrate_if_needed(self):
         """Automatically migrate old format chat files if detected."""
@@ -175,6 +249,21 @@ class Chat:
         if metadata is None:
             metadata = {}
 
+        # save the previously loaded chat's slot cache before this new chat
+        # overwrites it in the AI server's slot
+        old_index = None
+        old_chat_id = None
+        if self.current is not None and self.current < len(self.data):
+            old_index = self.current
+            old_chat_id = self.data[old_index].get("id")
+
+        slot_save_future = None
+        if old_chat_id:
+            try:
+                slot_save_future = self.channel.manager.API.save_chat_cache(old_chat_id)
+            except Exception as e:
+                self.channel.log_error("failed to queue chat slot save", e)
+
         new_id = str(ulid.ULID())[-8:] # so it turns out truncating the ULID from the front can lead to identical id's.. yikes
         self.data.append({
             "id":  new_id,
@@ -189,6 +278,12 @@ class Chat:
 
         index = len(self.data) - 1
         await self._set_current(index)
+
+        # wait for the outgoing chat's save to be confirmed by the server (bounded)
+        # so that a follow-up request to this new chat doesn't run first and clobber
+        # the save. once confirmed, record which model the cache was saved under
+        if await self._await_slot_op(slot_save_future):
+            self._stamp_slot_cache_model(old_index)
 
         # initialize token usage count using estimated count from the context class
         await self.set("token_usage", await self.channel.context.get_total_tokens())
@@ -224,6 +319,8 @@ class Chat:
         if index is None:
             return False
 
+        slot_chat_id = self.data[index].get("id")
+
         # remove the chat history file
         messages_path = core.get_data_path(os.path.join(
             "chats",
@@ -240,12 +337,38 @@ class Chat:
         self.data.pop(index)
         self.data.save()
 
+        # erase this chat's slot cache on the AI server (also removes the
+        # local cache file if api.slot_save_path is set)
+        try:
+            self.channel.manager.API.erase_chat_cache(slot_chat_id)
+        except Exception as e:
+            self.channel.log_error("failed to erase chat slot cache", e)
+
         # Adjust current index if needed
         if self.current is not None:
             if self.current == index:
                 if self.data:
                     # that means we've deleted the current chat
                     await self._set_current(min(index, len(self.data) - 1))
+
+                    # restore the new current chat's slot cache (runs after the
+                    # erase above since slot ops are strictly FIFO), but only if it
+                    # was saved under the model currently being served
+                    restore_future = None
+                    if self._slot_cache_valid_for_model(self.current):
+                        try:
+                            restore_future = self.channel.manager.API.restore_chat_cache(self.data[self.current].get("id"))
+                        except Exception as e:
+                            self.channel.log_error("failed to queue chat slot restore", e)
+                    else:
+                        try:
+                            self.channel.manager.API.remove_slot_cache_file(self.data[self.current].get("id"))
+                        except Exception:
+                            pass
+
+                    # wait for the restore (bounded) so a first request to the new
+                    # current chat doesn't race it
+                    await self._await_slot_op(restore_future)
                 else:
                     # we've ended up with blank data.. so autocreate a new one!
                     await self.autoload()
@@ -277,7 +400,52 @@ class Chat:
             # silently allow it
             return False
 
+        # grab the outgoing chat's id so we can save its slot cache first
+        old_index = None
+        old_chat_id = None
+        if self.current is not None and self.current < len(self.data):
+            old_index = self.current
+            old_chat_id = self.data[old_index].get("id")
+
         await self._set_current(index)
+
+        # save the outgoing chat's slot cache, then restore this one.
+        # they're queued strictly FIFO, so the save always completes on the
+        # server before the restore (and before any follow-up request)
+        slot_save_future = None
+        if old_chat_id:
+            try:
+                slot_save_future = self.channel.manager.API.save_chat_cache(old_chat_id)
+            except Exception as e:
+                self.channel.log_error("failed to queue chat slot save", e)
+
+        # restore this chat's slot cache only if it was saved under the model
+        # currently being served - a cache from a different model would load
+        # that model's KV state into this one and silently corrupt the output
+        slot_restore_future = None
+        if self._slot_cache_valid_for_model(index):
+            try:
+                slot_restore_future = self.channel.manager.API.restore_chat_cache(self.data[index].get("id"))
+            except Exception as e:
+                self.channel.log_error("failed to queue chat slot restore", e)
+        else:
+            # stale cache from a previous model - drop the local file if we
+            # know where it lives, so it doesn't linger on disk forever
+            try:
+                self.channel.manager.API.remove_slot_cache_file(self.data[index].get("id"))
+            except Exception:
+                pass
+
+        # wait for the outgoing chat's save to be confirmed by the server
+        # (bounded), so that a follow-up request to this new chat doesn't run
+        # first and clobber it. once confirmed, record which model the cache
+        # was saved under
+        if await self._await_slot_op(slot_save_future):
+            self._stamp_slot_cache_model(old_index)
+
+        # wait for the restore (bounded) too - if the first request to this chat
+        # raced the restore, the server would reprocess the entire prompt
+        await self._await_slot_op(slot_restore_future)
 
         # start a prompt warmup using this chat's data
         # try:

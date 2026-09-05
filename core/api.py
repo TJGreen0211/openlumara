@@ -3,8 +3,13 @@ import httpx
 import openai
 import asyncio
 import json
+import os
 import time
 import inspect
+import re
+
+# chat ids that are safe to use as slot cache filenames
+_SLOT_FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 class APIError:
     """Simple class that holds an error message, used for passing on to channels"""
@@ -53,9 +58,19 @@ class APIClient():
 
         self.supports_developer_role = False
 
+        # llama.cpp slot cache (per-chat KV save/restore/erase)
+        self._slot_queue = None
+        self._slot_worker = None
+        # set once the server reports it doesn't support slot actions (eg. started without --slot-save-path)
+        self.slot_cache_disabled = False
+
     async def connect(self, silent=False):
         if self.connected:
             return True
+
+        # any (re)connect might reach a different server build,
+        # so drop any earlier "unsupported" verdict before re-checking
+        self.slot_cache_disabled = False
 
         api_config = core.config.get("api", {})
 
@@ -111,6 +126,12 @@ class APIClient():
                 traceback.print_exc()
             return APIError(None, e)
 
+        # now that the server is reachable, check whether it supports llama.cpp
+        # slot actions. this keeps the llama.cpp-only id_slot field out of
+        # requests to other OpenAI-compatible backends from the very first message
+        if core.config.get("api", "slot_cache", True):
+            self.slot_cache_disabled = not await self._probe_slot_support()
+
         self.connected = True
         self.supports_developer_role = core.config.get("api", "use_developer_role", default=False)
 
@@ -145,8 +166,230 @@ class APIClient():
             "model": core.config.get("model", "name")
         }
 
+    # ------------------
+    # llama.cpp slot cache (per-chat KV save/restore/erase)
+    # ------------------
+    def _slot_base_url(self):
+        url = core.config.get("api", "url", "") or ""
+        if not url or "API_URL_HERE" in url:
+            return None
+
+        url = url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3].rstrip("/")
+
+        return url
+
+    def _slot_enabled(self):
+        if self.slot_cache_disabled:
+            return False
+
+        if not core.config.get("api", "slot_cache", True):
+            return False
+
+        return self.connected and self._httpx_client is not None and self._slot_base_url() is not None
+
+    def _slot_id_configured(self):
+        try:
+            slot_id = int(core.config.get("api", "slot_id", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+
+        return slot_id if 0 <= slot_id <= 255 else None
+
+    async def _probe_slot_support(self):
+        """check whether the server looks like a llama.cpp build with a reachable
+        /slots route. returns True if requests can safely carry the llama.cpp-only
+        id_slot field, False otherwise"""
+        url = self._slot_base_url()
+        if not url or self._httpx_client is None:
+            return False
+
+        try:
+            response = await self._httpx_client.get(
+                f"{url}/slots",
+                timeout=httpx.Timeout(timeout=5.0, connect=5.0)
+            )
+        except Exception:
+            self.manager.log("api", "The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)")
+            return False
+
+        # a 501 on some llama.cpp builds only means the /slots GET is gated behind
+        # the --slots flag; the save/restore/erase POSTs may still work, so keep
+        # the feature enabled and let the first real op make the final call
+        if response.status_code >= 400 and response.status_code != 501:
+            self.manager.log("api", "The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)")
+            return False
+
+        return True
+
+    def _enqueue_slot_op(self, action, chat_id):
+        """enqueue a slot save/restore/erase op. returns a future that resolves when the op
+        finishes (or None if the op was not enqueued)"""
+        if not chat_id or not _SLOT_FILENAME_RE.match(chat_id):
+            return None
+
+        if not self._slot_enabled():
+            return None
+
+        slot_id = self._slot_id_configured()
+        if slot_id is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._ensure_slot_worker().put_nowait((action, chat_id, slot_id, future))
+        return future
+
+    def save_chat_cache(self, chat_id):
+        """save the current slot's KV cache to the chat's cache file.
+        returns a future resolving to True if the server confirmed the save,
+        or None if not enqueued"""
+        return self._enqueue_slot_op("save", chat_id)
+
+    def restore_chat_cache(self, chat_id):
+        """restore the slot's KV cache from the chat's cache file.
+        a missing file is a no-op. returns a future (or None) that resolves
+        to True once the server confirmed it (or treated it as a no-op)"""
+        return self._enqueue_slot_op("restore", chat_id)
+
+    def remove_slot_cache_file(self, chat_id):
+        """directly remove the chat's local cache file if api.slot_save_path is set.
+        used for deleted chats (some llama.cpp builds keep the file after the
+        server's erase action) and for cache files that became stale after the
+        served model changed"""
+        save_path = core.config.get("api", "slot_save_path", "") or ""
+        if not save_path or not chat_id or not _SLOT_FILENAME_RE.match(chat_id):
+            return
+
+        try:
+            os.remove(os.path.join(save_path, chat_id))
+            if core.debug:
+                self.manager.log("api", f"removed slot cache file for chat {chat_id}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self.manager.log("api", f"failed to remove slot cache file {chat_id}: {core.detail_error(e)}")
+
+    def erase_chat_cache(self, chat_id):
+        """erase the slot's KV cache for the chat and remove its cache file
+        locally (if slot_save_path is set). returns a future that resolves when done"""
+        self.remove_slot_cache_file(chat_id)
+        return self._enqueue_slot_op("erase", chat_id)
+
+    def _ensure_slot_worker(self):
+        if self._slot_worker is None or self._slot_worker.done():
+            self._slot_queue = asyncio.Queue()
+            self._slot_worker = asyncio.create_task(self._slot_worker_loop())
+
+        return self._slot_queue
+
+    async def _slot_worker_loop(self):
+        """process slot ops strictly one at a time (FIFO), since the slot is a single
+        shared resource. a stale save must never run after a later restore"""
+        try:
+            while True:
+                action, chat_id, slot_id, future = await self._slot_queue.get()
+
+                ok = False
+                try:
+                    ok = await self._slot_run(action, chat_id, slot_id)
+                except Exception:
+                    pass
+                finally:
+                    if not future.done():
+                        future.set_result(ok)
+        except asyncio.CancelledError:
+            # resolve any pending futures before exiting
+            # (False: the op never got a chance to be confirmed by the server)
+            while not self._slot_queue.empty():
+                try:
+                    _, _, _, future = self._slot_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                if not future.done():
+                    future.set_result(False)
+
+            raise
+
+    async def _slot_run(self, action, chat_id, slot_id):
+        """perform the op. returns True if the server confirmed it (or if it was an
+        expected no-op like restoring a missing cache file), False otherwise"""
+        if self._httpx_client is None:
+            return False
+
+        url = f"{self._slot_base_url()}/slots/{slot_id}"
+
+        # `action` and `id_slot` come from the query params,
+        # but `filename` is read from the JSON body by recent llama.cpp builds
+        # (older ones read it from the query params, so send it in both places)
+        try:
+            response = await self._httpx_client.post(
+                url,
+                params={"action": action, "filename": chat_id},
+                json={"action": action, "filename": chat_id},
+                timeout=httpx.Timeout(timeout=60.0, connect=5.0),
+                headers={"Content-Type": "application/json"}
+            )
+        except Exception as e:
+            self.manager.log("api", f"slot {action} for chat {chat_id} failed: {core.detail_error(e)}")
+            return False
+
+        status = response.status_code
+        if status >= 400:
+            if status == 501:
+                self.slot_cache_disabled = True
+                self.manager.log("api", "The AI server does not support slot cache actions. Start your llama.cpp server with `--slot-save-path` to enable saving and restoring chat contexts (slot cache is now disabled)")
+            elif status in (404, 405):
+                self.slot_cache_disabled = True
+                self.manager.log("api", f"The AI server does not have a /slots endpoint ({status}). Slot cache is now disabled")
+            elif action == "restore" and status == 400:
+                # no cache file for this chat (or an invalid one) - nothing to restore
+                if core.debug:
+                    self.manager.log("api", f"no slot cache to restore for chat {chat_id}")
+                return True
+            else:
+                self.manager.log("api", f"slot {action} for chat {chat_id} failed with status {status}: {response.text[:200]}")
+            return False
+
+        if core.debug:
+            self.manager.log("api", f"slot {action} for chat {chat_id} ok: {response.text[:200]}")
+
+        return True
+
+    async def close_slot_cache(self):
+        """stop the slot cache worker and drop any pending ops"""
+        worker = self._slot_worker
+        if worker is not None and not worker.done():
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        # resolve any ops that never got a chance to run
+        # (a worker cancelled before its first step skips its own cleanup).
+        # False: the op was never confirmed by the server
+        if self._slot_queue is not None:
+            while not self._slot_queue.empty():
+                try:
+                    _, _, _, future = self._slot_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                if not future.done():
+                    future.set_result(False)
+
+        self._slot_worker = None
+        self._slot_queue = None
+
     async def disconnect(self):
         """disconnect from the API"""
+        await self.close_slot_cache()
+
         if self._httpx_client:
             await self._httpx_client.aclose()
             self._httpx_client = None
@@ -202,6 +445,14 @@ class APIClient():
                 "return_progress": True
             }
         }
+
+        # pin requests to a single llama.cpp slot so that the per-chat slot
+        # caches (save/restore/erase) are actually used. only done while the
+        # slot cache feature is enabled and the server is known to support it.
+        if core.config.get("api", "slot_cache", True) and not self.slot_cache_disabled:
+            slot_id = self._slot_id_configured()
+            if slot_id is not None:
+                req["extra_body"]["id_slot"] = slot_id
 
         # add kwargs to the request
         for key, value in kwargs.items():

@@ -386,6 +386,12 @@ class Manager:
                 except Exception as e:
                     self.log_error(f"Error shutting down {channel_name}", e)
 
+        # stop the api's slot cache worker and drop any pending slot ops
+        try:
+            await self.API.close_slot_cache()
+        except Exception:
+            pass
+
         # remove the global instance
         global global_instance
         global_instance = None

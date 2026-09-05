@@ -66,6 +66,18 @@ core_settings_schema = {
             "type": "object",
             "default": {},
             "description": "Additional custom fields to send with API requests. You can put anything in here that your chosen API supports!"
+        },
+        "slot_cache": {
+            "default": True,
+            "description": "Save/restore llama.cpp slot KV caches per chat, so switching back to an older chat (or restarting the AI server) doesn't rerun the entire conversation history. Requires your AI server to be started with `--slot-save-path` (llama.cpp). This also pins all of openlumara's requests to a single server slot, which can reduce throughput if the server runs with multiple parallel slots (-np > 1) and you want other clients to use the rest. Cache files remember which model they were saved with - if the server's model changes, older caches are ignored and re-saved automatically."
+        },
+        "slot_id": {
+            "default": 0,
+            "description": "The llama.cpp slot id that openlumara pins all requests and slot cache operations to. Only relevant if `slot_cache` is enabled and your server runs with multiple parallel slots (-np > 1)."
+        },
+        "slot_save_path": {
+            "default": "",
+            "description": "The llama.cpp `--slot-save-path` directory, but only if the AI server is running on the same machine as openlumara. When set, openlumara will directly erase a chat's cache file when the chat is deleted (in some llama.cpp builds the server's own `erase` action keeps the file)."
         }
     },
     "model": {
