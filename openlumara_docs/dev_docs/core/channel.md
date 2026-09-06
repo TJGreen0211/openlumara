@@ -23,7 +23,6 @@ A channel is a specialized class that manages a specific communication medium (e
 | `context` | `Context` | The channel's own context window (holds chat history and prompt assembly). |
 | `console_buffer` | `list` | Used to log system messages. |
 | `tc_manager` | `ToolcallManager` | Manages tool call processing and display. |
-| `agentic_loop_start` | `int` | Tracks the index of the first message in the current agentic loop (for reasoning preservation). |
 | `config` | `ConfigManager` | Configuration wrapper for channel-specific settings. |
 | `push_queue` | `asyncio.Queue` | Queue for push-based messages (announcements, reminders). |
 | `_queue_task` | `asyncio.Task \| None` | The background task consuming the push queue. |

@@ -13,7 +13,13 @@ SYSTEM_STORE = {
     },
 
     async loadData() {
-        this.logs = await simpleApiFetch("/api/system/logs");
+        // logs are admin-only in multi-user mode, so fetch them separately
+        // so that the rest of the system data still loads for regular users
+        try {
+            this.logs = await simpleApiFetch("/api/system/logs");
+        } catch (e) {
+            this.logs = [];
+        }
         this.data = await simpleApiFetch("/api/system/data");
     }
 }

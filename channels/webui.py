@@ -162,6 +162,26 @@ class Webui(core.channel.Channel):
             return self.user_contexts[username]
         return self._default_context
 
+    def _commands_authorized_for(self, username):
+        """Whether this user may run admin /commands (restart, coder, debug...) from chat.
+
+        single-user mode (login disabled) keeps the instance-wide
+        allow_admin_commands switch. in multi-user mode, admin commands are
+        gated by role: regular users must not be able to restart the server
+        or change instance state, regardless of allow_admin_commands.
+        """
+        if not self.config.get("require_login", False):
+            return self.config.get("allow_admin_commands")
+
+        if not username:
+            return False
+
+        try:
+            role = self.user_manager.get_user(username).get("role")
+        except Exception:
+            return False
+        return role == "admin" and self.config.get("allow_admin_commands")
+
     async def _get_user_context(self, username):
         """Get or create Context for a user."""
         if username not in self.user_contexts:
@@ -189,11 +209,53 @@ class Webui(core.channel.Channel):
 
         await self.server.serve()
 
-    async def on_push(self, message):
+    async def on_push(self, message, username=None):
+        # deliver the push only to the user it belongs to (None = everyone).
+        # username is captured at push() time and carried through the push queue,
+        # because this handler runs in the push queue's own background task
         await self.websocket_manager.broadcast({
             "type": "push",
             "content": message
-        })
+        }, username=username)
+
+    async def push(self, message, username=None):
+        """persist the pushed message into the owning user's chat.
+
+        without this override a push for a user whose context isn't currently
+        cached (offline user, e.g. a calendar notification after a restart)
+        would be persisted into the shared default chat instead of the user's
+        own history - leaking their content into a file shared by everyone.
+        """
+        if not hasattr(self, "push_queue"):
+            return False
+
+        if username is None:
+            username = core.current_user.get()
+
+        uctx = None
+        if username:
+            try:
+                if self.user_manager.get_user(username):
+                    # pin the contextvar to the target user while resolving
+                    # their context, so per-user storage paths are computed
+                    # for the right owner (the caller's contextvar may belong
+                    # to a different user or be unset)
+                    token = core.current_user.set(username)
+                    try:
+                        uctx = await self._get_user_context(username)
+                    finally:
+                        core.current_user.reset(token)
+            except Exception:
+                uctx = None
+
+        if uctx is None:
+            uctx = self._default_context
+
+        if not isinstance(message, dict):
+            message = {"role": "assistant", "content": str(message)}
+
+        await uctx.chat.messages.add(message)
+        await self.push_queue.put((message, username))
 
     def on_log(self, category, message):
         if not hasattr(self, 'websocket_manager'):
@@ -203,19 +265,22 @@ class Webui(core.channel.Channel):
         # Store log in buffer for history
         self.logs.append({"category": category, "message": message})
 
-        # Broadcast log messages to all connected webui clients
-        # Since on_log is sync but manager.broadcast is async, we schedule it as a task
+        # Broadcast log messages: admin-only in multi-user mode (logs may
+        # contain other users' content), to everyone in single-user mode.
+        # Since on_log is sync but manager.broadcast is async, we schedule
+        # it as a task
         log_message = {
             "type": "log",
             "category": category,
             "message": message
         }
+        admins_only = bool(self.config.get("require_login", False))
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.websocket_manager.broadcast(log_message))
+            loop.create_task(self.websocket_manager.broadcast(log_message, admins_only=admins_only))
         except RuntimeError:
             # No event loop running - create one for this task
-            asyncio.ensure_future(self.websocket_manager.broadcast(log_message))
+            asyncio.ensure_future(self.websocket_manager.broadcast(log_message, admins_only=admins_only))
 
     async def on_shutdown(self):
         # broadcast first so clients know we're going away
@@ -583,17 +648,18 @@ async def create_fastapi(channel):
     @app.post("/api/chat/category/{chat_id}")
     async def chat_set_category(chat_id: str, request: fastapi.Request):
         """Changes the category of a chat by its ID"""
+        uctx, _ = await _get_uctx(request)
         try:
             data = await request.json()
             new_category = data.get('category', 'general').strip()
             if not new_category:
                 return api_result("Category cannot be empty", success=False)
 
-            index = channel.context.chat._find_index(chat_id)
+            index = uctx.chat._find_index(chat_id)
             if index is None:
                 return api_result("Chat not found", success=False)
 
-            await channel.context.chat.set("category", new_category, index=index)
+            await uctx.chat.set("category", new_category, index=index)
 
             return api_result(success=True)
         except Exception as e:
@@ -702,7 +768,9 @@ async def create_fastapi(channel):
                 user_cfg = core.config._deep_merge(user_cfg, per_user_data)
                 core.config.save_user_config(username, user_cfg)
 
-            if global_data:
+            # only admins can persist global (instance-wide) settings;
+            # for non-admins, global_data is dropped (UX gating is in the frontend too)
+            if global_data and _require_admin(request):
                 core.config.config.load(global_data)
                 core.config.config.save()
         else:
@@ -731,6 +799,14 @@ async def create_fastapi(channel):
         if not user:
             return False
         return user.get("role") == "admin"
+
+    def _system_authorize(request):
+        """Gate for system-level endpoints (restart/reconnect/logs).
+        multi-user mode (require_login) requires an admin; single-user mode
+        has no role concept and keeps working as before"""
+        if not channel.config.get("require_login", False):
+            return True
+        return _require_admin(request)
 
     def _verify_csrf(request):
         """Verify CSRF token using double submit cookie pattern."""
@@ -768,6 +844,16 @@ async def create_fastapi(channel):
 
         result = channel.user_manager.create_user(username, password, role)
         if result:
+            # give the new user a working per-user config by inheriting the
+            # creating admin's api/model sections (without them the user would
+            # be stuck on the placeholder connection defaults)
+            admin_username = request.session.get("username")
+            if admin_username and not core.config.load_user_config(username):
+                admin_cfg = core.config.load_user_config(admin_username)
+                inherited = {key: admin_cfg[key] for key in ("api", "model") if key in admin_cfg}
+                if inherited:
+                    core.config.save_user_config(username, inherited)
+
             return api_result({"username": username, "role": role})
         return api_result("Failed to create user", success=False)
 
@@ -808,11 +894,33 @@ async def create_fastapi(channel):
         if not channel.user_manager.delete_user(username):
             return api_result("Failed to delete user", success=False)
 
+        # evict the cached per-user context and in-flight stream so that a user
+        # recreated with the same name can't inherit the deleted user's
+        # in-memory chat state (whose storage paths point at the deleted data dir)
+        channel.user_contexts.pop(username, None)
+        await channel.websocket_manager.cancel_stream(username)
+
+        # drop each module's per-user in-memory state (per-user storage caches)
+        for module in channel.manager.modules.values():
+            try:
+                await module.on_user_deleted(username)
+            except Exception as e:
+                channel.log("error", f"{module.name}: error in on_user_deleted(): {core.detail_error(e)}")
+        for ws, u in list(channel.websocket_manager.active_connections):
+            if u == username:
+                channel.websocket_manager.disconnect(ws)
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
         return api_result(success=True)
 
     @app.post("/api/reconnect")
-    async def reconnect():
-        """Disconnects and then reconnects the API."""
+    async def reconnect(request: fastapi.Request):
+        """Disconnects and then reconnects the API (admin only in multi-user mode)."""
+        if not _system_authorize(request):
+            return api_result("Unauthorized", success=False)
         result = await channel.manager.API.reconnect()
         if isinstance(result, core.api.APIError):
             return api_result(str(result), success=False)
@@ -832,12 +940,19 @@ async def create_fastapi(channel):
 
         return api_result(data)
     @app.get("/api/system/logs")
-    async def get_logs():
+    async def get_logs(request: fastapi.Request):
+        """returns the channel log history (admin only in multi-user mode,
+        since logs may contain other users' content)"""
+        if not _system_authorize(request):
+            return api_result("Unauthorized", success=False)
         return api_result(channel.logs)
 
     # -- POST
     @app.post("/api/system/restart")
-    async def restart_server():
+    async def restart_server(request: fastapi.Request):
+        """restarts the server (admin only in multi-user mode)"""
+        if not _system_authorize(request):
+            return api_result("Unauthorized", success=False)
         await channel.manager.restart()
 
     # ----------------------------
@@ -1014,12 +1129,17 @@ async def create_fastapi(channel):
 
                     match msg_type:
                         case "stop":
-                            if channel:
-                                await channel.manager.API.cancel()
+                            # stop only THIS user's own stream (per-user cancel token).
+                            # the old global API.cancel() would also cancel/collide
+                            # with other users' in-flight streams
+                            stream_entry = ws_mgr.streams.get(ws_username or None)
+                            if stream_entry and not stream_entry["cancel"].is_set():
+                                stream_entry["cancel"].set()
                         case "reload_messages":
+                            # only the user who requested the reload should resync
                             await ws_mgr.broadcast({
                                 "type": "sync"
-                            })
+                            }, username=ws_username)
                         case "rename":
                             new_title = data.get("title")
                             if channel and new_title:
@@ -1032,31 +1152,27 @@ async def create_fastapi(channel):
                         case "switch_chat":
                             new_chat_id = data.get("chat_id")
                             if new_chat_id:
-                                if ws_mgr.active_stream_task and not ws_mgr.active_stream_task.done():
-                                    ws_mgr.active_stream_task.cancel()
-
+                                # cancel only this user's own in-flight stream
+                                await ws_mgr.cancel_stream(ws_username)
 
                                 try:
                                     await uctx.chat.load(new_chat_id)
                                 except Exception as e:
                                     await ws_mgr.broadcast({"type": "error", "content": f"Failed to load chat: {e}"}, username=ws_username)
 
-                                ws_mgr.active_chat_id = new_chat_id
-
                                 await ws_mgr.broadcast({
                                     "type": "chat_switched",
-                                    "chat_id": new_chat_id,
+                                    "id": new_chat_id,
                                 }, username=ws_username)
                         case "new_chat":
-                            if ws_mgr.active_stream_task and not ws_mgr.active_stream_task.done():
-                                ws_mgr.active_stream_task.cancel()
+                            # cancel only this user's own in-flight stream
+                            await ws_mgr.cancel_stream(ws_username)
 
                             new_id = await uctx.chat.new()
-                            ws_mgr.active_chat_id = new_id
 
                             await ws_mgr.broadcast({
                                 "type": "chat_switched",
-                                "chat_id": new_id,
+                                "id": new_id,
                                 "buffer": []
                             }, username=ws_username)
                         case "chat_delete":
@@ -1067,7 +1183,7 @@ async def create_fastapi(channel):
                             await uctx.chat.delete(chat_id)
                             await ws_mgr.broadcast({
                                 "type": "chat_switched",
-                                "chat_id": uctx.chat.get("id"),
+                                "id": uctx.chat.get("id"),
                                 "buffer": []
                             }, username=ws_username)
                         case "user_message":
@@ -1153,40 +1269,55 @@ class WebSocketManager:
 
         self.active_connections = []
 
-        self.active_stream_task = None
-        self.webui_ready = False
+        # one stream task per connected user (keyed by username, or None for anonymous)
+        self.streams = {}
+        self.roles = {}
 
     async def connect(self, websocket: fastapi.WebSocket, username=None):
         await websocket.accept()
         self.active_connections.append((websocket, username))
 
-        current_chat_id = self.channel.context.chat.get("id")
+        if username:
+            try:
+                self.roles[username] = self.channel.user_manager.get_user(username).get("role")
+            except Exception:
+                self.roles.pop(username, None)
 
-        if current_chat_id:
-            await websocket.send_json({
-                "type": "ready"
-            })
-
-        asyncio.create_task(self.queue_ready_signal())
+        # always signal ready on connect so the client can load data
+        # (the frontend ignores it if a chat isn't selected yet)
+        await websocket.send_json({
+            "type": "ready"
+        })
 
     def disconnect(self, websocket: fastapi.WebSocket):
+        username = None
+        for ws, u in self.active_connections:
+            if ws is websocket:
+                username = u
+                break
+
         self.active_connections = [
-            (ws, u) for ws, u in self.active_connections if ws != websocket
+            (ws, u) for ws, u in self.active_connections if ws is not websocket
         ]
 
-    async def queue_ready_signal(self):
-        while not self.webui_ready:
-            await asyncio.sleep(0.1)
-        await self.broadcast({"type": "ready"})
+        if username:
+            self.roles.pop(username, None)
 
-    def send_ready_signal(self):
-        self.webui_ready = True
+        # cleanup this user's stream task (if any) - but only when no other
+        # connection for the same key remains, so one tab closing/refreshing
+        # doesn't kill a stream another tab is watching
+        if not any(u == username for ws, u in self.active_connections):
+            entry = self.streams.pop(username, None)
+            if entry and not entry["task"].done():
+                entry["task"].cancel()
 
-    async def broadcast(self, message: dict, username=None):
+    async def broadcast(self, message: dict, username=None, admins_only=False):
         disconnected = []
         for ws, conn_username in self.active_connections:
             try:
                 if username and conn_username != username:
+                    continue
+                if admins_only and self.roles.get(conn_username) != "admin":
                     continue
                 if ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
                     await ws.send_json(message)
@@ -1196,7 +1327,12 @@ class WebSocketManager:
         for conn in disconnected:
             self.disconnect(conn)
 
-    async def _stream_task(self, message: str, index, files: list = None, ws_username=None):
+    async def cancel_stream(self, username=None):
+        entry = self.streams.pop(username, None)
+        if entry and not entry["task"].done():
+            entry["task"].cancel()
+
+    async def _stream_task(self, message: str, index, files: list = None, ws_username=None, cancel_token=None):
         user_message_confirmed = False
 
         try:
@@ -1204,7 +1340,8 @@ class WebSocketManager:
                     self.channel.send_stream(
                         message=message,
                         files=files,
-                        commands_authorized=self.channel.config.get("allow_admin_commands")
+                        commands_authorized=self.channel._commands_authorized_for(ws_username),
+                        cancel_token=cancel_token
                     )
                 ):
                 payload = serialize_for_json(partial)
@@ -1259,19 +1396,25 @@ class WebSocketManager:
             }, username=ws_username)
 
     async def start_stream(self, channel, chat_id: str, message: str, files: list = None, ws_username=None):
-        if self.active_stream_task and not self.active_stream_task.done():
-            self.active_stream_task.cancel()
+        # only cancel this user's existing stream, so other users can stream concurrently
+        await self.cancel_stream(ws_username)
 
         if ws_username:
             uctx = await channel._get_user_context(ws_username)
             next_index = len(await uctx.chat.messages.get())
         else:
-            next_index = len(await channel.context.chat.messages.get())
+            uctx = channel.context
+            next_index = len(await uctx.chat.messages.get())
+
+        # keep the cancel token on the user's context so in-stream commands
+        # (e.g. /stop) can stop THIS user's stream without hitting the global
+        # API.cancel() that would cancel every other user's stream
+        token = asyncio.Event()
+        uctx.cancel_token = token
 
         try:
-            self.active_stream_task = asyncio.create_task(self._stream_task(message, next_index, files=files, ws_username=ws_username))
-        except asyncio.CancelledError:
-            pass
+            task = asyncio.create_task(self._stream_task(message, next_index, files=files, ws_username=ws_username, cancel_token=token))
+            self.streams[ws_username] = {"task": task, "cancel": token}
         except Exception as e:
             channel.log(channel.name, f"Background stream error: {core.detail_error(e)}")
 

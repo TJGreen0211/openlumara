@@ -6,6 +6,28 @@ import msgpack
 
 TEMPORARY = False
 
+def _file_ext(file_type: str):
+    """file extension for a storage type, or None if the type has no files"""
+    match file_type:
+        case "text":
+            return "txt"
+        case "json":
+            return "json"
+        case "yaml":
+            return "yml"
+        case "markdown":
+            return "md"
+        case "msgpack":
+            return "mp"
+    return None
+
+def storage_file_path(name: str, storage_type: str, base: str) -> str:
+    """compute the on-disk path of a storage file without instantiating one.
+    base is a resolved data directory (e.g. core.get_data_path())."""
+    ext = _file_ext(storage_type)
+    path = core.sandbox_path(base, name)
+    return f"{path}.{ext}" if ext else path
+
 class StorageList(list):
     """subclassed list that handles storage of data. supports a variety of storage formats."""
     def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, *args):
@@ -25,17 +47,8 @@ class StorageList(list):
             # default to json
             file_type = "json"
 
-        file_ext = None
-        match file_type:
-            case "text":
-                file_ext = "txt"
-            case "json":
-                file_ext = "json"
-            case "yaml":
-                file_ext = "yml"
-            case "msgpack":
-                file_ext = "mp"
-                self.binary = True
+        self.binary = file_type == "msgpack"
+        file_ext = _file_ext(file_type)
 
         self.type = file_type
         self.ext = file_ext
@@ -84,6 +97,9 @@ class StorageList(list):
             with open(self.path, read_mode, encoding=encoding) as f:
                 result = f.read()
             return result
+        except FileNotFoundError:
+            # a missing file is not an error (first run / fresh per-user data)
+            return False
         except Exception as e:
             core.log("error", f"error reading {self.name}: {e}")
             return False
@@ -184,19 +200,8 @@ class StorageDict(dict):
             # default to json
             file_type = "json"
 
-        file_ext = None
-        match file_type:
-            case "text":
-                file_ext = "txt"
-            case "json":
-                file_ext = "json"
-            case "yaml":
-                file_ext = "yml"
-            case "markdown":
-                file_ext = "md"
-            case "msgpack":
-                file_ext = "mp"
-                self.binary = True
+        self.binary = file_type == "msgpack"
+        file_ext = _file_ext(file_type)
 
         self.type = file_type
         self.ext = file_ext
@@ -245,6 +250,9 @@ class StorageDict(dict):
             with open(self.path, read_mode, encoding=encoding) as f:
                 result = f.read()
             return result
+        except FileNotFoundError:
+            # a missing file is not an error (first run / fresh per-user data)
+            return False
         except Exception as e:
             core.log("error", f"error reading {self.name}: {e}")
             return False

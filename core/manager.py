@@ -45,14 +45,20 @@ class Manager:
 
     def log(self, category: str, message: str):
         """propagate the output to every channel"""
-        if (
-            not self.started
-            or
-            "cli" not in self.channels.keys()
-        ) and not core.quiet:
-            cat_str = rf"[{category.upper()}] " if category else ""
+        cat_str = rf"[{category.upper()}] " if category else ""
+
+        # Before startup is complete the channels may not be ready yet:
+        # print to the console and buffer the log so it can be replayed to
+        # the channels later (_drain_log_buffers)
+        if not self.started and not core.quiet:
             print(f"{cat_str}{message}", flush=True)
             self.log_buffer.append((category, message))
+            return
+
+        # No channels to propagate to (e.g. every channel failed to load):
+        # fall back to the console
+        if not self.channels and not core.quiet:
+            print(f"{cat_str}{message}", flush=True)
             return
 
         for name, channel in self.channels.items():

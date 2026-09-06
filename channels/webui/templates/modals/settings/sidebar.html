@@ -28,8 +28,10 @@
         <!-- special buttons like System Logs, Restart, etc -->
         <hr>
 
+        <!-- Restart is an instance-wide, admin-only action in multi-user mode -->
         <button 
             class="item" 
+            x-show="$store.settings.isAdmin"
             @click="await $store.system.restart()"
         >
             <span>Restart Server</span>

@@ -24,9 +24,18 @@ class Memory(core.module.Module):
     }
 
     async def on_ready(self):
-        self._mem = core.storage.StorageList("memory", type="msgpack")
-        self._mem_deleted = core.storage.StorageList("deleted_memories", type="json")
+        # per-user memory stores: data/{username}/memory.mp (global when no user context)
+        self._mem_cache = {}
+        self._mem_deleted_cache = {}
         self.max_pinned = 10
+
+    @property
+    def _mem(self):
+        return self.user_storage("memory", "msgpack", self._mem_cache, core.storage.StorageList)
+
+    @property
+    def _mem_deleted(self):
+        return self.user_storage("deleted_memories", "json", self._mem_deleted_cache, core.storage.StorageList)
 
     def _get_index(self, ulid: str) -> int:
         """checks if a memory with ID exists in memories"""

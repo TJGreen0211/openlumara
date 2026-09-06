@@ -407,11 +407,15 @@ class APIClient():
         return core.config.get("model", "name")
 
     def set_model(self, name: str):
-        core.config.config["model"]["name"] = name
         core.config.set_user_or_global(["model", "name"], name)
         return True
 
-    async def _request(self, context, tools=None, stream=False, use_thinking=True, **kwargs):
+    @staticmethod
+    def _token_set(cancel_token):
+        """check whether a per-request cancel token has been set"""
+        return cancel_token is not None and cancel_token.is_set()
+
+    async def _request(self, context, tools=None, stream=False, use_thinking=True, cancel_token=None, **kwargs):
         """send a request to the LLM and return the response object"""
 
         if not context:
@@ -518,7 +522,7 @@ class APIClient():
             # if at this point a cancel was already requested,
             # it was likely from a toolcalling chain, so abort EVERYTHING
             #if self.cancel_request and not self.prompt_warming_up:
-            if self.cancel_request:
+            if self.cancel_request or self._token_set(cancel_token):
                 raise asyncio.CancelledError("Request cancelled")
 
             request_task = asyncio.create_task(self._AI.chat.completions.create(**req))
@@ -529,7 +533,7 @@ class APIClient():
             # so we can actually cancel the task itself.
 
             while not request_task.done():
-                if self.cancel_request:
+                if self.cancel_request or self._token_set(cancel_token):
                     request_task.cancel()
                 await asyncio.sleep(0.1)
 
@@ -663,7 +667,7 @@ class APIClient():
             self.prompt_warming_up = False
             self._warmup_done.set()
 
-    async def send(self, context: list, system_prompt=True, use_tools=True, tools=None, use_thinking=True, **kwargs):
+    async def send(self, context: list, system_prompt=True, use_tools=True, tools=None, use_thinking=True, cancel_token=None, **kwargs):
         """send a message to the LLM. returns a string or APIError"""
 
         self.cancel_request = False
@@ -684,7 +688,7 @@ class APIClient():
         if not tools:
             tools = self.manager.tools
 
-        response = await self._request(context, tools=(tools if use_tools else None), use_thinking=use_thinking, **kwargs)
+        response = await self._request(context, tools=(tools if use_tools else None), use_thinking=use_thinking, cancel_token=cancel_token, **kwargs)
 
         # return errors if applicable
         if isinstance(response, APIError):
@@ -696,7 +700,7 @@ class APIClient():
         except Exception as e:
             return APIError("While processing response from AI", e)
 
-    async def send_stream(self, context: list, use_tools=True, tools=None, use_thinking=True, **kwargs):
+    async def send_stream(self, context: list, use_tools=True, tools=None, use_thinking=True, cancel_token=None, **kwargs):
         """send a message to the LLM. is an iterable async generator"""
 
         self.cancel_request = False
@@ -732,7 +736,7 @@ class APIClient():
         if not tools:
             tools = self.manager.tools
 
-        response = await self._request(context, tools=(tools if use_tools else None), stream=True, use_thinking=use_thinking, **kwargs)
+        response = await self._request(context, tools=(tools if use_tools else None), stream=True, use_thinking=use_thinking, cancel_token=cancel_token, **kwargs)
 
         # return errors if applicable
         if isinstance(response, APIError):
@@ -742,8 +746,8 @@ class APIClient():
         try:
             self.is_streaming = True
 
-            async for token in self._recv_stream(response):
-                if self.cancel_request:
+            async for token in self._recv_stream(response, cancel_token=cancel_token):
+                if self.cancel_request or self._token_set(cancel_token):
                     # cancel the entire stream
                     raise asyncio.CancelledError("Request cancelled")
 
@@ -810,7 +814,7 @@ class APIClient():
 
         return result
 
-    async def _recv_stream(self, response, use_tools=True):
+    async def _recv_stream(self, response, use_tools=True, cancel_token=None):
         """Takes a response object and extracts the message from it, handling tool calls if needed. Streaming version."""
         final_tool_calls = []
         tool_call_buffer = {}
@@ -831,7 +835,7 @@ class APIClient():
                     # (for example due to an error the inference server, i.e. llamacpp, failed to send)
                     response_started = True
 
-                if self.cancel_request:
+                if self.cancel_request or self._token_set(cancel_token):
                     if hasattr(response, "close"):
                         # support closing
                         await response.close()

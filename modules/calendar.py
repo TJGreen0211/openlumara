@@ -1,5 +1,6 @@
 import core
 import datetime
+import os
 import ulid
 import asyncio
 
@@ -42,15 +43,77 @@ class Calendar(core.module.Module):
     }
 
     async def on_ready(self):
-        self.events = core.storage.StorageList("calendar", "json")
+        # per-owner event storage lists, keyed by username.
+        # None = the global (shared, non-webui) calendar
+        self._events = {}
 
-        # schedule all event notifications
-        for event in self.events:
-            if event.get("notify"):
-                asyncio.create_task(self._schedule_notification(event))
+        # schedule all event notifications, across all owners (user-created
+        # events must not be missed just because they were added while the
+        # module was running under a different user context)
+        for owner in self._list_owners():
+            for event in self._owner_storage(owner):
+                if event.get("notify"):
+                    asyncio.create_task(self._schedule_notification(event, owner))
 
-    async def _schedule_notification(self, event: dict):
-        """schedules a notification for an event."""
+    async def on_user_deleted(self, username):
+        """drop the deleted owner's cached event list, so an account recreated
+        with the same name starts from its (new) file on disk instead of the
+        deleted user's in-memory events."""
+        self._events.pop(username, None)
+
+    @property
+    def events(self):
+        """Events for the current user (core.current_user), or the global
+        calendar when no user context is active. lazily creates the
+        per-owner storage list on first access."""
+        return self._owner_storage(core.current_user.get())
+
+    def _owner_storage(self, owner):
+        """Get (or lazily create) the event storage list for a given owner.
+        owner may be None, which means the global shared calendar."""
+        if owner not in self._events:
+            # pin the path with an explicit contextvar token, so a stray
+            # user context in the calling task can't misdirect it
+            token = core.current_user.set(owner)
+            try:
+                path = core.get_data_path()
+            finally:
+                core.current_user.reset(token)
+            self._events[owner] = core.storage.StorageList(
+                "calendar", "json", path=path
+            )
+        return self._events[owner]
+
+    def _list_owners(self):
+        """List all calendar owners: None (global) plus any user data dir that
+        contains a calendar file or a user config file."""
+        owners = [None]
+
+        # resolve the global data root independent of any active user context
+        token = core.current_user.set(None)
+        try:
+            base = core.get_data_path()
+            entries = os.listdir(base)
+        except Exception:
+            return owners
+        finally:
+            core.current_user.reset(token)
+
+        for entry in entries:
+            path = os.path.join(base, entry)
+            if not os.path.isdir(path):
+                continue
+            if (os.path.exists(os.path.join(path, "calendar.json"))
+                    or os.path.exists(os.path.join(path, "config.json"))):
+                owners.append(entry)
+
+        return owners
+
+    async def _schedule_notification(self, event: dict, owner: str = None):
+        """schedules a notification for an event under the event's owner."""
+        if owner is None:
+            owner = event.get("user") or core.current_user.get()
+
         event_time = datetime.datetime.fromisoformat(event["date"])
         now = datetime.datetime.now()
 
@@ -61,7 +124,7 @@ class Calendar(core.module.Module):
 
         if delay <= 0:
             # If the event is happening right now or has passed, trigger immediately
-            await self._notify_user(event)
+            await self._notify_user(event, owner)
             return
 
         try:
@@ -70,44 +133,61 @@ class Calendar(core.module.Module):
             # because call_later requires a sync callable.
             loop.call_later(
                 delay,
-                lambda: asyncio.create_task(self._notify_user(event))
+                lambda: asyncio.create_task(self._notify_user(event, owner))
             )
         except Exception as e:
             self.log("calendar", f"failed to schedule notification: {core.detail_error(e)}")
 
-    async def _notify_user(self, event: dict):
+    async def _notify_user(self, event: dict, owner: str = None):
         if not event.get("notify"):
             return False
 
-        channel_name = event.get("notify_channel")
-        if not channel_name:
-            channel_name = self.config.get("notification_channel")
+        # resolve the event's owner: explicit arg > event field > caller context
+        if owner is None:
+            owner = event.get("user") or core.current_user.get()
 
-        channel = self.manager.channels.get(channel_name)
+        storage = self._owner_storage(owner)
 
-        if channel:
-            event_time = datetime.datetime.fromisoformat(event["date"])
-            now = datetime.datetime.now()
-            diff_seconds = (event_time - now).total_seconds()
-            minutes_left = int(diff_seconds / 60)
+        # run under the owner's context so the notification is delivered to
+        # (and persisted into) the owner's chat. reset in finally so the
+        # contextvar never leaks into the event loop
+        token = core.current_user.set(owner)
+        try:
+            channel_name = event.get("notify_channel")
+            if not channel_name:
+                channel_name = self.config.get("notification_channel")
 
-            if minutes_left <= 0:
-                notify_window_str = "now!"
-            elif minutes_left == 1:
-                notify_window_str = "in 1 minute"
-            else:
-                notify_window_str = f"in {minutes_left} minutes"
+            channel = self.manager.channels.get(channel_name)
 
-            message = f"🔔 **Calendar**: {event['title']} is starting {notify_window_str}"
-            await channel.push(message)
-            # add to context so the AI knows it just notified the user
-            await channel.context.chat.messages.add({"role": "assistant", "content": message})
+            if channel:
+                event_time = datetime.datetime.fromisoformat(event["date"])
+                now = datetime.datetime.now()
+                diff_seconds = (event_time - now).total_seconds()
+                minutes_left = int(diff_seconds / 60)
 
-            # disable notification
-            index = await self._get_event_by_id(event['id'])
-            if index != -1:
-                self.events[index]["notify"] = False
-                self.events.save()
+                if minutes_left <= 0:
+                    notify_window_str = "now!"
+                elif minutes_left == 1:
+                    notify_window_str = "in 1 minute"
+                else:
+                    notify_window_str = f"in {minutes_left} minutes"
+
+                message = f"🔔 **Calendar**: {event['title']} is starting {notify_window_str}"
+                # channel.push() already persists the message into
+                # context.chat.messages, so no separate add is needed
+                await channel.push(message)
+
+                # disable notification (write it back to the owner's storage)
+                index = -1
+                for i, stored in enumerate(storage):
+                    if stored.get("id") == event['id']:
+                        index = i
+                        break
+                if index != -1:
+                    storage[index]["notify"] = False
+                    storage.save()
+        finally:
+            core.current_user.reset(token)
 
     async def _get_events_in_range(self):
         # display appointments between certain range
@@ -156,6 +236,9 @@ class Calendar(core.module.Module):
     async def add_event(self, title: str, year: int, month: int, day: int, hour: int, minute: int, should_notify: bool = True, notify_channel: str = None):
         event = {
             "id": str(ulid.ULID()),
+            # record the owner so notifications restore the right context
+            # (None = global calendar, used by non-webui channels)
+            "user": core.current_user.get(),
             "title": title,
             "date": datetime.datetime.isoformat(
                 datetime.datetime(
@@ -199,6 +282,9 @@ class Calendar(core.module.Module):
         self.events[index]["date"] = new_date_iso
         self.events[index]["notify"] = should_notify or event['notify']
         self.events[index]["notify_channel"] = notify_channel or event['notify_channel']
+        # backfill the owner for legacy events (created before the field
+        # existed), using the user doing the edit, who owns this calendar
+        self.events[index].setdefault("user", core.current_user.get())
         self.events.save()
 
         if should_notify:

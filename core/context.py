@@ -12,6 +12,15 @@ class Context:
         self.using_api_token_data = False
         self.token_encoding = None
 
+        # used to track where the current "agentic loop" starts (for reasoning preservation).
+        # lives on the context (not the channel) so that concurrent multi-user streams
+        # don't share/clobber each other's marker.
+        self.agentic_loop_start: int = -1
+
+        # per-user stream cancellation token, set by channels that track one
+        # stream per user (webui). None = no per-user stream tracking.
+        self.cancel_token = None
+
         # UI-agnostic chat history system - save/load context windows from save file!
         self.chat = core.chat.Chat(self.channel, username=username)
 
@@ -85,7 +94,7 @@ class Context:
                 # that name is ridiculous
 
                 # strip reasoning from tool calls prior to the current agentic loop
-                loop_idx = self.channel.agentic_loop_start
+                loop_idx = self.agentic_loop_start
                 messages[:loop_idx] = [
                     {k: v for k, v in m.items() if k != "reasoning_content"}
                     if "tool_calls" in m else m

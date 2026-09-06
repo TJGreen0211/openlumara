@@ -115,6 +115,17 @@ class Example(core.channel.Channel):
         await self.context.chat.add(message)
 ```
 
+# Multi-user mode (WebUI)
+
+The WebUI can host multiple accounts. Enable it by setting `channels -> settings -> webui -> require_login` to `true` in your config. On first run, an admin account is created from the `webui -> username`/`webui -> password` config values (default: `admin`/`admin`) - change it or create more users via the admin UI (settings -> channels -> webui).
+
+When login is enabled:
+- Each user gets their own data folder (`data/{username}/`) - chats, calendar events, scheduler jobs, notes, memory, lists, and identity are fully isolated per user. On a user's first access, their notes/memory/lists/identity are seeded from the legacy instance-wide files (if any exist), so single-user data carries over; after that everyone's files diverge.
+- Each user can have their own API/model settings and per-module settings, saved to their per-user config. The API connection itself is shared instance-wide.
+- Admins manage global settings (channel/module toggles, core settings, restart/reconnect, logs and user management). Regular users only see and save their own settings.
+- Non-webui channels (cli, telegram, & co.) keep using the shared `data/` root - "users" is a webui concept.
+- If you use llama.cpp slot caching (`api.slot_cache`) with concurrent users, give each user a distinct `api.slot_id` and start the server with enough parallel slots (`-np`), or they will share a slot.
+
 ## ⛔⛔⛔ THIS IS A LOBSTER-FREE ZONE ⛔⛔⛔
 OpenLumara does not have an associated emoji. You can add it to it's identity if you want, but it doesn't force it on you. Also, cats have claws too, where is the love for the cats?
 

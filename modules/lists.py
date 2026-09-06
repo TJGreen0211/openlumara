@@ -18,7 +18,12 @@ class Lists(core.module.Module):
     }
 
     async def on_ready(self):
-        self.data = core.storage.StorageDict("lists", "yaml")
+        self._data_cache = {}
+
+    @property
+    def data(self):
+        # per-user lists: data/{username}/lists.yml (global when no user context)
+        return self.user_storage("lists", "yaml", self._data_cache, core.storage.StorageDict)
 
     async def on_system_prompt(self):
         if not self.config.get("insert_system_prompt"):

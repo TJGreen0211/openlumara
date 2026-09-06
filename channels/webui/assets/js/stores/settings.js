@@ -27,6 +27,19 @@ SETTINGS_STORE = {
         return JSON.stringify(this.categories) !== JSON.stringify(this.originalCategories);
     },
 
+    // --- Role-based access (mirrors the backend's _require_admin/_system_authorize) ---
+    // single-user mode (login disabled) has no roles, so everything is allowed there
+    get userRole() {
+        return document.documentElement.getAttribute('data-user-role') || 'user';
+    },
+
+    get isAdmin() {
+        if (document.documentElement.getAttribute('data-login-enabled') !== 'true') {
+            return true;
+        }
+        return this.userRole === 'admin';
+    },
+
     get sortedCategories() {
         return Object.entries(this.categories)
             .sort(([a, catA], [b, catB]) => (catA.order || 0) - (catB.order || 0));
@@ -62,7 +75,12 @@ SETTINGS_STORE = {
                 console.warn('Failed to fetch module info:', infoErr);
             }
 
-            this.categories = buildSettingsStructure(rawSettings, this.moduleInfoCache);
+            // expose the session role to the rest of the frontend
+            window.userRole = this.userRole;
+
+            // non-admin users only get their own (per-user) settings; global
+            // categories/toggles are filtered out here (the backend enforces it too)
+            this.categories = buildSettingsStructure(rawSettings, this.moduleInfoCache, this.isAdmin);
             this.originalCategories = JSON.parse(JSON.stringify(this.categories));
             this.changedModuleSettings.clear();
 
@@ -118,14 +136,13 @@ SETTINGS_STORE = {
             await simpleApiPost('/api/settings/save', backendData);
 
             // restart server if enabled modules/channels changed
+            // (optional chaining: non-admin categories like channels are filtered out of the structure)
+            const changed = (a, b) => JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
             if (
-                (JSON.stringify(this.categories.modules.enabled) !== JSON.stringify(this.originalCategories.modules.enabled))
-                ||
-                (JSON.stringify(this.categories.user_modules.enabled) !== JSON.stringify(this.originalCategories.user_modules.enabled))
-                ||
-                (JSON.stringify(this.categories.channels.enabled) !== JSON.stringify(this.originalCategories.channels.enabled))
-                ||
-                (JSON.stringify(this.categories.user_channels.enabled) !== JSON.stringify(this.originalCategories.user_channels.enabled))
+                changed(this.categories.modules?.enabled, this.originalCategories.modules?.enabled)
+                || changed(this.categories.user_modules?.enabled, this.originalCategories.user_modules?.enabled)
+                || changed(this.categories.channels?.enabled, this.originalCategories.channels?.enabled)
+                || changed(this.categories.user_channels?.enabled, this.originalCategories.user_channels?.enabled)
             ) {
                 console.log("restarting server..");
                 this.settings = backendData;
@@ -166,6 +183,16 @@ SETTINGS_STORE = {
         } finally {
             this.loading = false;
         }
+    },
+
+    // the unified module/channel list: admins see everything (enabled + disabled,
+    // toggles included); regular users only see the enabled items (no toggles)
+    filterUnifiedList(catData) {
+        if (!catData) return [];
+        if (this.isAdmin) {
+            return [...catData.enabled, ...catData.disabled];
+        }
+        return [...catData.enabled];
     },
 
     toggleEnabled(category, itemName) {

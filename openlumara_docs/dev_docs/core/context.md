@@ -212,7 +212,7 @@ The final prompt sent to the AI looks conceptually like this:
 ## Agentic Loop Reasoning Preservation
 
 When `only_preserve_reasoning_for_current_agentic_loop` is True:
-- The channel tracks `agentic_loop_start` (message index where current loop began)
+- The Context tracks `agentic_loop_start` (message index where current loop began). It lives on the Context (not the channel) so concurrent multi-user streams don't clobber each other's marker.
 - Reasoning is stripped from messages before this index (unless they have tool calls)
 - This saves significant context tokens during complex tool-calling chains
 

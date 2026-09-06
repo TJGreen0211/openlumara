@@ -8,6 +8,7 @@ import sys
 import time
 import json
 import asyncio
+import inspect
 
 # parsing stuff
 import json_repair
@@ -53,11 +54,6 @@ class Channel:
 
         self.tc_manager = core.toolcalls.ToolcallManager(self)
         self.turncollector = core.turns.TurnCollector()
-
-        # used to track whether to preserve reasoning
-        # for only the current "agentic turn"
-        # (so that reasoning from older toolcalls can be discarded)
-        self.agentic_loop_start: int = -1
 
         # load channel config
         self.config = core.config.ConfigManager(core.config.config, ["channels" if not is_user_channel else "user_channels", "settings", self.name])
@@ -117,12 +113,31 @@ class Channel:
         """overridable method that runs on the channel's shutdown"""
         pass
 
+    def _on_push_accepts_username(self):
+        """check (and cache) whether this channel's on_push override accepts a username kwarg.
+        user channels written against older frameworks may not, so we only pass it when supported"""
+        if not hasattr(self, "_cached_on_push_accepts_username"):
+            params = inspect.signature(self.on_push).parameters
+            self._cached_on_push_accepts_username = (
+                "username" in params or
+                any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            )
+        return self._cached_on_push_accepts_username
+
     async def _push_consumer(self):
         """Consumes messages from the queue and triggers on_push sequentially"""
         while not getattr(self, "_shutting_down", False):
             try:
-                message = await self.push_queue.get()
-                await self.on_push(self.format_message(message))
+                item = await self.push_queue.get()
+                if isinstance(item, tuple):
+                    message, username = item
+                else:
+                    message, username = item, None
+                formatted = self.format_message(message)
+                if self._on_push_accepts_username():
+                    await self.on_push(formatted, username=username)
+                else:
+                    await self.on_push(formatted)
                 self.push_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -164,12 +179,14 @@ class Channel:
             return
         self._queue_task = asyncio.create_task(self._push_consumer())
 
-    async def on_push(self, message: dict):
+    async def on_push(self, message: dict, username=None):
         """
         overridable method that should immediately display a message in your channel.
         used by modules all over the framework, such as the scheduler, calendar, and so on,
 
         to send content to the user without having to prompt the AI
+
+        username is set for per-user delivery in multi-user channels (None if the push is for everyone)
         """
         pass
 
@@ -180,23 +197,29 @@ class Channel:
         """Overridable method that triggers when the auto-installer uninstalls the dependencies for a channel"""
         pass
 
-    async def push(self, message):
+    async def push(self, message, username=None):
         """
         push a message to the push queue, which will instantly display it in all channels
+
+        username: which user this push belongs to (for per-user delivery in multi-user channels).
+        defaults to the active user context, if any.
         """
 
         if not hasattr(self, "push_queue"):
             return False
+
+        if username is None:
+            username = core.current_user.get()
 
         # message can be either a str or a dict.
         # if dict, just use it as-is
         # otherwise, turn it into an openAI message dict
         if isinstance(message, dict):
             await self.context.chat.messages.add(message)
-            await self.push_queue.put(message)
+            await self.push_queue.put((message, username))
         else:
             await self.context.chat.messages.add({"role": "assistant", "content": str(message)})
-            await self.push_queue.put({"role": "assistant", "content": str(message)})
+            await self.push_queue.put(({"role": "assistant", "content": str(message)}, username))
 
     # --------------------
     # Helper methods
@@ -581,7 +604,7 @@ class Channel:
         await self._send_postprocess(assistant_message)
         return self.format_message(assistant_message)
 
-    async def send_stream(self, message: str, files: list = None, commands_authorized=False):
+    async def send_stream(self, message: str, files: list = None, commands_authorized=False, cancel_token=None):
         """sends a message to the AI from within the current channel, streaming version"""
 
         # preprocessing (API connection logic, command processing, user message module hooks, etc)
@@ -632,7 +655,7 @@ class Channel:
 
         # and stream the response to the caller of this method
         try:
-            stream = self.manager.API.send_stream(processed.get("context"))
+            stream = self.manager.API.send_stream(processed.get("context"), cancel_token=cancel_token)
         except Exception as e:
             yield await self.throw_stream_error(f"Error while starting stream: {core.detail_error(e)}")
             return
