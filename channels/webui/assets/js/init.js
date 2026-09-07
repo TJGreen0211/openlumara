@@ -28,7 +28,6 @@ document.addEventListener('alpine:init', async () => {
     Alpine.directive('auto-scroll', autoScroll);
     Alpine.directive('copy-code', copyCode);
 
-    self.notice = "Please wait, connecting to backend server..";
     await connectWebSocket();
 
     // register the service worker

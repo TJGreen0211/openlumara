@@ -645,4 +645,8 @@ class Chat:
         for chat in self.data:
             if chat.get("category") not in collected_categories:
                 collected_categories.append(chat.get("category"))
+        # 'general' is the default bucket - always pin it to the top
+        if "general" in collected_categories:
+            collected_categories.remove("general")
+            collected_categories.insert(0, "general")
         return collected_categories

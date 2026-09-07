@@ -28,7 +28,7 @@ async function connectWebSocket() {
 
     wsSocket.onopen = async () => {
         console.log('WebSocket connected');
-        Alpine.store('ui').notice = null;
+        Alpine.store('ui').connectionState = 'connected';
         isWsConnected = true;
         wsReconnecting = false;
         await Alpine.store("chat").reloadChat();
@@ -50,7 +50,7 @@ async function connectWebSocket() {
             window.socket = null;
             isWsConnected = false;
 
-            Alpine.store('ui').notice = "Not connected to the backend server! Is OpenLumara running?"
+            Alpine.store('ui').connectionState = 'disconnected';
             stream = Alpine.store("stream")
             stream.state = 'idle';
 

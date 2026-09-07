@@ -8,6 +8,13 @@
         {% if config.get("enable_title") %}
             <h1>{{ config.get("title") }}</h1>
         {% endif %}
+        <!-- backend connection indicator -->
+        <span class="status-dot"
+              :class="{'connected': $store.ui.connectionState === 'connected',
+                        'disconnected': $store.ui.connectionState !== 'connected'}"
+              :title="$store.ui.connectionState === 'connected' ? 'Connected to backend'
+                       : 'Not connected to backend - retrying'"
+              x-cloak></span>
     </div>
     <div class="right">
         {% if config.get("enable_streaming_state_display") %}
