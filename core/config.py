@@ -71,10 +71,15 @@ core_settings_schema = {
             "default": True,
             "description": "Enable microphone voice input in the chat. Toggle off to hide the mic button."
         },
-        "voice_url": {
+        "voice_language": {
+            "type": "text",
+            "default": "en",
+            "description": "The language to transcribe voice input in (for example en, es, de). Set to 'auto' to let the speech engine detect the language per recording."
+        },
+        "voice_hotwords": {
             "type": "text",
             "default": "",
-            "description": "Optional override for the speech-to-text endpoint. This is the full URL that receives the recorded audio (as a 16kHz mono WAV in the request body) and returns the transcribed text, for example the /inference endpoint of a whisper.cpp server. Leave empty to use the main API URL."
+            "description": "Optional vocabulary hint for speech recognition - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
         }
     },
     "model": {

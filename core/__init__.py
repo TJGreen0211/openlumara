@@ -41,6 +41,7 @@ import core.channel
 
 import core.modules
 import core.api
+import core.stt
 
 # handle first run
 firstrun_path = core.get_data_path("firstrun")

@@ -1,13 +1,19 @@
 /*
  * voice input store
  *
- * captures microphone audio as raw PCM in memory (audio worklet, no files ever touch disk),
- * and shows a live rolling-window transcription preview in the chat input while the user speaks:
- * every couple of seconds the last ~6s of audio is sent to the voice endpoint and the input
- * field is replaced with that result.
- * the microphone auto-stops after the captured audio has been silent for long enough
- * (lightweight energy-based VAD on the PCM, no extra dependencies). on stop, the full
- * recording is transcribed and the final text is committed to the input.
+ * captures microphone audio as raw PCM in memory (audio worklet, no files ever touch disk)
+ * and transcribes it in VAD-split segments:
+ *
+ * - while the user is talking, the last few seconds of the open segment are sent as a
+ *   live preview (purpose "preview") and shown as a flickering tail in the input field
+ * - when the user pauses (or a segment gets long enough), the finished segment is
+ *   transcribed (purpose "commit") and appended to the committed text, which is never
+ *   rewritten again
+ * - on stop, the remaining open segment is committed the same way
+ *
+ * committed segments are disjoint slices of the recording, so nothing is ever
+ * re-transcribed or duplicated. the client never decides how the audio is transcribed -
+ * it just posts the WAV to /api/voice/transcribe and the server picks the engine.
  */
 
 // worklet runs on the audio thread and posts raw PCM chunks to the main thread
@@ -39,28 +45,39 @@ const VOICE_STORE = {
     _pcmLength: 0,
     _rate: 16000,
 
-    _previewTimer: null,
-    _previewInFlight: false,
     _session: 0,
+    _prefix: "",
+    _committed: "",
+    _preview: "",
+    _lastWritten: "",
+
+    // the open segment starts at sample _segStart; _lastVoiced tracks the last voiced sample
+    _segStart: 0,
+    _lastVoiced: -1,
+    _voicedSinceSend: false,
+
+    _tickTimer: null,
+    _tickInFlight: false,
+    _commitInFlight: null,
+    _previewFails: 0,
 
     // energy vad state: { floor: noise level, silentMs, speechMs }
     _vad: null,
 
-    // text in the input field before recording started, and what this store last wrote
-    _prefix: "",
-    _lastWritten: "",
-
-    // how much audio to resample/encode at: whisper's native rate keeps uploads small
     targetRate: 16000,
-    previewWindowSec: 6,
-    previewIntervalMs: 2000,
-    minPreviewSec: 1.5,
+    previewWindowSec: 3,     // how much of the open segment the live preview covers
+    previewMinSec: 1.2,      // don't show a preview until the segment has this much audio
+    previewIntervalMs: 1500,
 
-    // auto-stop: end the recording after this much consecutive silence, but only once at
-    // least minSpeechMs of speech has been heard (so a fresh recording doesn't end itself).
-    // keep this long enough that a thinking pause doesn't cut the capture off
-    silenceStopMs: 2000,
-    minSpeechMs: 800,
+    // segment splitting: split after this much silence, but only once at least
+    // minSpeechMs of speech has been heard. keep the silence long enough that a
+    // thinking pause doesn't cut the capture off.
+    silenceSplitMs: 1600,
+    minSpeechMs: 500,
+    // time-based split: cap open segments so a long continuous dictation doesn't
+    // build one enormous segment (bound on commit latency too)
+    maxSegmentSec: 20,
+
     // silence threshold: max(vadAbsMin, noise floor * vadFloorFactor), the floor adapts
     vadFloorFactor: 3.0,
     vadAbsMin: 0.006,
@@ -68,6 +85,15 @@ const VOICE_STORE = {
     isSupported() {
         const hasContext = !!(window.AudioContext || window.webkitAudioContext);
         return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && hasContext);
+    },
+
+    // native OS dictation (e.g. the iPhone keyboard mic) types into the focused
+    // textarea transparently, so on those devices we can hint at it while keeping
+    // the in-app button as the fallback (WebViews, keyboards without a mic, etc)
+    nativeDictationLikely() {
+        const ua = navigator.userAgent;
+        const iphony = /iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+        return iphony && /Safari|CriOS|FxiOS/.test(ua);
     },
 
     async startRecording() {
@@ -83,6 +109,13 @@ const VOICE_STORE = {
         const chat = Alpine.store("chat");
         this._prefix = chat ? (chat.user_input || "").trim() : "";
         this._lastWritten = chat ? (chat.user_input || "") : "";
+        this._committed = "";
+        this._preview = "";
+        this._segStart = 0;
+        this._lastVoiced = -1;
+        this._voicedSinceSend = false;
+        this._previewFails = 0;
+        this._commitInFlight = null;
 
         try {
             this._stream = await navigator.mediaDevices.getUserMedia({
@@ -105,18 +138,18 @@ const VOICE_STORE = {
 
             this._pcmBuf = new Float32Array(this._rate * 30);
             this._pcmLength = 0;
-            this._vad = { floor: 0.01, silenceMs: 0, speechMs: 0 };
+            this._vad = this._newVad();
 
             this._source = this._ctx.createMediaStreamSource(this._stream);
             this._node = new AudioWorkletNode(this._ctx, "voice-capture-processor");
             this._node.port.onmessage = (e) => this._appendPcm(e.data);
             this._source.connect(this._node);
 
-            this.recording = true;
             this._session++;
-            this._previewInFlight = false;
+            this._tickInFlight = false;
+            this.recording = true;
 
-            this._previewTimer = setInterval(
+            this._tickTimer = setInterval(
                 () => this._tickPreview(this._session),
                 this.previewIntervalMs
             );
@@ -128,6 +161,10 @@ const VOICE_STORE = {
         }
     },
 
+    _newVad() {
+        return { floor: 0.01, silenceMs: 0, speechMs: 0 };
+    },
+
     _appendPcm(chunk) {
         if (this._pcmBuf.length - this._pcmLength < chunk.length) {
             const bigger = new Float32Array(Math.max(this._pcmBuf.length * 2, this._pcmLength + chunk.length));
@@ -137,62 +174,136 @@ const VOICE_STORE = {
         this._pcmBuf.set(chunk, this._pcmLength);
         this._pcmLength += chunk.length;
 
-        // track the chunk's energy for silence detection (auto stop)
+        // track the chunk's energy for silence detection (segment splitting)
         let sum = 0;
         for (let i = 0; i < chunk.length; i++) {
             const s = chunk[i];
             sum += s * s;
         }
-        const rms = Math.sqrt(sum / chunk.length);
-        this._vadUpdate(rms, (chunk.length / this._rate) * 1000);
+        this._vadUpdate(Math.sqrt(sum / chunk.length), (chunk.length / this._rate) * 1000);
     },
 
-    // lightweight energy vad: ends the recording once the user has been silent long enough,
-    // but only after at least minSpeechMs of speech has been heard
+    // lightweight energy vad: splits the open segment once the user has been silent
+    // long enough (after having actually spoken), or once the segment gets too long
     _vadUpdate(rms, ms) {
-        if (!this.recording || !this._vad) {
+        if (!this.recording || !this._vad || this._commitInFlight) {
             return;
         }
 
-        // low-envelope noise floor: snaps down to new quiet levels, drifts up very slowly
         const vad = this._vad;
+        const segmentMs = ((this._pcmLength - this._segStart) / this._rate) * 1000;
+
+        // low-envelope noise floor: snaps down to new quiet levels, drifts up very slowly
         vad.floor = rms < vad.floor ? rms : Math.min(0.02, vad.floor * 1.002);
         const threshold = Math.max(this.vadAbsMin, vad.floor * this.vadFloorFactor);
 
         if (rms >= threshold) {
-            // speech
+            // voiced audio
+            this._lastVoiced = this._pcmLength;
+            this._voicedSinceSend = true;
             vad.speechMs += ms;
             vad.silenceMs = 0;
+
+            // time-based split: cut at the last voiced sample (word boundary-ish),
+            // leaving a tiny margin so the next segment doesn't start mid-word
+            if (vad.speechMs >= this.minSpeechMs && segmentMs >= this.maxSegmentSec * 1000) {
+                this._splitSegment(this._lastVoiced + Math.floor(this._rate * 0.03));
+            }
             return;
         }
 
         if (vad.speechMs < this.minSpeechMs) {
-            // no speech heard yet, don't auto-stop a fresh recording
+            // no speech heard in this segment yet, don't auto-split a fresh recording
             return;
         }
 
         vad.silenceMs += ms;
-        if (vad.silenceMs >= this.silenceStopMs) {
-            this._vad = null; // prevent re-trigger from in-flight chunks
-            this.stopRecording();
+        if (vad.silenceMs >= this.silenceSplitMs) {
+            // the pause itself is uninformative for transcription, so the next
+            // segment starts right where this chunk ends
+            this._splitSegment(this._pcmLength);
         }
     },
 
-    // sends the most recent window of audio through the voice endpoint and replaces the input text
+    // commits the current open segment, then opens a fresh one at newSegStart
+    _splitSegment(newSegStart) {
+        const session = this._session;
+        const segStart = this._segStart;
+        this._vad = null; // pause splitting while the commit is in flight
+
+        this._commitInFlight = this._commitSegment(segStart, newSegStart).finally(() => {
+            if (session === this._session) {
+                this._segStart = newSegStart;
+                if (this.recording) {
+                    this._vad = this._newVad();
+                }
+            }
+            this._commitInFlight = null;
+        });
+    },
+
+    // transcribes one finished segment and appends the result to the committed text
+    async _commitSegment(fromSample, toSample) {
+        const session = this._session;
+        const rate = this._rate;
+
+        if (toSample - fromSample < rate * 0.4) {
+            // too short to be worth transcribing
+            return;
+        }
+
+        const pcm = this._pcmBuf.slice(fromSample, toSample); // copy; the buffer keeps growing
+        this.transcribing = true;
+        try {
+            const wav = pcmToWavBase64(pcm, rate, this.targetRate);
+            const result = await simpleApiPost("/api/voice/transcribe", {
+                audio_data: wav,
+                format: "wav",
+                purpose: "commit"
+            });
+            const text = (result && result.text) ? String(result.text).trim() : "";
+            // only a brand-new recording invalidates this commit
+            if (session !== this._session) {
+                return;
+            }
+            if (text) {
+                this._committed = this._committed ? `${this._committed} ${text}`.trim() : text;
+                this._previewFails = 0;
+            }
+            this._writeInput();
+        } catch (err) {
+            if (session !== this._session) {
+                return;
+            }
+            this.error = `Transcription failed: ${err}`;
+        } finally {
+            if (session === this._session) {
+                this.transcribing = false;
+            }
+        }
+    },
+
+    // sends the most recent window of the open segment as a live preview and replaces the tail
     _tickPreview(session) {
-        if (!this.recording || session !== this._session || this._previewInFlight) {
+        if (!this.recording || session !== this._session || this._tickInFlight || this._commitInFlight) {
+            return;
+        }
+        if (!this._voicedSinceSend) {
+            // nothing new spoken since the last send - skip it. this also keeps
+            // silence windows from reaching whisper, which hallucinates on those
             return;
         }
 
         const rate = this._rate;
-        const totalSec = this._pcmLength / rate;
-        if (totalSec < this.minPreviewSec) {
+        const segmentSec = (this._pcmLength - this._segStart) / rate;
+        if (segmentSec < this.previewMinSec) {
             return;
         }
 
-        // take the last window of audio (capped at everything recorded so far)
-        const windowSamples = Math.floor(Math.min(this.previewWindowSec, totalSec) * rate);
+        // take the last window of the open segment (capped at everything in it so far)
+        const windowSamples = Math.floor(Math.min(this.previewWindowSec, segmentSec) * rate);
         const pcm = this._pcmBuf.slice(this._pcmLength - windowSamples, this._pcmLength);
+        this._voicedSinceSend = false;
 
         let wav;
         try {
@@ -201,80 +312,47 @@ const VOICE_STORE = {
             return;
         }
 
-        this._previewInFlight = true;
-        simpleApiPost("/api/voice/transcribe", { audio_data: wav, format: "wav" })
+        this._tickInFlight = true;
+        simpleApiPost("/api/voice/transcribe", {
+            audio_data: wav,
+            format: "wav",
+            purpose: "preview"
+        })
             .then((result) => {
-                // ignore stale responses (recording stopped, or a new one started)
                 if (session !== this._session || !this.recording) {
                     return;
                 }
                 const text = (result && result.text) ? String(result.text).trim() : "";
-                this._applyText(text);
+                this._previewFails = 0;
+                if (text && text !== this._preview) {
+                    this._preview = text;
+                    this._writeInput();
+                }
             })
             .catch(() => {
-                // preview failures are non-fatal, the final pass on stop still happens
+                if (session !== this._session || !this.recording) {
+                    return;
+                }
+                this._previewFails++;
+                if (this._previewFails === 3) {
+                    this.error = "Voice transcription keeps failing (STT server unreachable?). The last good text is kept.";
+                }
             })
             .finally(() => {
-                this._previewInFlight = false;
+                this._tickInFlight = false;
             });
     },
 
-    // stops recording and transcribes the full recording; resolves with the final text
-    async stopRecording() {
-        if (!this.recording) {
-            return "";
+    _fullText() {
+        if (this._committed && this._preview) {
+            return `${this._committed} ${this._preview}`.trim();
         }
-        this._session++;
-        const session = this._session;
-        this.recording = false;
-        this._vad = null;
-
-        if (this._previewTimer) {
-            clearInterval(this._previewTimer);
-            this._previewTimer = null;
-        }
-
-        const rate = this._rate;
-        const pcm = this._pcmBuf ? this._pcmBuf.slice(0, this._pcmLength) : new Float32Array(0);
-
-        this._releaseAudio();
-        this._pcmBuf = null;
-        this._pcmLength = 0;
-
-        if (pcm.length / rate < 0.4) {
-            // too short to be worth transcribing, drop the preview
-            if (session === this._session) {
-                this._applyText("");
-            }
-            return "";
-        }
-
-        this.transcribing = true;
-        try {
-            const wav = pcmToWavBase64(pcm, rate, this.targetRate);
-            const result = await simpleApiPost("/api/voice/transcribe", { audio_data: wav, format: "wav" });
-            const text = (result && result.text) ? String(result.text).trim() : "";
-            if (session === this._session) {
-                this._applyText(text);
-                return text;
-            }
-            return "";
-        } catch (err) {
-            // keep the last preview in the input field, it's the best we have
-            if (session === this._session) {
-                this.error = `Transcription failed: ${err}`;
-            }
-            return "";
-        } finally {
-            if (session === this._session) {
-                this.transcribing = false;
-            }
-        }
+        return this._committed || this._preview;
     },
 
     // writes text into the chat input, preserving the pre-recording text.
     // skips the write if the user edited the input field in the meantime.
-    _applyText(text) {
+    _writeInput() {
         const chat = Alpine.store("chat");
         if (!chat) {
             return;
@@ -282,9 +360,79 @@ const VOICE_STORE = {
         if (chat.user_input !== this._lastWritten) {
             return;
         }
-        const next = this._prefix ? `${this._prefix} ${text || ""}`.trim() : (text || "");
+        const text = this._fullText();
+        const next = this._prefix ? `${this._prefix} ${text}`.trim() : text;
         chat.user_input = next;
         this._lastWritten = next;
+    },
+
+    // stops recording and commits the remaining open segment; resolves with the final text
+    async stopRecording() {
+        if (!this.recording) {
+            return this._fullText();
+        }
+        const session = this._session;
+        this.recording = false;
+        this._vad = null;
+
+        if (this._tickTimer) {
+            clearInterval(this._tickTimer);
+            this._tickTimer = null;
+        }
+
+        // let any in-flight segment commit land first - it commits the earlier part
+        // of the recording, and the tail below commits what comes after it
+        if (this._commitInFlight) {
+            await this._commitInFlight.catch(() => {});
+            this._commitInFlight = null;
+        }
+
+        const rate = this._rate;
+        const pcm = this._pcmBuf ? this._pcmBuf.slice(this._segStart, this._pcmLength) : new Float32Array(0);
+
+        this._releaseAudio();
+        this._pcmBuf = null;
+        this._pcmLength = 0;
+
+        if (pcm.length < rate * 0.4) {
+            // nothing meaningful left in the open segment
+            if (!this._committed && this._preview) {
+                // salvage the last preview so a short utterance isn't lost
+                this._committed = this._preview;
+                this._preview = "";
+                this._writeInput();
+            }
+            return this._fullText();
+        }
+
+        this.transcribing = true;
+        try {
+            const wav = pcmToWavBase64(pcm, rate, this.targetRate);
+            const result = await simpleApiPost("/api/voice/transcribe", {
+                audio_data: wav,
+                format: "wav",
+                purpose: "commit"
+            });
+            const text = (result && result.text) ? String(result.text).trim() : "";
+            if (text) {
+                this._committed = this._committed ? `${this._committed} ${text}`.trim() : text;
+            } else if (!this._committed && this._preview) {
+                this._committed = this._preview;
+                this._preview = "";
+            }
+            this._writeInput();
+        } catch (err) {
+            this.error = `Transcription failed: ${err}`;
+            if (!this._committed && this._preview) {
+                this._committed = this._preview;
+                this._preview = "";
+                this._writeInput();
+            }
+        } finally {
+            this.transcribing = false;
+        }
+
+        return this._fullText();
     },
 
     _releaseAudio() {

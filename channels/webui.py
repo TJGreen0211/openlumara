@@ -24,7 +24,6 @@ import fastapi, fastapi.templating, fastapi.staticfiles
 import starlette, starlette.middleware.sessions
 import uvicorn
 import base64
-import httpx
 
 # security libraries
 import secrets
@@ -44,7 +43,8 @@ class Webui(core.channel.Channel):
         "jinja2",
         "uvicorn",
         "python-multipart",
-        "bcrypt"
+        "bcrypt",
+        "httpx"
     ]
 
     # these settings are taken straight from the previous webUI,
@@ -111,6 +111,51 @@ class Webui(core.channel.Channel):
             "description": "How many days to stay logged in for",
             "default": 30,
             "depends": "require_login"
+        },
+        "stt_engine": {
+            "type": "select",
+            "options": {
+                "auto": "Local engine for live previews, whisper server (if configured) for final commits",
+                "local": "Built-in local engine (runs whisper.cpp in a subprocess; binary + model auto-download on first use)",
+                "server": "External whisper.cpp server only (URL below, or the main API url if it's an OpenAI-compatible STT endpoint)"
+            },
+            "default": "auto",
+            "description": "Which speech-to-text engine to use for microphone voice input."
+        },
+        "stt_model": {
+            "type": "select",
+            "options": {
+                "tiny": "Fastest, lightest (~75 MB download, ~0.5 GB RAM) - recommended for small hosts",
+                "base": "Better accuracy, still light (~142 MB download, ~1 GB RAM)",
+                "small": "Best accuracy of the local engines (~466 MB download, ~1.5 GB RAM)"
+            },
+            "default": "tiny",
+            "description": "Size of the local whisper model. Only used by the local / auto engines."
+        },
+        "stt_whisper_server_url": {
+            "type": "text",
+            "default": "",
+            "description": "Full URL of your whisper.cpp server's /inference endpoint (for example http://100.x.x.x:8080/inference). Used by the 'server' engine and for final commits with 'auto'. Leave empty to use the main API url instead."
+        },
+        "stt_max_concurrent": {
+            "type": "select",
+            "options": {
+                "1": "1 (safe on a single-core host)",
+                "2": "2",
+                "4": "4"
+            },
+            "default": "1",
+            "description": "How many local whisper jobs may run at once. Each job uses one whisper model worth of RAM plus a core's worth of CPU."
+        },
+        "stt_local_timeout": {
+            "type": "select",
+            "options": {
+                "60": "60s",
+                "120": "120s",
+                "300": "300s"
+            },
+            "default": "120",
+            "description": "Maximum time a single local transcription may take before it's killed. Increase this if you dictate long passages on a slow host."
         }
     }
 
@@ -294,18 +339,6 @@ def api_result(obj = None, success: bool = True):
         result = obj
 
     return {"data": result, "success": success}
-
-def parse_transcription(resp):
-    """Parses a transcription response: JSON with a text field (OpenAI-compatible, whisper.cpp /inference_json) or plain text (whisper.cpp /inference)."""
-    try:
-        data = resp.json()
-        if isinstance(data, dict):
-            for key in ("text", "transcription", "result"):
-                if isinstance(data.get(key), str):
-                    return data[key].strip()
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return resp.text.strip()
 
 async def create_fastapi(channel):
     app = fastapi.FastAPI()
@@ -678,45 +711,33 @@ async def create_fastapi(channel):
 
     @app.post("/api/voice/transcribe")
     async def voice_transcribe(request: fastapi.Request):
-        """Sends the recorded audio (in memory, never written to disk) to the voice_url endpoint and returns the transcribed text."""
+        """Transcribes recorded audio (16kHz mono WAV, in memory) using the configured STT engine, and returns the text."""
         body = await request.json()
         audio_b64 = body.get("audio_data", "")
         audio_format = body.get("format", "wav")
-
-        api_config = core.config.get("api", {})
-        voice_url = api_config.get("voice_url", "") or api_config.get("url", "")
-        api_key = api_config.get("key", "")
+        purpose = body.get("purpose", "preview")
 
         if not audio_b64:
             return api_result("No audio data provided", success=False)
 
-        if not voice_url or voice_url == "http://API_URL_HERE/v1":
-            return api_result("Voice API not configured. Set api.url or api.voice_url in Settings -> Api.", success=False)
+        # per-user voice settings: language + vocabulary hint
+        language = core.config.get("api", "voice_language", default="en") or "auto"
+        hotwords = core.config.get("api", "voice_hotwords", default="") or ""
 
-        audio_bytes = base64.b64decode(audio_b64)
+        try:
+            text = await core.stt.transcribe(
+                base64.b64decode(audio_b64),
+                purpose=purpose,
+                language=language,
+                prompt=hotwords or None,
+                audio_format=audio_format
+            )
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        except Exception as e:
+            return api_result(f"Transcription failed: {core.detail_error(e)}", success=False)
 
-        # voice_url is the full transcription endpoint (e.g. whisper.cpp server's /inference),
-        # so we post directly to it without appending a path
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        # whisper.cpp's server expects the audio as a multipart 'file' field,
-        # with response_format=text for a plain-text response
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)) as client:
-            try:
-                resp = await client.post(
-                    voice_url,
-                    headers=headers,
-                    files={"file": (f"audio.{audio_format}", audio_bytes, f"audio/{audio_format}")},
-                    data={"response_format": "text"}
-                )
-                resp.raise_for_status()
-                return api_result({"text": parse_transcription(resp)}, success=True)
-            except httpx.HTTPStatusError as e:
-                return api_result(f"Transcription failed: {e.response.text}", success=False)
-            except Exception as e:
-                return api_result(str(e), success=False)
+        return api_result({"text": text}, success=True)
 
     # -- POST
     @app.post("/api/settings/save")
