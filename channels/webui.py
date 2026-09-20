@@ -89,11 +89,6 @@ class Webui(core.channel.Channel):
             "description": "Whether to show the name of the chat below the header",
             "default": False
         },
-        "enable_streaming_state_display": {
-            "description": "Whether to show an indicator in the header that tells you what the AI is currently doing. Very useful! Disabled on mobile due to lack of space.",
-            "default": True,
-            "depends": "enable_chat_header",
-        },
         "enable_sidebar": {
             "description": "Whether to enable the sidebar at the left of the screen. Without it, you can\'t switch chats the graphical way, but you can still use commands like `/chat`!",
             "default": True
