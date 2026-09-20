@@ -79,6 +79,20 @@ core_settings_schema = {
         "slot_save_path": {
             "default": "",
             "description": "The llama.cpp `--slot-save-path` directory, but only if the AI server is running on the same machine as openlumara. When set, openlumara will directly erase a chat's cache file when the chat is deleted (in some llama.cpp builds the server's own `erase` action keeps the file)."
+        },
+        "voice_enabled": {
+            "default": True,
+            "description": "Enable microphone voice input in the chat. Toggle off to hide the mic button."
+        },
+        "voice_language": {
+            "type": "text",
+            "default": "en",
+            "description": "The language to transcribe voice input in (for example en, es, de). Set to 'auto' to let the speech engine detect the language per recording."
+        },
+        "voice_hotwords": {
+            "type": "text",
+            "default": "",
+            "description": "Optional vocabulary hint for speech recognition - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
         }
     },
     "model": {

@@ -261,6 +261,19 @@ CHAT_STORE = {
         uploadStore.clear();
     },
 
+    async transcribeVoice() {
+        const voice = Alpine.store('voice');
+
+        if (voice.recording) {
+            // stops capture and commits the accumulated transcription into the input
+            await voice.stopRecording();
+        } else {
+            // starts capture; live previews show in the caption strip, the input
+            // field only receives the text once the session ends
+            await voice.startRecording();
+        }
+    },
+
     /* ----------------------
      * message actions
      * ----------------------- */
