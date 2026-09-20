@@ -42,7 +42,9 @@ class Webui(core.channel.Channel):
         "websockets",
         "jinja2",
         "uvicorn",
-        "python-multipart"
+        "python-multipart",
+        "bcrypt",
+        "httpx"
     ]
 
     # these settings are taken straight from the previous webUI,
@@ -80,7 +82,7 @@ class Webui(core.channel.Channel):
             "depends": "enable_chat_header"
         },
         "title": {
-            "default": "OpenLumara",
+            "default": "TJ GPT",
             "depends": {"enable_chat_header": True, "enable_title": True}
         },
         "enable_chat_titlebar": {
@@ -105,31 +107,57 @@ class Webui(core.channel.Channel):
             "description": "Whether to protect the WebUI with a username and password. **Highly recommended if your webui is exposed to the internet!!**",
             "default": False
         },
-        "username": {
-            "default": "admin",
-            "depends": "require_login"
-        },
-        "password": {
-            "default": "admin",
-            "depends": "require_login"
-        },
         "login_lifetime": {
             "description": "How many days to stay logged in for",
             "default": 30,
             "depends": "require_login"
+        },
+        "stt_engine": {
+            "type": "select",
+            "options": {
+                "auto": "Local engine for live previews, whisper server (if configured) for final commits",
+                "local": "Built-in local engine (runs whisper.cpp in a subprocess; binary + model auto-download on first use)",
+                "server": "External whisper.cpp server only (URL below, or the main API url if it's an OpenAI-compatible STT endpoint)"
+            },
+            "default": "auto",
+            "description": "Which speech-to-text engine to use for microphone voice input."
+        },
+        "stt_model": {
+            "type": "select",
+            "options": {
+                "tiny": "Fastest, lightest (~75 MB download, ~0.5 GB RAM) - recommended for small hosts",
+                "base": "Better accuracy, still light (~142 MB download, ~1 GB RAM)",
+                "small": "Best accuracy of the local engines (~466 MB download, ~1.5 GB RAM)"
+            },
+            "default": "tiny",
+            "description": "Size of the local whisper model. Only used by the local / auto engines."
+        },
+        "stt_whisper_server_url": {
+            "type": "text",
+            "default": "",
+            "description": "Full URL of your whisper.cpp server's /inference endpoint (for example http://100.x.x.x:8080/inference). Used by the 'server' engine and for final commits with 'auto'. Leave empty to use the main API url instead."
+        },
+        "stt_max_concurrent": {
+            "type": "select",
+            "options": {
+                "1": "1 (safe on a single-core host)",
+                "2": "2",
+                "4": "4"
+            },
+            "default": "1",
+            "description": "How many local whisper jobs may run at once. Each job uses one whisper model worth of RAM plus a core's worth of CPU."
+        },
+        "stt_local_timeout": {
+            "type": "select",
+            "options": {
+                "60": "60s",
+                "120": "120s",
+                "300": "300s"
+            },
+            "default": "120",
+            "description": "Maximum time a single local transcription may take before it's killed. Increase this if you dictate long passages on a slow host."
         }
     }
-
-    async def _verify_credentials(self, username: str, password: str) -> bool:
-        """Verify credentials securely using timing-safe comparison."""
-        correct_username = self.config.get("username")
-        correct_password = self.config.get("password")
-
-        if not secrets.compare_digest(username, correct_username):
-            # Dummy comparison to prevent timing attacks
-            secrets.compare_digest(password, correct_password)
-            return False
-        return secrets.compare_digest(password, correct_password)
 
     async def on_ready(self):
         # paths
@@ -161,12 +189,31 @@ class Webui(core.channel.Channel):
         # stores logs from channel.log()
         self.logs = []
 
-        self.username = self.config.get("username", "admin")
-        self.password = self.config.get("password", "admin")
         self.login_attempts = {}
+
+        # per-user context instances
+        self.user_contexts = {}
+
+        # user management
+        self.user_manager = core.auth.UserManager(core.get_data_path())
 
         # initialize the websocket manager
         self.websocket_manager = WebSocketManager(self)
+
+    @property
+    def context(self):
+        """Return per-user context when current_user is set, otherwise default."""
+        username = core.current_user.get()
+        if username and username in self.user_contexts:
+            return self.user_contexts[username]
+        return self._default_context
+
+    async def _get_user_context(self, username):
+        """Get or create Context for a user."""
+        if username not in self.user_contexts:
+            self.user_contexts[username] = core.context.Context(self, username=username)
+            await self.user_contexts[username].chat.autoload()
+        return self.user_contexts[username]
 
     async def run(self):
         self.log("webui", f"Starting WebUI on {self.url}")
@@ -201,7 +248,7 @@ class Webui(core.channel.Channel):
 
         # Store log in buffer for history
         self.logs.append({"category": category, "message": message})
-        
+
         # Broadcast log messages to all connected webui clients
         # Since on_log is sync but manager.broadcast is async, we schedule it as a task
         log_message = {
@@ -219,7 +266,7 @@ class Webui(core.channel.Channel):
     async def on_shutdown(self):
         # broadcast first so clients know we're going away
         await self.websocket_manager.broadcast({"type": "shutdown"})
-        
+
         # then properly stop uvicorn
         # this is a flag exposed by uvicorn itself, which causes it to start gracefully shutting down when set
         self.server.should_exit = True
@@ -252,18 +299,18 @@ def serialize_for_json(obj):
 def get_recursive_assets(assets_path, ext, skip: list = []):
     """Recursively list asset files with paths relative to server root."""
     files = []
-    
+
     for root, dirs, filenames in os.walk(assets_path):
         # Skip files and directories marked for skipping
         filenames[:] = [f for f in filenames if os.path.basename(f) not in skip]
         dirs[:] = [d for d in dirs if d not in skip]
-        
+
         for filename in filenames:
             if filename.endswith(f".{ext}"):
                 full_path = os.path.join(root, filename)
                 rel_path = os.path.relpath(full_path, assets_path)
                 files.append(rel_path)
-    
+
     return sorted(files)
 
 def inject_indexes_into_messages(lst: list):
@@ -303,11 +350,11 @@ async def create_fastapi(channel):
         # Skip auth check if login isn't required
         if not channel.config.get("require_login", False):
             return await call_next(request)
-        
+
         # Skip auth for login page and assets
         if request.url.path in ["/login", "/logout"] or str(request.url.path).startswith("/assets/"):
             return await call_next(request)
-        
+
         # Check session for API and other routes
         if not request.session.get("authenticated", False):
             # For API requests, return 401
@@ -319,7 +366,15 @@ async def create_fastapi(channel):
             # For web routes, redirect to login
             if request.url.path != "/login":
                 return fastapi.responses.RedirectResponse(url="/login", status_code=303)
-        
+
+        # Set user context for per-user data isolation
+        username = request.session.get("username")
+        role = request.session.get("role", "user")
+        if username:
+            core.current_user.set(username)
+            request.state.username = username
+            request.state.role = role
+
         return await call_next(request)
 
     session_lifetime_days = channel.config.get("login_lifetime")
@@ -390,25 +445,36 @@ async def create_fastapi(channel):
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
-        
-        if await channel._verify_credentials(username, password):
+
+        if not username or not password:
+            return channel.templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
+
+        auth_result = channel.user_manager.authenticate(username, password)
+        if auth_result:
             channel.login_attempts[client_ip] = []
+            request.session.clear()
             request.session["authenticated"] = True
+            request.session["username"] = auth_result["username"]
+            request.session["role"] = auth_result["role"]
+            request.session["_csrf"] = secrets.token_hex(16)
 
             return fastapi.responses.RedirectResponse(url="/", status_code=303)
-        
+
         # on failure, record the login attempt
         if client_ip not in channel.login_attempts:
             channel.login_attempts[client_ip] = []
         channel.login_attempts[client_ip].append(now)
-        
+
         return channel.templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
 
     # ---- logout
     @app.get("/logout")
     async def logout(request: fastapi.Request):
         """Logs the user out by clearing their session."""
-        request.session.pop("authenticated", None)
+        username = request.session.get("username")
+        if username and hasattr(channel, 'user_contexts'):
+            channel.user_contexts.pop(username, None)
+        request.session.clear()
         return fastapi.responses.RedirectResponse(url="/login", status_code=303)
 
     # ------------------
@@ -417,50 +483,66 @@ async def create_fastapi(channel):
 
     # reminder to self: docstrings show up in the autogenerated API docs (/docs), so they are essential
 
+    async def _get_uctx(request):
+        """Helper: get user context and username from request session."""
+        username = request.session.get("username")
+        if username:
+            core.current_user.set(username)
+            return await channel._get_user_context(username), username
+        return channel.context, None
+
     # --- chats
     # -- GET
     @app.get("/api/chat/load/{chat_id}")
     async def chat_load(chat_id: str, request: fastapi.Request):
         """Loads a specific chat by its id"""
+        uctx, username = await _get_uctx(request)
         try:
-            success = await channel.context.chat.load(chat_id)
+            success = await uctx.chat.load(chat_id)
         except Exception as e:
             return api_result(f"error while loading chat: {core.detail_error(e)}", success=False)
 
         if not success:
-            # that likely means this is already the loaded chat
-            chat = dict(channel.context.chat.get())
-            chat["turn_history"] = await channel.group_history()
+            chat = dict(uctx.chat.get())
+            chat["turn_history"] = await channel.group_history(await uctx.chat.messages.get())
             return api_result(chat, success=True)
 
-        # broadcast the switch to any connected clients
-        await channel.websocket_manager.broadcast({"type": "chat_switched", "id": chat_id})
+        await channel.websocket_manager.broadcast({"type": "chat_switched", "id": chat_id}, username=username)
 
-        chat = dict(channel.context.chat.get())
-        chat["turn_history"] = await channel.group_history()
+        chat = dict(uctx.chat.get())
+        chat["turn_history"] = await channel.group_history(await uctx.chat.messages.get())
         return api_result(chat, success=True)
 
     @app.get("/api/chat/current")
-    async def chat_get_current():
+    async def chat_get_current(request: fastapi.Request):
         """Gives you the currently loaded chat's data"""
+        uctx, _ = await _get_uctx(request)
 
-        chat = dict(channel.context.chat.get())
-        chat["turn_history"] = await channel.group_history()
+        try:
+            chat = dict(uctx.chat.get())
+        except Exception:
+            # No chat loaded yet, create a new one
+            await uctx.chat.new()
+            chat = dict(uctx.chat.get())
+
+        chat["turn_history"] = await channel.group_history(await uctx.chat.messages.get())
         return api_result(chat)
 
     @app.get("/api/chat/export")
-    async def chat_export():
+    async def chat_export(request: fastapi.Request):
         """Gives you the chat history as a human-readable string, which you can save to a file or do whatever else with"""
-        return api_result(await channel.context.chat.export())
+        uctx, _ = await _get_uctx(request)
+        return api_result(await uctx.chat.export())
 
     @app.get("/api/chats")
     async def get_chats(request: fastapi.Request):
         """Returns a list of all chats, with pagination"""
+        uctx, _ = await _get_uctx(request)
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 50))
         category = request.query_params.get("category", None)
 
-        all_chats = channel.context.chat.get_all()
+        all_chats = uctx.chat.get_all()
         if category:
             all_chats = [c for c in all_chats if c.get("category") == category]
 
@@ -470,13 +552,15 @@ async def create_fastapi(channel):
         return api_result({"messages": paginated, "has_more": has_more}, success=True)
 
     @app.get("/api/chats/categories")
-    async def get_chat_categories():
+    async def get_chat_categories(request: fastapi.Request):
         """Returns a list of all existing chat categories"""
-        return api_result(channel.context.chat.get_categories(), True)
+        uctx, _ = await _get_uctx(request)
+        return api_result(uctx.chat.get_categories(), True)
 
     @app.post("/api/chats/search")
     async def search_chats(request: fastapi.Request):
         """Searches across all chats for messages matching a query"""
+        uctx, _ = await _get_uctx(request)
         data = await request.json()
         query = data.get("query", "").strip()
         search_in_content = data.get("search_in_content", True)
@@ -485,9 +569,8 @@ async def create_fastapi(channel):
         if not query:
             return api_result([])
 
-        results = await channel.context.chat.search(query)
+        results = await uctx.chat.search(query)
 
-        # filter by category if provided
         if category and category != 'general':
             results = [r for r in results if r.get('category') == category]
         elif category == 'general':
@@ -496,8 +579,9 @@ async def create_fastapi(channel):
         return api_result(results)
 
     @app.get("/api/chat/prompt")
-    async def get_prompt():
-        sysprompt = await channel.context.get(system_prompt=True, end_prompt=False, history=False)
+    async def get_prompt(request: fastapi.Request):
+        uctx, _ = await _get_uctx(request)
+        sysprompt = await uctx.get(system_prompt=True, end_prompt=False, history=False)
         if isinstance(sysprompt, core.api.APIError):
             return api_result(sysprompt, success=False)
 
@@ -505,49 +589,85 @@ async def create_fastapi(channel):
 
     # -- POST
     @app.post("/api/chat/new")
-    async def chat_new():
+    async def chat_new(request: fastapi.Request):
         """Creates a new chat"""
-        return api_result(await channel.context.chat.new())
+        uctx, _ = await _get_uctx(request)
+        try:
+            body = await request.json()
+            category = body.get('category', 'general') if body else 'general'
+        except Exception:
+            category = 'general'
+        return api_result(await uctx.chat.new(category=category))
 
     @app.post("/api/chat/rename/{chat_id}")
     async def chat_rename(chat_id: str, request: fastapi.Request):
         """Renames a chat by its ID"""
+        uctx, _ = await _get_uctx(request)
         try:
             data = await request.json()
             new_title = data.get('title', '').strip()
             if not new_title:
                 return api_result("Title cannot be empty", success=False)
-            
-            # Find the index for this chat ID
-            index = channel.context.chat._find_index(chat_id)
+
+            index = uctx.chat._find_index(chat_id)
             if index is None:
                 return api_result("Chat not found", success=False)
-            
-            # Direct update without loading the chat
-            await channel.context.chat.set("title", new_title, index=index)
-            
+
+            await uctx.chat.set("title", new_title, index=index)
+
             return api_result(success=True)
         except Exception as e:
             return api_result(str(e), success=False)
 
     @app.post("/api/chat/delete/{chat_id}")
-    async def chat_delete(chat_id: str):
+    async def chat_delete(chat_id: str, request: fastapi.Request):
         """Deletes a chat by its ID"""
-        await channel.context.chat.delete(chat_id)
+        uctx, _ = await _get_uctx(request)
+        await uctx.chat.delete(chat_id)
         return api_result(success=True)
+
+    @app.post("/api/chat/category/{chat_id}")
+    async def chat_set_category(chat_id: str, request: fastapi.Request):
+        """Changes the category of a chat by its ID"""
+        try:
+            data = await request.json()
+            new_category = data.get('category', 'general').strip()
+            if not new_category:
+                return api_result("Category cannot be empty", success=False)
+
+            index = channel.context.chat._find_index(chat_id)
+            if index is None:
+                return api_result("Chat not found", success=False)
+
+            await channel.context.chat.set("category", new_category, index=index)
+
+            return api_result(success=True)
+        except Exception as e:
+            return api_result(str(e), success=False)
 
     # --- Settings
     # -- GET
     @app.get("/api/settings/load")
-    async def settings_load():
-        """Returns the core's config object as a json object"""
-        return api_result(core.config.config)
+    async def settings_load(request: fastapi.Request):
+        """Returns the core's config object as a json object, merged with per-user config."""
+        username = request.session.get("username")
+        global_config = dict(core.config.config)
+        if username:
+            merged = core.config._merge_user_config_over(global_config, username)
+            return api_result(merged)
+
+        # No username: still fill in defaults for sections migrated to per-user config.
+        merged = dict(global_config)
+        for k, v in core.config.default_config.items():
+            if k not in merged:
+                merged[k] = v
+        return api_result(merged)
 
     @app.get("/api/settings/get_module_info")
     async def get_module_info():
         """Returns the schemas (descriptions, settings schemas, etc) for all modules and core config sections"""
         module_info = {}
-        
+
         # Add module/channel settings schemas
         for module_name, module_data in core.config.get_module_structure().items():
             metadata = module_data.get("metadata", {})
@@ -559,7 +679,7 @@ async def create_fastapi(channel):
                     "unsafe": metadata.get("unsafe", False),
                     "settings_schema": settings_schema
                 }
-        
+
         # Add core config sections settings schemas
         core_structure = core.config.get_core_settings_structure()
         for section_name, section_data in core_structure.items():
@@ -589,20 +709,83 @@ async def create_fastapi(channel):
 
         return api_result(result)
 
+    @app.post("/api/voice/transcribe")
+    async def voice_transcribe(request: fastapi.Request):
+        """Transcribes recorded audio (16kHz mono WAV, in memory) using the configured STT engine, and returns the text."""
+        body = await request.json()
+        audio_b64 = body.get("audio_data", "")
+        audio_format = body.get("format", "wav")
+        purpose = body.get("purpose", "preview")
+
+        if not audio_b64:
+            return api_result("No audio data provided", success=False)
+
+        # per-user voice settings: language + vocabulary hint
+        language = core.config.get("api", "voice_language", default="en") or "auto"
+        hotwords = core.config.get("api", "voice_hotwords", default="") or ""
+
+        try:
+            text = await core.stt.transcribe(
+                base64.b64decode(audio_b64),
+                purpose=purpose,
+                language=language,
+                prompt=hotwords or None,
+                audio_format=audio_format
+            )
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        except Exception as e:
+            return api_result(f"Transcription failed: {core.detail_error(e)}", success=False)
+
+        return api_result({"text": text}, success=True)
+
     # -- POST
     @app.post("/api/settings/save")
     async def settings_save(request: fastapi.Request):
-        """Saves config data to the backend. Accepts a structure that reflects core.config.config exactly (check /api/settings/load to see that structure"""
+        """Saves config data to the backend. Separates per-user settings from global settings."""
         data = await request.json()
 
         changed_modules = list(data.get("changed_modules", []))
         data.pop("changed_modules")
-        
-        result = core.config.config.load(data=data)
-        core.config.config.save()
 
-        if not result:
-            return api_result(success=False)
+        username = request.session.get("username")
+
+        if username:
+            # Separate per-user from global settings
+            per_user_data = {}
+            global_data = {}
+
+            for key, value in data.items():
+                if key in core.config.PER_USER_KEYS:
+                    per_user_data[key] = value
+                elif key == "core":
+                    for ck, cv in (value if isinstance(value, dict) else {}).items():
+                        if ck in core.config.PER_USER_CORE_KEYS:
+                            per_user_data.setdefault("core", {})[ck] = cv
+                        else:
+                            global_data.setdefault("core", {})[ck] = cv
+                elif key == "modules" and isinstance(value, dict):
+                    if "settings" in value:
+                        per_user_data.setdefault("modules", {})["settings"] = value["settings"]
+                    for mk, mv in value.items():
+                        if mk != "settings":
+                            global_data.setdefault("modules", {})[mk] = mv
+                else:
+                    global_data[key] = value
+
+            if per_user_data:
+                user_cfg = core.config.load_user_config(username)
+                user_cfg = core.config._deep_merge(user_cfg, per_user_data)
+                core.config.save_user_config(username, user_cfg)
+
+            if global_data:
+                core.config.config.load(global_data)
+                core.config.config.save()
+        else:
+            result = core.config.config.load(data=data)
+            core.config.config.save()
+            if not result:
+                return api_result(success=False)
 
         # Reload modules that had their settings changed
         if changed_modules:
@@ -610,10 +793,99 @@ async def create_fastapi(channel):
                 try:
                     await channel.manager.reload_module(module_name)
                 except Exception as e:
-                    channel.log(self.name, f"Error reloading module {module_name}: {core.detail_error(e)}")
+                    channel.log(channel.name, f"Error reloading module {module_name}: {core.detail_error(e)}")
 
         return api_result(success=True)
-    
+
+    # --- User management (admin only)
+    def _require_admin(request):
+        """Check if user is admin, re-validating against user store."""
+        username = request.session.get("username")
+        if not username:
+            return False
+        user = channel.user_manager.get_user(username)
+        if not user:
+            return False
+        return user.get("role") == "admin"
+
+    def _verify_csrf(request):
+        """Verify CSRF token using double submit cookie pattern."""
+        session_csrf = request.session.get("_csrf")
+        header_csrf = request.headers.get("x-csrf-token", "")
+        if not session_csrf or not header_csrf:
+            return False
+        return secrets.compare_digest(session_csrf, header_csrf)
+
+    @app.get("/api/users")
+    async def api_list_users(request: fastapi.Request):
+        """List all users (admin only)."""
+        if not _require_admin(request):
+            return api_result("Unauthorized", success=False)
+        users = channel.user_manager.list_users()
+        return api_result(users)
+
+    @app.post("/api/users")
+    async def api_create_user(request: fastapi.Request):
+        """Create a new user (admin only)."""
+        if not _require_admin(request):
+            return api_result("Unauthorized", success=False)
+        if not _verify_csrf(request):
+            return api_result("CSRF token missing or invalid", success=False)
+        data = await request.json()
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        role = data.get("role", "user")
+
+        if not username or not password:
+            return api_result("Username and password are required", success=False)
+
+        if channel.user_manager.get_user(username):
+            return api_result("User already exists", success=False)
+
+        result = channel.user_manager.create_user(username, password, role)
+        if result:
+            return api_result({"username": username, "role": role})
+        return api_result("Failed to create user", success=False)
+
+    @app.patch("/api/users/{username}")
+    async def api_update_user(username: str, request: fastapi.Request):
+        """Update user role or password (admin only)."""
+        if not _require_admin(request):
+            return api_result("Unauthorized", success=False)
+        if not _verify_csrf(request):
+            return api_result("CSRF token missing or invalid", success=False)
+        data = await request.json()
+
+        if "role" in data:
+            new_role = data["role"]
+            if new_role not in ("admin", "user"):
+                return api_result("Invalid role", success=False)
+            if not channel.user_manager.update_role(username, new_role):
+                return api_result("Failed to update role", success=False)
+
+        if "password" in data and data["password"]:
+            if not channel.user_manager.change_password(username, data["password"]):
+                return api_result("Failed to change password", success=False)
+
+        return api_result(channel.user_manager.get_user(username))
+
+    @app.delete("/api/users/{username}")
+    async def api_delete_user(username: str, request: fastapi.Request):
+        """Delete a user (admin only)."""
+        if not _require_admin(request):
+            return api_result("Unauthorized", success=False)
+        if not _verify_csrf(request):
+            return api_result("CSRF token missing or invalid", success=False)
+
+        current_user = request.session.get("username")
+        if current_user == username:
+            return api_result("Cannot delete yourself", success=False)
+
+        if not channel.user_manager.delete_user(username):
+            return api_result("Failed to delete user", success=False)
+
+        return api_result(success=True)
+
     @app.post("/api/reconnect")
     async def reconnect():
         """Disconnects and then reconnects the API."""
@@ -676,7 +948,7 @@ async def create_fastapi(channel):
         """Returns full theme data for a specific family"""
         themes_dir = os.path.join(channel.path, "themes")
         filepath = os.path.join(themes_dir, f"{family_name}.json")
-        
+
         if not os.path.exists(filepath):
             return api_result(f"Theme family '{family_name}' not found", success=False)
 
@@ -795,7 +1067,11 @@ async def create_fastapi(channel):
                 return
 
         ws_mgr = channel.websocket_manager
-        await ws_mgr.connect(websocket)
+        ws_username = None
+        if channel.config.get("require_login", False):
+            ws_username = websocket.scope.get("session", {}).get("username")
+
+        await ws_mgr.connect(websocket, username=ws_username)
 
         try:
             while True:
@@ -804,6 +1080,13 @@ async def create_fastapi(channel):
                 try:
                     data = json.loads(data_text)
                     msg_type = data.get("type")
+
+                    # Set user context for per-user data isolation
+                    if ws_username:
+                        core.current_user.set(ws_username)
+
+                    # Get per-user context
+                    uctx = await channel._get_user_context(ws_username) if ws_username else channel.context
 
                     match msg_type:
                         case "stop":
@@ -816,12 +1099,12 @@ async def create_fastapi(channel):
                         case "rename":
                             new_title = data.get("title")
                             if channel and new_title:
-                                await channel.context.chat.set("title", new_title)
+                                await uctx.chat.set("title", new_title)
                                 await ws_mgr.broadcast({
                                     "type": "chat_metadata_updated",
                                     "title": new_title,
-                                    "tags": channel.context.chat.get("tags") or []
-                                })
+                                    "tags": uctx.chat.get("tags") or []
+                                }, username=ws_username)
                         case "switch_chat":
                             new_chat_id = data.get("chat_id")
                             if new_chat_id:
@@ -830,44 +1113,44 @@ async def create_fastapi(channel):
 
 
                                 try:
-                                    await channel.context.chat.load(new_chat_id)
+                                    await uctx.chat.load(new_chat_id)
                                 except Exception as e:
-                                    await ws_mgr.broadcast({"type": "error", "content": f"Failed to load chat: {e}"})
+                                    await ws_mgr.broadcast({"type": "error", "content": f"Failed to load chat: {e}"}, username=ws_username)
 
                                 ws_mgr.active_chat_id = new_chat_id
 
                                 await ws_mgr.broadcast({
                                     "type": "chat_switched",
                                     "chat_id": new_chat_id,
-                                })
+                                }, username=ws_username)
                         case "new_chat":
                             if ws_mgr.active_stream_task and not ws_mgr.active_stream_task.done():
                                 ws_mgr.active_stream_task.cancel()
 
-                            new_id = await channel.context.chat.new()
+                            new_id = await uctx.chat.new()
                             ws_mgr.active_chat_id = new_id
 
                             await ws_mgr.broadcast({
                                 "type": "chat_switched",
                                 "chat_id": new_id,
                                 "buffer": []
-                            })
+                            }, username=ws_username)
                         case "chat_delete":
                             chat_id = data.get("chat_id")
                             if not chat_id:
                                 return False
 
-                            await channel.context.chat.delete(chat_id)
+                            await uctx.chat.delete(chat_id)
                             await ws_mgr.broadcast({
                                 "type": "chat_switched",
-                                "chat_id": channel.context.chat.get("id"),
+                                "chat_id": uctx.chat.get("id"),
                                 "buffer": []
-                            })
+                            }, username=ws_username)
                         case "user_message":
                             text = data.get("content")
                             files_data = data.get("files")
 
-                            if not text and not files:
+                            if not text and not files_data:
                                 break
 
                             files_dict = None
@@ -877,50 +1160,50 @@ async def create_fastapi(channel):
                                     for f in files_data
                                 }
 
-                            chat_id = channel.context.chat.get("id") or "default"
-                            await ws_mgr.start_stream(channel, chat_id, message=text, files=files_dict)
+                            chat_id = uctx.chat.get("id") or "default"
+                            await ws_mgr.start_stream(channel, chat_id, message=text, files=files_dict, ws_username=ws_username)
                         case "message_edit":
                             index = data.get("index")
                             if index < 0:
                                 return False
 
-                            message = await channel.context.chat.messages.get(index)
+                            message = await uctx.chat.messages.get(index)
                             message["content"] = data.get("content")
-                            await channel.context.chat.messages.edit(index, message)
+                            await uctx.chat.messages.edit(index, message)
 
                             await ws_mgr.broadcast({
                                 "type": "sync"
-                            })
+                            }, username=ws_username)
                         case "message_delete":
                             index = data.get("index")
                             if index < 0:
                                 return False
 
-                            await channel.context.chat.messages.delete_from(index)
+                            await uctx.chat.messages.delete_from(index)
                             await ws_mgr.broadcast({
                                 "type": "sync"
-                            })
+                            }, username=ws_username)
                         case "message_regenerate":
                             index = data.get("index")
 
                             if index is not None and channel:
-                                last_user_message_index = await channel.context.chat.messages.get_last_message_with_role("user", cutoff_index=index)
+                                last_user_message_index = await uctx.chat.messages.get_last_message_with_role("user", cutoff_index=index)
 
                                 if last_user_message_index == -1:
                                     await ws_mgr.broadcast({
                                         "type": "error",
                                         "error": "Could not regenerate message (no preceding user message found)"
-                                    })
+                                    }, username=ws_username)
                                     return
 
-                                user_message = await channel.context.chat.messages.get(last_user_message_index)
+                                user_message = await uctx.chat.messages.get(last_user_message_index)
 
                                 # delete_from deletes all messages AFTER the target, so we need to do index-1
                                 # max(0, index) clamps it so that it never goes below 0
-                                await channel.context.chat.messages.delete_from(max(0, last_user_message_index))
+                                await uctx.chat.messages.delete_from(max(0, last_user_message_index))
 
-                                await ws_mgr.broadcast({"type": "sync"})
-                                await ws_mgr.start_stream(channel, channel.context.chat.get("id"), user_message.get("content"))
+                                await ws_mgr.broadcast({"type": "sync"}, username=ws_username)
+                                await ws_mgr.start_stream(channel, uctx.chat.get("id"), user_message.get("content"), ws_username=ws_username)
                         case _:
                             channel.log(channel.name, f"Unknown websocket command received: {msg_type}")
 
@@ -949,9 +1232,9 @@ class WebSocketManager:
         self.active_stream_task = None
         self.webui_ready = False
 
-    async def connect(self, websocket: fastapi.WebSocket):
+    async def connect(self, websocket: fastapi.WebSocket, username=None):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections.append((websocket, username))
 
         current_chat_id = self.channel.context.chat.get("id")
 
@@ -963,8 +1246,9 @@ class WebSocketManager:
         asyncio.create_task(self.queue_ready_signal())
 
     def disconnect(self, websocket: fastapi.WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections = [
+            (ws, u) for ws, u in self.active_connections if ws != websocket
+        ]
 
     async def queue_ready_signal(self):
         while not self.webui_ready:
@@ -974,19 +1258,21 @@ class WebSocketManager:
     def send_ready_signal(self):
         self.webui_ready = True
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict, username=None):
         disconnected = []
-        for connection in self.active_connections:
+        for ws, conn_username in self.active_connections:
             try:
-                if connection.client_state == starlette.websockets.WebSocketState.CONNECTED:
-                    await connection.send_json(message)
+                if username and conn_username != username:
+                    continue
+                if ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
+                    await ws.send_json(message)
             except Exception:
-                disconnected.append(connection)
+                disconnected.append(ws)
 
         for conn in disconnected:
             self.disconnect(conn)
 
-    async def _stream_task(self, message: str, index, files: list = None):
+    async def _stream_task(self, message: str, index, files: list = None, ws_username=None):
         user_message_confirmed = False
 
         try:
@@ -1010,7 +1296,7 @@ class WebSocketManager:
                                 await self.broadcast({
                                     "type": "user_message_added",
                                     "message": user_msg_payload,
-                                })
+                                }, username=ws_username)
                             except Exception as e:
                                 self.channel.log(self.channel.name, f"error sending user message: {core.detail_error(e)}")
                                 return
@@ -1019,10 +1305,10 @@ class WebSocketManager:
                             await self.broadcast({
                                 "type": "user_message_confirmed",
                                 "index": index
-                            })
+                            }, username=ws_username)
                             await self.broadcast({
                                 "type": "sync"
-                            })
+                            }, username=ws_username)
                             return
                         case _:
                             if not user_message_confirmed:
@@ -1030,32 +1316,36 @@ class WebSocketManager:
                                 await self.broadcast({
                                     "type": "user_message_confirmed",
                                     "index": index
-                                })
+                                }, username=ws_username)
 
                             await self.broadcast({
                                 "type": "token",
                                 "content": token
-                            })
+                            }, username=ws_username)
 
                 elif partial.get("type") == "turn":
                     await self.broadcast({
                         "type": "turn_stream",
                         "turn": partial.get("content")
-                    })
+                    }, username=ws_username)
         finally:
             # always finalize the stream, no matter what
             await self.broadcast({
                 "type": "stream_complete"
-            })
+            }, username=ws_username)
 
-    async def start_stream(self, channel, chat_id: str, message: str, files: list = None):
+    async def start_stream(self, channel, chat_id: str, message: str, files: list = None, ws_username=None):
         if self.active_stream_task and not self.active_stream_task.done():
             self.active_stream_task.cancel()
 
-        next_index = len(await channel.context.chat.messages.get())
+        if ws_username:
+            uctx = await channel._get_user_context(ws_username)
+            next_index = len(await uctx.chat.messages.get())
+        else:
+            next_index = len(await channel.context.chat.messages.get())
 
         try:
-            self.active_stream_task = asyncio.create_task(self._stream_task(message, next_index, files=files))
+            self.active_stream_task = asyncio.create_task(self._stream_task(message, next_index, files=files, ws_username=ws_username))
         except asyncio.CancelledError:
             pass
         except Exception as e:

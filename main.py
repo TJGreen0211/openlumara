@@ -12,6 +12,7 @@
  # You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>. 
 
 import os
+import sys
 import asyncio
 import core
 import subprocess
@@ -30,6 +31,17 @@ async def main_loop(arg_list):
         core.log("core", f"Loading settings from config {config_display_str}")
 
     core.config.load(pre_args.config)
+
+    # run multi-user migration if needed
+    try:
+        core.config.migrate_to_multiuser()
+    except core.config.MigrationError as e:
+        core.log("error", f"Multi-user migration failed: {e}")
+        core.log("error", "Data may be in an inconsistent state. Please restore from backup.")
+        sys.exit(1)
+    except Exception as e:
+        core.log("error", f"Multi-user migration failed: {core.detail_error(e)}")
+        sys.exit(1)
 
     # parse arguments
     arg_parser = argparse.ArgumentParser()

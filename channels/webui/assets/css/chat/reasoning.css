@@ -92,25 +92,31 @@
         flex-shrink: 0;
     }
 
-    .is-reasoning-active .header {
-        animation: reasoningPulse 2s ease-in-out infinite;
-    }
+    &.is-reasoning-active {
+        .header {
+            animation: reasoningPulse 2s ease-in-out infinite;
+        }
 
-    .is-reasoning-active .dots {
-        max-height: none;
+        .header > svg:first-child {
+            animation: thoughtIconBounce 1.2s ease-in-out infinite;
+        }
 
-        span {
-            opacity: 1;
-            animation: reasoningDot 1.5s ease-in-out infinite;
-        }
-        span:nth-child(1) {
-            animation-delay: 0s;
-        }
-        span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-        span:nth-child(3) {
-            animation-delay: 0.4s;
+        .dots {
+            max-height: none;
+
+            span {
+                opacity: 1;
+                animation: reasoningDot 1.5s ease-in-out infinite;
+            }
+            span:nth-child(1) {
+                animation-delay: 0s;
+            }
+            span:nth-child(2) {
+                animation-delay: 0.2s;
+            }
+            span:nth-child(3) {
+                animation-delay: 0.4s;
+            }
         }
     }
 }

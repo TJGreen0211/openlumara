@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- 
-    OpenLumara WebUI v{{ version }} by Rose22 (https://github.com/Rose22)
+     TJ GPT WebUI v{{ version }} by Rose22 (https://github.com/Rose22)
     Copyright (C) 2026  Rose22
 
     This program is free software: you can redistribute it and/or modify
@@ -28,7 +28,7 @@
 
     OpenLumara used to have a WebUI that was mostly AI-coded, but that's finally no longer the case!
 -->
-<html>
+<html data-user-username="{{ request.session.get('username', '') }}" data-user-role="{{ request.session.get('role', 'user') }}" data-csrf-token="{{ request.session.get('_csrf', '') }}">
     <head>
         <title>{{ config.get('title') }}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -95,7 +95,12 @@
                     </section>
                 {% endif %}
 
-                <section id="chat-window">
+                <section id="chat-window"
+                    @dragenter.prevent="$store.upload.dragEnter()"
+                    @dragover.prevent="$store.upload.dragOver()"
+                    @dragleave="$store.upload.dragLeave($event, $el)"
+                    @drop.prevent="$store.upload.handleDrop($event)"
+                >
                     {% include 'chat/index.html' %}
                 </section>
             </section>

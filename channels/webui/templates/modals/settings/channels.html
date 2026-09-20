@@ -52,5 +52,7 @@
         <template x-if="!$store.settings.categories[activeCategory].settings[activeChannel] || !$store.settings.categories[activeCategory].settings[activeChannel].value">
             <p class="no-settings-msg">This channel has no configurable settings.</p>
         </template>
+
+        {% include 'modals/settings/users.html' %}
     </div>
 </template>

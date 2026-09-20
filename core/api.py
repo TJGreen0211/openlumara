@@ -10,7 +10,7 @@ class APIError:
     """Simple class that holds an error message, used for passing on to channels"""
     def __init__(self, message: str = None, exc = None):
         self.message = message
-        
+
         # store exception if relevant
         self.exc = None
         if exc:
@@ -121,18 +121,18 @@ class APIClient():
         # so that the AI is ready to respond right away when the user has finished
         # typing their message
         # (thanks to https://www.reddit.com/r/LocalLLaMA/comments/1uskb1g/speculative_cache_warming_warms_your_cache_while/ for the idea)
-        
+
 
         # PROMPT WARMING DISABLED FOR NOW (it's extremely buggy and needs a few days of extra polish. it's causing race conditions all over the place)
         #await self.start_prompt_warmup(context=[{"role": "system", "content": await self.manager.get_system_prompt()}], notify=False)
 
         return True
-    
+
     async def attempt_connect(self):
         """connect if disconnected, else just return True"""
         if not self.connected:
             return await self.connect()
-        
+
         return True
 
     def get_status(self):
@@ -165,8 +165,7 @@ class APIClient():
 
     def set_model(self, name: str):
         core.config.config["model"]["name"] = name
-        core.config.config.save()
-
+        core.config.set_user_or_global(["model", "name"], name)
         return True
 
     async def _request(self, context, tools=None, stream=False, use_thinking=True, **kwargs):

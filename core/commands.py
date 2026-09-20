@@ -29,6 +29,15 @@ def _convert_type(value: str):
     # Default to string
     return value
 
+def _write_to_nested(data, path, value):
+    """Write value to nested dict at path, creating intermediate dicts."""
+    current = data
+    for key in path[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    current[path[-1]] = value
+
 def get_commands(modules_dict: dict = None):
     """
     Return all available commands as a list of dicts (key=command, value=description)
@@ -588,8 +597,7 @@ class Commands:
                 if not isinstance(current, dict):
                     return f"Error: Path {path} is invalid. The parent of '{path[-1]}' is not a dictionary."
                 
-                current[path[-1]] = typed_value
-                core.config.config.save()
+                core.config.set_user_or_global(path, typed_value)
                 
                 module_name = None
                 if manager and len(path) >= 3 and path[0] == "modules":
