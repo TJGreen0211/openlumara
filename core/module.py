@@ -3,6 +3,7 @@ import core
 import re
 import inspect
 import json
+import shutil
 import asyncio
 import copy
 
@@ -83,6 +84,54 @@ class Module:
     def log(self, category: str, message: str):
         self.manager.log(category, message)
 
+    def user_storage(self, name: str, storage_type: str, cache: dict, storage_cls):
+        """get (or lazily create) per-user storage for a data file.
+
+        each user gets their own file under data/{username}/, falling back to
+        the global data dir when no user context is active (cli / legacy mode).
+        instances are cached in `cache`, keyed by username (None = global).
+        initialize the cache as {} in on_ready() and pass it on every call.
+
+        on a user's first access, their file is seeded from the legacy global
+        file (data/{name}.{ext}) if one exists, so single-user data keeps
+        working after a multi-user split. afterwards the files diverge.
+        """
+        if not hasattr(self, "_user_storage_caches"):
+            self._user_storage_caches = []
+        if cache not in self._user_storage_caches:
+            self._user_storage_caches.append(cache)
+
+        user = core.current_user.get()
+        if user not in cache:
+            token = core.current_user.set(user)
+            try:
+                base = core.get_data_path()
+            finally:
+                core.current_user.reset(token)
+
+            if user:
+                token = core.current_user.set(None)
+                try:
+                    global_base = core.get_data_path()
+                finally:
+                    core.current_user.reset(token)
+
+                own_path = core.storage.storage_file_path(name, storage_type, base)
+                legacy_path = core.storage.storage_file_path(name, storage_type, global_base)
+                if not os.path.exists(own_path) and os.path.exists(legacy_path):
+                    try:
+                        # markdown-type storage is a directory tree (data/{name}.{ext}/)
+                        if os.path.isdir(legacy_path):
+                            shutil.copytree(legacy_path, own_path)
+                        else:
+                            shutil.copy(legacy_path, own_path)
+                    except Exception as e:
+                        self.log("module error", f"{self.name}: could not seed {name} from legacy global file: {core.detail_error(e)}")
+
+            cache[user] = storage_cls(name, storage_type, path=base)
+
+        return cache[user]
+
     async def _check(self):
         pass
 
@@ -132,8 +181,18 @@ class Module:
         pass
 
     async def on_shutdown(self):
-        """This method will run once when the module is shut down along with the rest of the framework, or the module is reloaded (happens when e.g. module config settings were changed by the user)"""
+        """This method will run once the module is shut down along with the rest of the framework, or the module is reloaded (happens when e.g. module config settings were changed by the user)"""
         pass
+
+    async def on_user_deleted(self, username: str):
+        """This method will run once when a user account is deleted. Use it to drop any per-user in-memory state (e.g. per-user storage caches) for the deleted username, so a recreated account starts fresh."""
+        self.evict_user_storage(username)
+
+    def evict_user_storage(self, username: str):
+        """drop any cached per-user storage instance held for `username`, so an
+        account recreated with the same name gets fresh storage built from disk."""
+        for cache in getattr(self, "_user_storage_caches", []):
+            cache.pop(username, None)
 
     async def on_background(self):
         """This method will be added as a background task that will run contineously in the background. Use it for things like schedulers, cronjobs, etc!"""

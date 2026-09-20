@@ -1,5 +1,6 @@
 import datetime
 import asyncio
+import os
 import core
 import ulid
 import re
@@ -33,13 +34,69 @@ class Scheduler(core.module.Module):
 
     async def on_ready(self, *args, **kwargs):
         """Initialize storage, start dispatcher, and schedule existing jobs."""
-        self.schedule = core.storage.StorageList("schedule", type="json")
+        # per-owner schedule storage lists, keyed by username.
+        # None = the global (shared, non-webui) schedule
+        self._schedules = {}
 
         # Event used to signal the dispatcher that the schedule has changed
         self._reschedule_event = asyncio.Event()
 
         # The single dispatcher task
         self._dispatcher_task = asyncio.create_task(self._dispatcher_loop())
+
+    async def on_user_deleted(self, username):
+        """drop the deleted owner's cached job list, so an account recreated
+        with the same name starts from its (new) file on disk instead of the
+        deleted user's in-memory jobs."""
+        self._schedules.pop(username, None)
+
+    @property
+    def schedule(self):
+        """Schedule for the current user (core.current_user), or the global
+        schedule when no user context is active. lazily creates the
+        per-owner storage list on first access."""
+        return self._owner_storage(core.current_user.get())
+
+    def _owner_storage(self, owner):
+        """Get (or lazily create) the schedule storage list for a given owner.
+        owner may be None, which means the global shared schedule."""
+        if owner not in self._schedules:
+            # pin the path with an explicit contextvar token, so a stray
+            # user context in the calling task can't misdirect it
+            token = core.current_user.set(owner)
+            try:
+                path = core.get_data_path()
+            finally:
+                core.current_user.reset(token)
+            self._schedules[owner] = core.storage.StorageList(
+                "schedule", type="json", path=path
+            )
+        return self._schedules[owner]
+
+    def _list_owners(self):
+        """List all schedule owners: None (global) plus any user data dir that
+        contains a schedule file or a user config file."""
+        owners = [None]
+
+        # resolve the global data root independent of any active user context
+        token = core.current_user.set(None)
+        try:
+            base = core.get_data_path()
+            entries = os.listdir(base)
+        except Exception:
+            return owners
+        finally:
+            core.current_user.reset(token)
+
+        for entry in entries:
+            path = os.path.join(base, entry)
+            if not os.path.isdir(path):
+                continue
+            if (os.path.exists(os.path.join(path, "schedule.json"))
+                    or os.path.exists(os.path.join(path, "config.json"))):
+                owners.append(entry)
+
+        return owners
 
     async def on_unload(self, *args, **kwargs):
         """Clean up the dispatcher task on module unload."""
@@ -58,7 +115,7 @@ class Scheduler(core.module.Module):
         """Single loop that sleeps until the next job is due, then executes it."""
         while True:
             try:
-                next_job, delay = self._get_next_due_job()
+                next_job, owner, delay = self._get_next_due_job()
 
                 if next_job is None:
                     # No jobs scheduled; wait for a signal that the schedule changed
@@ -67,22 +124,29 @@ class Scheduler(core.module.Module):
                     self._reschedule_event.clear()
                     continue
 
+                schedule = self._owner_storage(owner)
+
                 if delay <= 0:
                     # Job is overdue — handle it
                     job_id = next_job.get("id")
-                    idx = self._get_index(job_id)
+                    idx = self._get_index(job_id, storage=schedule)
                     if idx == -1:
                         continue
 
-                    job = self.schedule[idx]
+                    job = schedule[idx]
 
-                    if job.get("recurring"):
-                        # Advance recurring job to future without executing missed instances
-                        self._advance_recurring_to_future(job)
-                        self.log("scheduler", f"advanced missed recurring job {job_id} to next future time")
-                    else:
-                        # Overdue one-time job: execute immediately
-                        await self._job_wrapper(job)
+                    # run under the job owner's context (never assumed to persist)
+                    token = core.current_user.set(job.get("user") or owner)
+                    try:
+                        if job.get("recurring"):
+                            # Advance recurring job to future without executing missed instances
+                            self._advance_recurring_to_future(job)
+                            self.log("scheduler", f"advanced missed recurring job {job_id} to next future time")
+                        else:
+                            # Overdue one-time job: execute immediately
+                            await self._job_wrapper(job)
+                    finally:
+                        core.current_user.reset(token)
                     continue
 
                 # Wait until the job is due or until the schedule changes
@@ -101,12 +165,17 @@ class Scheduler(core.module.Module):
 
                 # Re-fetch job from storage (might have been edited/removed)
                 job_id = next_job.get("id")
-                idx = self._get_index(job_id)
+                idx = self._get_index(job_id, storage=schedule)
                 if idx == -1:
                     continue
 
-                job = self.schedule[idx]
-                await self._job_wrapper(job)
+                job = schedule[idx]
+                # run under the job owner's context (never assumed to persist)
+                token = core.current_user.set(job.get("user") or owner)
+                try:
+                    await self._job_wrapper(job)
+                finally:
+                    core.current_user.reset(token)
 
             except asyncio.CancelledError:
                 raise
@@ -117,26 +186,30 @@ class Scheduler(core.module.Module):
 
     def _get_next_due_job(self):
         """
-        Returns (job_dict, delay_seconds) for the job with the earliest trigger_time.
-        Returns (None, None) if no jobs are scheduled.
+        Returns (job_dict, owner, delay_seconds) for the job with the earliest
+        trigger_time across all owners (None = global).
+        Returns (None, None, None) if no jobs are scheduled.
         """
         now = datetime.datetime.now()
         earliest_job = None
+        earliest_owner = None
         earliest_delay = None
 
-        for job in self.schedule:
-            try:
-                trigger_time = datetime.datetime.fromisoformat(job.get("trigger_time", ""))
-            except (ValueError, TypeError):
-                continue
+        for owner in self._list_owners():
+            for job in self._owner_storage(owner):
+                try:
+                    trigger_time = datetime.datetime.fromisoformat(job.get("trigger_time", ""))
+                except (ValueError, TypeError):
+                    continue
 
-            delay = (trigger_time - now).total_seconds()
+                delay = (trigger_time - now).total_seconds()
 
-            if earliest_delay is None or delay < earliest_delay:
-                earliest_delay = delay
-                earliest_job = job
+                if earliest_delay is None or delay < earliest_delay:
+                    earliest_delay = delay
+                    earliest_job = job
+                    earliest_owner = owner
 
-        return earliest_job, earliest_delay
+        return earliest_job, earliest_owner, earliest_delay
 
     def _signal_reschedule(self):
         """Signal the dispatcher to re-evaluate the schedule."""
@@ -279,6 +352,17 @@ class Scheduler(core.module.Module):
             self.log("scheduler", f"error executing job {job_id}: channel has no valid context")
             return
 
+        # resolve the execution context: jobs with an owner run under that owner's
+        # context (per-user data/config) on channels that support per-user contexts.
+        # the owner's contextvar was set by the dispatcher before we got here
+        job_context = job_channel.context
+        owner = core.current_user.get()
+        if owner and hasattr(job_channel, "_get_user_context"):
+            try:
+                job_context = await job_channel._get_user_context(owner)
+            except Exception:
+                job_context = job_channel.context
+
         # Filter out scheduler tools to prevent circular scheduling
         tools = [
             t for t in self.manager.tools
@@ -317,11 +401,11 @@ Use tools if needed. For simple reminders, do not use tools.
                     case "instruction only":
                         final_messages = [instruction_message_pure]
                     case "system prompt + instruction":
-                        sysprompt = await job_channel.context.get(system_prompt=True, end_prompt=False, history=False)
+                        sysprompt = await job_context.get(system_prompt=True, end_prompt=False, history=False)
                         final_messages = sysprompt+[instruction_message]
                     case "full context":
                         # Build a fresh private copy each attempt (context may have changed)
-                        base_messages = await job_channel.context.get(end_prompt=False)
+                        base_messages = await job_context.get(end_prompt=False)
                         final_messages = list(base_messages) + [instruction_message]
 
                 response = await self.manager.API.send(
@@ -431,11 +515,14 @@ Use tools if needed. For simple reminders, do not use tools.
     # Helpers
     # ---------------------------------------------------------
 
-    def _get_index(self, job_id: str) -> int:
-        """Finds the index of a job by ID. Returns -1 if not found."""
+    def _get_index(self, job_id: str, storage=None) -> int:
+        """Finds the index of a job by ID. Returns -1 if not found.
+        Defaults to the current user's schedule (or pass an explicit storage list)."""
         if job_id is None:
             return -1
-        for index, job in enumerate(self.schedule):
+        if storage is None:
+            storage = self.schedule
+        for index, job in enumerate(storage):
             if str(job.get("id", "")) == str(job_id):
                 return index
         return -1
@@ -610,6 +697,9 @@ Use tools if needed. For simple reminders, do not use tools.
             job_id = str(ulid.ULID())
             job = {
                 "id": job_id,
+                # record the owner so the dispatcher restores the right context
+                # (None = global schedule, used by non-webui channels)
+                "user": core.current_user.get(),
                 "action": action,
                 "channel": str(resolved_channel).lower().strip(),
                 "trigger_time": trigger_time.isoformat(),
@@ -747,6 +837,8 @@ Use tools if needed. For simple reminders, do not use tools.
             # Build updated job
             updated_job = {
                 "id": id,
+                # preserve the job's owner
+                "user": existing.get("user"),
                 "action": action if action is not None else existing.get("action"),
                 "channel": channel if channel is not None else existing.get("channel"),
                 "trigger_time": trigger_time_str,

@@ -147,7 +147,7 @@ Custom exceptions:
     - Finds the owning module and executes the function (with timeout).
     - Adds tool results to context.
     - Recursively sends results back to the AI until no more tool calls are needed.
-    - Sets `agentic_loop_start` for reasoning preservation.
+    - Sets `agentic_loop_start` on the **Context** for reasoning preservation.
 10. **Module Hooks**: Runs `on_assistant_message()` on all loaded modules.
 11. **Output**: The final response is formatted and sent back through the **Channel** to the user.
 

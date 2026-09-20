@@ -15,6 +15,7 @@ import shutil
 
 config = None
 _registry_cache = None
+_loaded_file_path = None
 
 SCHEMA_CACHE_FILE = ".module_cache.json"
 
@@ -67,6 +68,18 @@ core_settings_schema = {
             "default": {},
             "description": "Additional custom fields to send with API requests. You can put anything in here that your chosen API supports!"
         },
+        "slot_cache": {
+            "default": True,
+            "description": "Save/restore llama.cpp slot KV caches per chat, so switching back to an older chat (or restarting the AI server) doesn't rerun the entire conversation history. Requires your AI server to be started with `--slot-save-path` (llama.cpp). This also pins all of openlumara's requests to a single server slot, which can reduce throughput if the server runs with multiple parallel slots (-np > 1) and you want other clients to use the rest. Cache files remember which model they were saved with - if the server's model changes, older caches are ignored and re-saved automatically. In multi-user setups (webui with login enabled), each user can stream concurrently but their requests all pin to the same slot if everyone shares this `slot_id` - give each user a distinct `slot_id` in their per-user config and start the server with enough parallel slots (-np) for true per-user concurrency."
+        },
+        "slot_id": {
+            "default": 0,
+            "description": "The llama.cpp slot id that openlumara pins all requests and slot cache operations to. Only relevant if `slot_cache` is enabled and your server runs with multiple parallel slots (-np > 1). In multi-user setups (webui with login enabled), set a distinct value per user (in their per-user settings) so concurrent users don't share a slot. Requires the server to run with at least that many parallel slots (-np > 1)."
+        },
+        "slot_save_path": {
+            "default": "",
+            "description": "The llama.cpp `--slot-save-path` directory, but only if the AI server is running on the same machine as openlumara. When set, openlumara will directly erase a chat's cache file when the chat is deleted (in some llama.cpp builds the server's own `erase` action keeps the file)."
+        },
         "voice_enabled": {
             "default": True,
             "description": "Enable microphone voice input in the chat. Toggle off to hide the mic button."
@@ -80,6 +93,11 @@ core_settings_schema = {
             "type": "text",
             "default": "",
             "description": "Optional vocabulary hint for speech recognition - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
+        },
+        "voice_url": {
+            "type": "text",
+            "default": "",
+            "description": "The URL of a whisper.cpp server endpoint (for example http://host:5002/inference) used for voice input. When set, transcriptions go to this server instead of the local engine or the AI's own /audio/transcriptions endpoint. The stt_whisper_server_url in Settings -> Channels -> webui takes priority when both are set."
         }
     },
     "model": {
@@ -796,19 +814,28 @@ def sync_module_settings(config_dict, instances, section_key, available_names):
 def load(file_path=None):
     """
     Load config file.
+
+    An explicitly given file_path is remembered, so later no-arg reloads
+    (e.g. after auto-installer changes) reload the same file instead of
+    silently falling back to the project-root default config.
     """
+    new_config = False
+
+    global config
+    global _registry_cache
+    global _loaded_file_path
+    _registry_cache = None
+
+    if not file_path and _loaded_file_path:
+        file_path = _loaded_file_path
+
     if file_path:
+        _loaded_file_path = file_path
         filename = os.path.splitext(os.path.basename(file_path))[0]
         dirname = os.path.dirname(file_path)
     else:
         filename = "config"
         dirname = core.get_path()
-
-    new_config = False
-
-    global config
-    global _registry_cache
-    _registry_cache = None
 
     config = core.storage.StorageDict(filename, "yaml", path=dirname, override_temporary=True)
     if not config:

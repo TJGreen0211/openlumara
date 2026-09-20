@@ -88,7 +88,9 @@ def get_commands(modules_dict: dict = None):
 class Commands:
     # delete these after they are shown to the user once
     GHOST = ("help", "new", "clear", "context", "prompt", "tools", "chats", "chat")
-    PUBLIC_COMMANDS = ("new", "clear", "status", "stop")
+    # commands any user may run, regardless of role
+    # (identity only ever touches the caller's own per-user identity file)
+    PUBLIC_COMMANDS = ("new", "clear", "status", "stop", "identity")
     
     # command definitions - maps command name to help text
     # use string for single command, dict for subcommands, "__SPACER__" for spacers
@@ -750,5 +752,14 @@ class Commands:
         return "restarting server"
     
     async def cmd_stop(self, args: list):
+        # stop only the current user's stream when the channel tracks per-user
+        # streams (webui) - a global API.cancel() would also cancel every
+        # other user's in-flight stream
+        token = getattr(self.channel.context, "cancel_token", None)
+        if token is not None:
+            if not token.is_set():
+                token.set()
+            return "stopped!"
+
         await self.channel.manager.API.cancel()
         return "stopped!"

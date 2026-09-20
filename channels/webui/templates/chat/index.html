@@ -9,10 +9,6 @@
     {% include 'chat/titlebar.html' %}
 {% endif %}
 
-<template x-if="$store.ui.notice">
-    <div class="notice" x-html="$store.ui.notice"></div>
-</template>
-
 <!-- the main message view -->
 <div id="messages" x-ref="messages" x-cloak
     @scroll.throttle="

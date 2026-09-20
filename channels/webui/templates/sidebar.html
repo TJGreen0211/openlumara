@@ -82,7 +82,7 @@
                         {% include 'svg/chat.svg' %}
                     </template>
                 </span>
-                <span class="title" x-text="category"></span>
+                <span class="title" x-text="category === 'general' ? 'General' : category"></span>
             </ul>
         </template>
     </div>
@@ -102,7 +102,7 @@
 <div id="chat-list" x-ref="chat-list" x-data="{query: ''}"
     x-show="!$store.ui.isMobile || $store.ui.showChatList" x-cloak
 >
-    <button class="header-btn" x-text="$store.chat.selectedCategory" x-show="$store.ui.isMobile" x-cloak @click="$store.ui.toggleMobileSidebarView()"></button>
+    <button class="header-btn" x-text="$store.chat.selectedCategory === 'general' ? 'General' : $store.chat.selectedCategory" x-show="$store.ui.isMobile" x-cloak @click="$store.ui.toggleMobileSidebarView()"></button>
 
     <div class="search">
         <input name="search" type="text" placeholder="Search through your chats.." x-model="query">

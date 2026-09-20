@@ -3,6 +3,8 @@ UI_STORE = {
     errors: [],
     currentModal: null,
     notice: null,
+    // 'connected' | 'disconnected' - drives the status dot in the chat header
+    connectionState: 'disconnected',
 
     shouldScroll: true,
     scrollToTurnIndex: null,

@@ -13,7 +13,7 @@ OpenLumara distinguishes between two main types of commands:
 
 1.  **Input Interception**: When a message is sent to a channel, the `Channel` passes it to `Commands.process_input()`.
 2.  **Parsing**: The input is parsed to extract the command name and its arguments using `shlex.split()`. The command prefix is read from `config.core.cmd_prefix` (default `/`).
-3.  **Authorization Check**: Non-public commands require authorization. Only commands in `PUBLIC_COMMANDS` (`new`, `clear`, `status`, `stop`) are accessible without authorization. Raises `UnauthorizedException` otherwise.
+3.  **Authorization Check**: Non-public commands require authorization. Only commands in `PUBLIC_COMMANDS` (`new`, `clear`, `status`, `stop`, `identity`) are accessible without authorization. Raises `UnauthorizedException` otherwise. `identity` is self-scoped (it only ever reads/writes the caller's own per-user identity file).
 4.  **Temporary/Ghost Flagging**: The system checks if the command is "temporary" (meaning it shouldn't be sent to the AI's context). This is determined by:
     - Whether the command is in the hardcoded `GHOST` list (`help`, `new`, `clear`, `context`, `prompt`, `tools`, `stop`).
     - Whether the module decorator marked it as `send_to_ai=False` (via `core.module.command_is_temporary()`).

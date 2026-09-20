@@ -4,7 +4,12 @@ class Identity(core.module.Module):
     """Gives your AI a personality by inserting it as a prompt. The AI can edit its own personality!"""
 
     async def on_ready(self):
-        self.identity = core.storage.StorageList("identity", type="text")
+        self._identity_cache = {}
+
+    @property
+    def identity(self):
+        # per-user identity: data/{username}/identity.txt (global when no user context)
+        return self.user_storage("identity", "text", self._identity_cache, core.storage.StorageList)
 
     async def on_system_prompt(self):
         # dont use identity if the characters module is enabled and a character is currently active

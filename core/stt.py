@@ -45,6 +45,15 @@ def _ch_cfg(key: str, default=None):
     return core.config.get("channels", "settings", "webui", key, default=default)
 
 
+def _server_url() -> str:
+    """Whisper server endpoint (a full URL, e.g. http://host:5002/inference).
+
+    The global channel setting (Settings -> Channels -> webui) wins over the
+    per-user Voice URL (Settings -> Api)."""
+    return (str(_ch_cfg("stt_whisper_server_url", default="") or "").strip()
+            or str(core.config.get("api", "voice_url", default="") or "").strip())
+
+
 # Non-speech artifacts the engines can emit (whisper.cpp special tokens,
 # OpenAI-style markers, timestamps). Real dictation never contains these,
 # so anything matching is pure noise that must not reach the input field.
@@ -427,9 +436,12 @@ async def transcribe_local(audio_data: bytes, language: str = "auto",
 
 async def transcribe_server(audio_data: bytes, url: str = None, language: str = "auto",
                             prompt: str = None, audio_format: str = "wav") -> str:
-    url = url or _ch_cfg("stt_whisper_server_url", default="") or ""
+    url = url or _server_url()
     if not url:
-        raise STTError("No whisper server configured. Set stt_whisper_server_url in Settings -> Channels -> webui.")
+        raise STTError(
+            "No whisper server configured. Set the Voice URL in Settings -> Api "
+            "or stt_whisper_server_url in Settings -> Channels -> webui."
+        )
 
     data = {"response_format": "text"}
     if language and language.lower() != "auto":
@@ -516,7 +528,7 @@ async def transcribe(audio_data: bytes, purpose: str = "preview", language: str 
 async def _route(audio_data: bytes, purpose: str, language: str,
                  prompt: str, audio_format: str) -> str:
     engine = _ch_cfg("stt_engine", default="auto") or "auto"
-    server_url = _ch_cfg("stt_whisper_server_url", default="") or ""
+    server_url = _server_url()
     api_url = (core.config.get("api", "url", default="") or "").strip()
     has_openai = bool(api_url) and api_url != "http://API_URL_HERE/v1"
     size = _ch_cfg("stt_model", default="tiny") or "tiny"
@@ -528,14 +540,17 @@ async def _route(audio_data: bytes, purpose: str, language: str,
             return await transcribe_openai(audio_data, language, prompt, audio_format)
         raise STTError(
             "stt_engine is set to 'server' but no whisper server URL is configured. "
-            "Set stt_whisper_server_url in Settings -> Channels -> webui."
+            "Set the Voice URL in Settings -> Api or stt_whisper_server_url in Settings -> Channels -> webui."
         )
 
     if engine == "local":
         return await transcribe_local(audio_data, language, prompt, audio_format)
 
     # auto: live previews prefer the local engine (fast, no round-trip to the big server),
-    # if it's already installed. final commits prefer the higher-quality server when available.
+    # if it's already installed. final commits prefer an explicitly configured whisper
+    # server, then the local engine (when installed) - the OpenAI-compatible endpoint on
+    # api.url is a last-resort fallback, since a main LLM endpoint without audio support
+    # rejects /audio/transcriptions.
     if purpose == "preview":
         if _local_ready(size):
             return await transcribe_local(audio_data, language, prompt, audio_format)
@@ -545,11 +560,14 @@ async def _route(audio_data: bytes, purpose: str, language: str,
             return await transcribe_openai(audio_data, language, prompt, audio_format)
         raise STTError(
             "No STT engine available. The local engine downloads on first use at final commit; "
-            "configure stt_whisper_server_url for previews right now."
+            "configure the Voice URL in Settings -> Api (or stt_whisper_server_url in "
+            "Settings -> Channels -> webui) for previews right now."
         )
 
     if server_url:
         return await transcribe_server(audio_data, server_url, language, prompt, audio_format)
+    if _local_ready(size):
+        return await transcribe_local(audio_data, language, prompt, audio_format)
     if has_openai:
         return await transcribe_openai(audio_data, language, prompt, audio_format)
     return await transcribe_local(audio_data, language, prompt, audio_format)

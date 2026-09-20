@@ -17,6 +17,7 @@ document.addEventListener('alpine:init', async () => {
     Alpine.store('audio', AUDIO_STORE);
     Alpine.store('upload', UPLOAD_STORE);
     Alpine.store('voice', VOICE_STORE);
+    Alpine.store('meets', MEETS_STORE);
     if (typeof USERS_STORE !== 'undefined') {
         Alpine.store('users', USERS_STORE);
     }
@@ -29,7 +30,6 @@ document.addEventListener('alpine:init', async () => {
     Alpine.directive('auto-scroll', autoScroll);
     Alpine.directive('copy-code', copyCode);
 
-    self.notice = "Please wait, connecting to backend server..";
     await connectWebSocket();
 
     // register the service worker

@@ -4,7 +4,12 @@ class Notes(core.module.Module):
     """Lets your AI store notes in a notebook. Notes are folders with markdown files, no vendor lock-in!"""
 
     async def on_ready(self):
-        self.data = core.storage.StorageDict("notes", "markdown")
+        self._data = {}
+
+    @property
+    def data(self):
+        # per-user notebook: data/{username}/notes.md (global notes.md when no user context)
+        return self.user_storage("notes", "markdown", self._data, core.storage.StorageDict)
 
     async def create(self, name: str, category: str, content: str):
         if category not in self.data.keys():

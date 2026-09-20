@@ -1,3 +1,7 @@
+// mirrors PER_USER_CORE_KEYS in core/config.py - the only "core" settings
+// that are stored per-user; everything else in "core" is instance-wide
+const PER_USER_CORE_KEYS = ["auto_resume_chats", "cmd_prefix", "tool_timeout"];
+
 function isToggleList(data) {
     if (typeof data !== 'object' || data === null) return false;
     return Array.isArray(data.enabled) && Array.isArray(data.disabled);
@@ -26,7 +30,7 @@ function detectFieldType(value, key = '') {
     }
 }
 
-function buildSettingsStructure(originalData, moduleInfo = {}) {
+function buildSettingsStructure(originalData, moduleInfo = {}, isAdmin = true) {
     const categories = {};
     let order = 0;
 
@@ -48,16 +52,35 @@ function buildSettingsStructure(originalData, moduleInfo = {}) {
         order: 100,
         isThemeCategory: true
     };
-    categories.system_logs = {
-        title: 'System Logs',
-        description: 'Peek into the great unknown',
-        order: 999,
-        isThemeCategory: true
-    };
+    if (isAdmin) {
+        categories.system_logs = {
+            title: 'System Logs',
+            description: 'Peek into the great unknown',
+            order: 999,
+            isThemeCategory: true
+        };
+    }
 
     for (const [topKey, topValue] of Object.entries(originalData)) {
         if (topKey.toLowerCase() === 'theme' || topKey.toLowerCase() === 'theme_mode') {
             continue;
+        }
+
+        // global instance categories: only admins can manage channels
+        if (!isAdmin && (topKey === 'channels' || topKey === 'user_channels')) {
+            continue;
+        }
+
+        // for non-admins, the "core" section only exposes the per-user keys
+        // (the rest of "core" is instance-wide and would be ignored by the backend)
+        if (!isAdmin && topKey === 'core' && topValue && typeof topValue === 'object') {
+            const filtered = {};
+            for (const key of Object.keys(topValue)) {
+                if (PER_USER_CORE_KEYS.includes(key)) {
+                    filtered[key] = topValue[key];
+                }
+            }
+            topValue = filtered;
         }
 
         const category = {

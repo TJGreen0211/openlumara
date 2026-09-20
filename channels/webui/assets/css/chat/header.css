@@ -17,18 +17,6 @@ header {
         display: flex;
         align-items: center;
         gap: 8px;
-
-        .stream-state {
-            font-size: 0.85rem;
-            padding: 4px 17px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-md);
-            color: var(--text-primary);
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-        }
     }
 
     h1 {
@@ -104,11 +92,6 @@ header {
         &.disconnected {
             background: #f87171;
             box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
-        }
-        &.connecting {
-            background: #fbbf24;
-            box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
-            animation: pulse 1s infinite;
         }
     }
 }

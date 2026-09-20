@@ -70,27 +70,25 @@ class Config(core.module.Module):
         typed_value = core.commands._convert_type(value)
 
         try:
-            # Access the StorageDict instance from the config module
             target = core.config.config
             if target is None:
                 return self.result("Configuration is not loaded. Please restart or wait for system initialization.", False)
 
-            # Traverse the dictionary following the path
+            # read-only guard: reject attempts to set a whole settings group.
+            # we deliberately do NOT mutate the in-memory global config here -
+            # doing so would pollute every user's merged view for per-user keys
             current = target
-            for i, key in enumerate(path[:-1]):
-                # If the key doesn't exist or the current level isn't a dictionary,
-                # create a new dictionary to allow for deep nesting.
-                if key not in current or not isinstance(current[key], dict):
-                    current[key] = {}
+            for key in path[:-1]:
+                if not isinstance(current, dict) or key not in current or not isinstance(current[key], dict):
+                    break
                 current = current[key]
+            else:
+                if isinstance(current.get(path[-1]), dict):
+                    return self.result("That is a settings group. Please list its keys.", False)
 
-            if isinstance(current, dict):
-                return self.result("That is a settings group. Please list its keys.")
-
-            # Set the final value
-            current[path[-1]] = typed_value
-
-            # Persist changes to the appropriate config
+            # apply the change via the per-user/global config writer, which routes
+            # per-user keys to the calling user's config (core.current_user) and
+            # everything else to the global config, and persists to disk
             core.config.set_user_or_global(path, typed_value)
 
             return self.result(f"Config updated: {' -> '.join(path)} = {typed_value}")

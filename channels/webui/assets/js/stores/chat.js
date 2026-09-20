@@ -28,6 +28,8 @@ CHAT_STORE = {
 
     async load() {
         // called by Alpine.init
+        // always land in the store-default category ('general'),
+        // even if the backend's current chat belongs to a different category
         await this.reloadChats();
         await this.reloadCategories();
 
@@ -36,12 +38,14 @@ CHAT_STORE = {
 
         this.chat = result;
         this.selectedChat = result.id;
-        this.selectedCategory = result.category;
         this.turnHistory = result.turn_history;
         this.currentTokenUsage = result.token_usage;
 
         // ensure the chat exists in the visible sidebar list before scrolling
-        await this.ensureChatVisible(this.selectedChat);
+        // (only possible when it belongs to the currently selected category)
+        if (result.category === this.selectedCategory) {
+            await this.ensureChatVisible(this.selectedChat);
+        }
     },
 
     /* ----------------------
@@ -193,7 +197,8 @@ CHAT_STORE = {
 
         this.chat = result;
         this.selectedChat = result.id;
-        this.selectedCategory = result.category;
+        // note: deliberately not touching selectedCategory here - a plain
+        // data refresh must not change the category the user is looking at
 
         this.turnHistory = result.turn_history;
     },
@@ -260,10 +265,11 @@ CHAT_STORE = {
         const voice = Alpine.store('voice');
 
         if (voice.recording) {
-            // stops capture and commits the final full-recording transcription into the input
+            // stops capture and commits the accumulated transcription into the input
             await voice.stopRecording();
         } else {
-            // starts capture; live rolling-window previews flow into the input while recording
+            // starts capture; live previews show in the caption strip, the input
+            // field only receives the text once the session ends
             await voice.startRecording();
         }
     },

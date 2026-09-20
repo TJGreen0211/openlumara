@@ -72,7 +72,7 @@ The `ToolcallManager` is responsible for processing tool calls from the AI's res
    f. Add the tool response to the chat history.
 5. **Recursive Loop**: Send tool results back to AI via `send_stream()`.
    - If AI returns more tool calls → recurse.
-   - If AI returns content/reasoning → add to context, set `agentic_loop_start`, push if needed.
+    - If AI returns content/reasoning → add to context, set `context.agentic_loop_start` (lives on the Context so concurrent multi-user streams don't clobber it), push if needed.
    - If cancelled → announce cancellation and return.
 6. **Final Message**: After the last recursive call, add the final assistant message to context.
 

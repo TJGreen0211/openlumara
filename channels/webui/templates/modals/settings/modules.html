@@ -4,15 +4,16 @@
         <h3 x-text="$store.settings.categories[activeCategory].title"></h3>
         <p class="section-desc" x-text="$store.settings.categories[activeCategory].description"></p>
         
-        <!-- All modules (enabled first, then disabled) -->
-        <template x-for="module in [...$store.settings.categories[activeCategory].enabled, ...$store.settings.categories[activeCategory].disabled]" :key="module">
+        <!-- All modules (enabled first, then disabled). Non-admins see only enabled
+             modules (enable/disable is an instance-wide, admin-only control) -->
+        <template x-for="module in $store.settings.filterUnifiedList($store.settings.categories[activeCategory])" :key="module">
             <template x-if="$store.settings.showUnsafe || !$store.settings.categories[activeCategory].unsafeModules[module]">
                 <div class="unified-card" :class="{ 'disabled': !$store.settings.categories[activeCategory].enabled.includes(module), 'unsafe': $store.settings.categories[activeCategory].unsafeModules[module] }">
                     <div class="info" @click="activeModule = module">
                         <span type="button" class="btn" x-text="formatLabel(module)"></span>
                         <p class="description" x-html="renderMarkdown($store.settings.categories[activeCategory].descriptions[module]) || ''"></p>
                     </div>
-                    <button type="button" :class="{'toggle': true, 'toggle-off': $store.settings.categories[activeCategory].disabled.includes(module), 'toggle-on': $store.settings.categories[activeCategory].enabled.includes(module) }" 
+                    <button type="button" x-show="$store.settings.isAdmin" :class="{'toggle': true, 'toggle-off': $store.settings.categories[activeCategory].disabled.includes(module), 'toggle-on': $store.settings.categories[activeCategory].enabled.includes(module) }" 
                             @click="$store.settings.toggleEnabled(activeCategory, module)">
                     </button>
                 </div>
