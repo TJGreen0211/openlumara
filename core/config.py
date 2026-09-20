@@ -93,6 +93,11 @@ core_settings_schema = {
             "type": "text",
             "default": "",
             "description": "Optional vocabulary hint for speech recognition - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
+        },
+        "voice_url": {
+            "type": "text",
+            "default": "",
+            "description": "The URL of a whisper.cpp server endpoint (for example http://host:5002/inference) used for voice input. When set, transcriptions go to this server instead of the local engine or the AI's own /audio/transcriptions endpoint. The stt_whisper_server_url in Settings -> Channels -> webui takes priority when both are set."
         }
     },
     "model": {
