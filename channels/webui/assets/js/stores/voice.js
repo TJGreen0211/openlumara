@@ -40,6 +40,11 @@ const VOICE_STORE = {
     transcribing: false,
     error: null,
 
+    // 'dictation' (one-shot into the input field) or 'meeting' (long-running,
+    // compacts the buffer, streams committed segments to the meets store instead
+    // of the composer). meeting-only behaviour is gated on this everywhere.
+    mode: "dictation",
+
     _ctx: null,
     _stream: null,
     _source: null,
@@ -48,6 +53,9 @@ const VOICE_STORE = {
 
     _pcmBuf: null,
     _pcmLength: 0,
+    // monotonic count of every sample appended (never reduced by compaction) -
+    // the audio clock that survives buffer discards and freezes on pause
+    _totalSamples: 0,
     _rate: 16000,
 
     _session: 0,
@@ -74,6 +82,14 @@ const VOICE_STORE = {
     _asFloor: 0.01,        // persistent noise floor for its own voiced test
     _asLastVoiced: -1,     // sample index of the last voiced chunk
     _didVoice: false,      // has the user actually spoken in this session
+
+    // meeting-mode only: a lower effective vadAbsMin from the sensitivity
+    // slider (null = use the dictation default), plus the segment/gap callbacks
+    // wired up by the meets store (both reset in dictation mode)
+    meetingVadAbsMin: null,
+    _gapCount: 0,
+    onSegmentCommitted: null,
+    onGap: null,
 
     // increments every time the displayed preview text is accepted, so the
     // template can alternate two fade-in animations and restart them (a plain
@@ -179,7 +195,7 @@ const VOICE_STORE = {
         return (2 * common) / (aw.length + bw.length);
     },
 
-    async startRecording() {
+    async startRecording(opts = {}) {
         if (this.recording) {
             return true;
         }
@@ -187,6 +203,16 @@ const VOICE_STORE = {
         if (!this.isSupported()) {
             this.error = "Voice input is not supported in this browser.";
             return false;
+        }
+
+        const mode = (opts && opts.mode === "meeting") ? "meeting" : "dictation";
+        this.mode = mode;
+        // in dictation mode clear everything the meetings store may have set, so a
+        // stale callback can never fire on a plain dictation commit
+        if (mode !== "meeting") {
+            this.meetingVadAbsMin = null;
+            this.onSegmentCommitted = null;
+            this.onGap = null;
         }
 
         const chat = Alpine.store("chat");
@@ -197,6 +223,8 @@ const VOICE_STORE = {
         this.previewKey = 0;
         this.elapsedTick = 0;
         this._startedAt = Date.now();
+        this._totalSamples = 0;
+        this._gapCount = 0;
         this._segStart = 0;
         this._lastVoiced = -1;
         this._voicedSinceSend = false;
@@ -206,16 +234,23 @@ const VOICE_STORE = {
         this._asLastVoiced = -1;
         this._didVoice = false;
 
-        try {
-            this._stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true }
-            });
-        } catch (err) {
-            this.error = err.name === "NotAllowedError"
-                ? "Microphone access was denied. Please allow microphone access in your browser settings."
-                : `Failed to start recording: ${err.message}`;
-            return false;
+        // the meets store may already own the MediaStream (it also feeds a
+        // MediaRecorder from it to retain the audio on disk) - when a stream is
+        // supplied we skip getUserMedia entirely and just share it
+        let stream = (opts && opts.stream) || null;
+        if (!stream) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true }
+                });
+            } catch (err) {
+                this.error = err.name === "NotAllowedError"
+                    ? "Microphone access was denied. Please allow microphone access in your browser settings."
+                    : `Failed to start recording: ${err.message}`;
+                return false;
+            }
         }
+        this._stream = stream;
 
         try {
             const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -254,6 +289,43 @@ const VOICE_STORE = {
         return { floor: 0.01, silenceMs: 0, speechMs: 0 };
     },
 
+    // effective silence floor: meeting mode can lower it via the sensitivity
+    // slider to hear quiet / distant speakers; dictation always uses vadAbsMin
+    _effectiveVadAbsMin() {
+        return (this.mode === "meeting" && this.meetingVadAbsMin != null)
+            ? this.meetingVadAbsMin
+            : this.vadAbsMin;
+    },
+
+    // audio-clock elapsed time in seconds: total captured samples / rate. unlike
+    // _pcmLength it is never reduced by compaction, and it freezes while the
+    // context is suspended (pause), so it doubles as the meeting timer base and
+    // the source for per-segment timestamps
+    meetingElapsedSec() {
+        return this._totalSamples / this._rate;
+    },
+
+    // commit-and-discard: drop the buffer region [0, toSample) that has just been
+    // committed (its PCM is already copied into a separate `pcm` array), rebase the
+    // absolute sample indices that _vadUpdate/_appendPcm still read down by the
+    // discarded amount, and reset the open segment to the start of the surviving
+    // tail. the RELATIVE positions the VAD reads (pcmLength - segStart, pcmLength
+    // - lastVoiced) are preserved exactly, so split points are unchanged. meeting
+    // mode only - dictation keeps its one growing buffer (a dictation ends fast).
+    _compactTo(toSample) {
+        if (toSample >= this._pcmLength) {
+            this._pcmBuf = new Float32Array(0);
+            this._pcmLength = 0;
+        } else {
+            const keep = this._pcmBuf.slice(toSample, this._pcmLength);
+            this._pcmBuf = keep;
+            this._pcmLength = keep.length;
+        }
+        if (this._asLastVoiced >= toSample) this._asLastVoiced -= toSample; else this._asLastVoiced = -1;
+        if (this._lastVoiced >= toSample) this._lastVoiced -= toSample; else this._lastVoiced = -1;
+        this._segStart = 0;
+    },
+
     _appendPcm(chunk) {
         if (this._pcmBuf.length - this._pcmLength < chunk.length) {
             const bigger = new Float32Array(Math.max(this._pcmBuf.length * 2, this._pcmLength + chunk.length));
@@ -262,6 +334,7 @@ const VOICE_STORE = {
         }
         this._pcmBuf.set(chunk, this._pcmLength);
         this._pcmLength += chunk.length;
+        this._totalSamples += chunk.length;   // monotonic audio clock (survives compaction)
 
         // track the chunk's energy for silence detection (segment splitting)
         let sum = 0;
@@ -277,14 +350,16 @@ const VOICE_STORE = {
         // ends: autoStopSilenceMs after the last word, even if the previous
         // segment is still being transcribed. it tracks real voice activity, so it
         // never stops the user while they are still talking, and _didVoice keeps a
-        // fresh idle recording running until they actually speak.
+        // fresh idle recording running until they actually speak. meetings never
+        // auto-stop (explicit stop only), so the whole block is gated off there.
         this._asFloor = rms < this._asFloor ? rms : Math.min(0.02, this._asFloor * 1.002);
-        const asThreshold = Math.max(this.vadAbsMin, this._asFloor * this.vadFloorFactor);
+        const asThreshold = Math.max(this._effectiveVadAbsMin(), this._asFloor * this.vadFloorFactor);
         if (rms >= asThreshold) {
             this._asLastVoiced = this._pcmLength;
             this._didVoice = true;
         }
         if (
+            this.mode !== "meeting" &&
             this.recording && this._didVoice &&
             this._asLastVoiced !== -1 &&
             this._pcmLength - this._asLastVoiced >= (this.autoStopSilenceMs / 1000) * this._rate
@@ -305,7 +380,7 @@ const VOICE_STORE = {
 
         // low-envelope noise floor: snaps down to new quiet levels, drifts up very slowly
         vad.floor = rms < vad.floor ? rms : Math.min(0.02, vad.floor * 1.002);
-        const threshold = Math.max(this.vadAbsMin, vad.floor * this.vadFloorFactor);
+        const threshold = Math.max(this._effectiveVadAbsMin(), vad.floor * this.vadFloorFactor);
 
         if (rms >= threshold) {
             // voiced audio
@@ -343,7 +418,9 @@ const VOICE_STORE = {
 
         this._commitInFlight = this._commitSegment(segStart, newSegStart).finally(() => {
             if (session === this._session) {
-                this._segStart = newSegStart;
+                // compaction already reset _segStart to 0 in meeting mode; don't
+                // write back the stale absolute value captured before the discard
+                this._segStart = this.mode === "meeting" ? 0 : newSegStart;
                 if (this.recording) {
                     this._vad = this._newVad();
                 }
@@ -365,29 +442,67 @@ const VOICE_STORE = {
             return;
         }
 
-        const pcm = this._pcmBuf.slice(fromSample, toSample); // copy; the buffer keeps growing
+        // absolute timeline offset of this segment's first sample, computed from
+        // the monotonic clock BEFORE compaction shifts the buffer. (total - bufLen)
+        // is exactly how many samples have been discarded so far, so the sum lands
+        // on the segment's real position on the (virtual) timeline.
+        const tsSec = ((this._totalSamples - this._pcmLength) + fromSample) / rate;
+
+        const pcm = this._pcmBuf.slice(fromSample, toSample); // copy the source region out first
+        // meeting mode: the committed region is now safely copyable away, so drop
+        // it and keep the buffer O(one segment) instead of O(the whole meeting)
+        if (this.mode === "meeting") {
+            this._compactTo(toSample);
+        }
         this.transcribing = true;
+
+        // encode once - the retry below re-POSTs this exact wav
+        const wav = pcmToWavBase64(pcm, rate, this.targetRate);
+        const doPost = () => simpleApiPost("/api/voice/transcribe", {
+            audio_data: wav,
+            format: "wav",
+            purpose: "commit"
+        });
+        const acceptText = (text) => {
+            if (text) {
+                this._committed = this._committed ? `${this._committed} ${text}`.trim() : text;
+                this._previewFails = 0;
+            }
+            // meetings stream each committed segment to the meets store (dictation
+            // has no callback). a success with empty text is silence, not a gap.
+            if (this.mode === "meeting" && text && this.onSegmentCommitted) {
+                this.onSegmentCommitted({ tsSec, text });
+            }
+        };
+
         try {
-            const wav = pcmToWavBase64(pcm, rate, this.targetRate);
-            const result = await simpleApiPost("/api/voice/transcribe", {
-                audio_data: wav,
-                format: "wav",
-                purpose: "commit"
-            });
+            const result = await doPost();
             const text = (result && result.text) ? String(result.text).trim() : "";
             // only a brand-new recording invalidates this commit
             if (session !== this._session) {
                 return;
             }
-            if (text) {
-                this._committed = this._committed ? `${this._committed} ${text}`.trim() : text;
-                this._previewFails = 0;
-            }
+            acceptText(text);
         } catch (err) {
             if (session !== this._session) {
                 return;
             }
-            this.error = `Transcription failed: ${err}`;
+            if (this.mode === "meeting") {
+                // a meeting must survive a failed commit: retry once, then leave a
+                // visible gap marker (the audio is already in IndexedDB). never set
+                // this.error - a hiccup must not tear down the whole session.
+                try {
+                    const retry = await doPost();
+                    const text = (retry && retry.text) ? String(retry.text).trim() : "";
+                    if (session === this._session) {
+                        acceptText(text);
+                    }
+                } catch (err2) {
+                    this.onGap && this.onGap({ tsSec, index: (this._gapCount = (this._gapCount || 0) + 1) });
+                }
+            } else {
+                this.error = `Transcription failed: ${err}`;
+            }
         } finally {
             if (session === this._session) {
                 this.transcribing = false;
@@ -398,6 +513,12 @@ const VOICE_STORE = {
     // sends the most recent window of the open segment as a live preview and replaces the tail
     _tickPreview(session) {
         if (!this.recording || session !== this._session) {
+            return;
+        }
+        if (this.mode === "meeting") {
+            // meetings never send preview requests at all (commits only); the
+            // caption strip shows the last committed segment instead, driven by
+            // the meets store. skip the whole preview machinery here.
             return;
         }
         if (this._previewStyle() === "off") {
@@ -496,8 +617,11 @@ const VOICE_STORE = {
         this._lastWritten = next;
     },
 
-    // stops recording and commits the remaining open segment; resolves with the final text
-    async stopRecording() {
+    // drains the session: stops capture, waits for any in-flight commit, commits
+    // the remaining open segment (the tail), releases the audio, and - for
+    // dictation only (writeToInput) - writes the committed text into the input
+    // field. shared by stopRecording (dictation) and stopMeetingRecording (meeting)
+    async _finishCapture(writeToInput) {
         if (!this.recording) {
             return this._fullText();
         }
@@ -519,6 +643,7 @@ const VOICE_STORE = {
         }
 
         const rate = this._rate;
+        const tailTsSec = ((this._totalSamples - this._pcmLength) + this._segStart) / rate;
         const pcm = this._pcmBuf ? this._pcmBuf.slice(this._segStart, this._pcmLength) : new Float32Array(0);
 
         this._releaseAudio();
@@ -527,7 +652,7 @@ const VOICE_STORE = {
 
         if (pcm.length < rate * 0.4) {
             // nothing meaningful left in the open segment
-            if (!this._committed && this.preview) {
+            if (writeToInput && !this._committed && this.preview) {
                 // salvage the last preview so a short utterance isn't lost
                 this._committed = this.preview;
                 this.preview = "";
@@ -547,23 +672,57 @@ const VOICE_STORE = {
             const text = (result && result.text) ? String(result.text).trim() : "";
             if (text) {
                 this._committed = this._committed ? `${this._committed} ${text}`.trim() : text;
-            } else if (!this._committed && this.preview) {
+                this._previewFails = 0;
+                if (this.mode === "meeting" && this.onSegmentCommitted) {
+                    this.onSegmentCommitted({ tsSec: tailTsSec, text });
+                }
+            } else if (writeToInput && !this._committed && this.preview) {
                 this._committed = this.preview;
                 this.preview = "";
             }
-            this._writeInput();
-        } catch (err) {
-            this.error = `Transcription failed: ${err}`;
-            if (!this._committed && this.preview) {
-                this._committed = this.preview;
-                this.preview = "";
+            if (writeToInput) {
                 this._writeInput();
+            }
+        } catch (err) {
+            if (this.mode === "meeting") {
+                // the tail is the user's last words - never drop it silently. a
+                // failed tail commit becomes a gap marker instead of an error.
+                this.onGap && this.onGap({ tsSec: tailTsSec, index: (this._gapCount = (this._gapCount || 0) + 1) });
+            } else {
+                this.error = `Transcription failed: ${err}`;
+                if (!this._committed && this.preview) {
+                    this._committed = this.preview;
+                    this.preview = "";
+                    this._writeInput();
+                }
             }
         } finally {
             this.transcribing = false;
         }
 
         return this._fullText();
+    },
+
+    // stops dictation capture and writes the committed text into the input field
+    async stopRecording() {
+        return this._finishCapture(true);
+    },
+
+    // stops meeting capture and commits the tail but NEVER writes the composer -
+    // the meets store owns the transcript and renders it as its own message
+    async stopMeetingRecording() {
+        return this._finishCapture(false);
+    },
+
+    // pause/resume the live capture. suspending the AudioContext freezes the
+    // worklet, so _totalSamples stops advancing on its own - the pause is
+    // excluded from the meeting audio clock for free
+    async pauseCapture() {
+        return this._ctx ? this._ctx.suspend() : null;
+    },
+
+    async resumeCapture() {
+        return this._ctx ? this._ctx.resume() : null;
     },
 
     _releaseAudio() {

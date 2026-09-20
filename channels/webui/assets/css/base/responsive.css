@@ -118,11 +118,6 @@
                 height: 14px;
             }
         }
-
-        .stream-state {
-            font-size: 0.75rem;
-            padding: 3px 10px;
-        }
     }
 
     /* Input area */
@@ -168,11 +163,6 @@
         right: 0;
     }
 
-    .stream-state {
-        font-size: 0.6rem !important;
-        padding: 7px !important;
-    }
-
     /* Ensure stop button SVGs render correctly on mobile */
     #stop svg {
         width: 20px !important;
@@ -186,11 +176,6 @@
 @media (max-width: 400px) {
     header h1 {
         font-size: 1rem;
-    }
-
-    header .right .stream-state {
-        font-size: 0.75rem;
-        padding: 3px 10px;
     }
 
     .message {

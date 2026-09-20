@@ -35,15 +35,16 @@
 
 <button id="voice-record"
     aria-label="Voice input"
-    :title="$store.voice.error || ($store.voice.recording ? 'Click to stop recording' : ($store.voice.transcribing ? 'Transcribing...' : 'Click to start voice input'))"
-    :disabled="$store.stream.state != 'idle' || $store.voice.transcribing"
+    :title="$store.meets.active ? 'Mic in use by the active meeting' : ($store.voice.error || ($store.voice.recording ? 'Click to stop recording' : ($store.voice.transcribing ? 'Transcribing...' : 'Click to start voice input')))"
+    :disabled="$store.stream.state != 'idle' || $store.voice.transcribing || $store.meets.active"
     :class="{
-        'recording': $store.voice.recording,
-        'loading': $store.voice.transcribing
+        'recording': $store.voice.recording && !$store.meets.active,
+        'loading': $store.voice.transcribing,
+        'meeting-locked': $store.meets.active
     }"
     x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled"
     @click="await $store.chat.transcribeVoice()">
-    <svg x-show="!$store.voice.recording && !$store.voice.transcribing"
+    <svg x-show="(!$store.voice.recording && !$store.voice.transcribing) || $store.meets.active"
         xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -51,7 +52,7 @@
         <line x1="12" y1="19" x2="12" y2="23"/>
         <line x1="8" y1="23" x2="16" y2="23"/>
     </svg>
-    <svg x-show="$store.voice.recording"
+    <svg x-show="$store.voice.recording && !$store.meets.active"
         xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
         <rect x="6" y="6" width="12" height="12" rx="2"/>
     </svg>
@@ -106,11 +107,70 @@ await simpleSocketSend({
     -->
 </button>
 
+<!-- meeting mode: while a meeting is live this replaces the #voice-live slot with a
+     recording control bar; after it stops the completion card takes the same slot.
+     both are absolutely positioned above the input bar exactly like #voice-live -->
+<div id="meet-bar" x-cloak
+    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.meets.active">
+    <div class="meet-row">
+        <span class="meet-dot"></span>
+        <span class="meet-rec">REC</span>
+        <span class="meet-timer" x-text="$store.meets.timerLabel()"></span>
+        <span class="meet-words" x-text="$store.meets.wordCount + ' words'"></span>
+        <span class="meet-sens">
+            <label for="meet-sens-range">Sensitivity</label>
+            <input id="meet-sens-range" type="range" min="1" max="5" step="1"
+                :value="$store.meets.sensitivity"
+                @input="$store.meets.setSensitivity($event.target.value)"
+                :title="'Mic sensitivity ' + $store.meets.sensitivity + '/5 — lower for quiet/distant speakers'">
+        </span>
+        <template x-if="!$store.meets.paused">
+            <button class="meet-btn" @click="await $store.meets.pause()" title="Pause recording">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+            </button>
+        </template>
+        <template x-if="$store.meets.paused">
+            <button class="meet-btn" @click="await $store.meets.resume()" title="Resume recording">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 20 12 7 20 7 4"/></svg>
+            </button>
+        </template>
+        <button class="meet-btn meet-stop" @click="await $store.meets.stopMeeting()" title="Stop and save the meeting">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+            <span>Stop</span>
+        </button>
+    </div>
+    <div class="meet-strip">
+        <span class="meet-strip-text"
+            x-text="$store.meets.lastSegmentText || 'Listening…'"
+            :style="$store.meets.stripKey % 2 === 1 ? 'animation: meetFadeA 0.25s ease' : 'animation: meetFadeB 0.25s ease'"></span>
+    </div>
+</div>
+
+<div id="meet-card" x-cloak
+    x-show="$store.meets.finished && !$store.meets.dismissed">
+    <div class="meet-card-title">
+        <span class="meet-card-check"></span>
+        Recorded <span x-text="$store.meets.durationLabel()"></span> &middot; <span x-text="$store.meets.wordCount + ' words'"></span>
+    </div>
+    <template x-if="$store.meets.gaps.length > 0">
+        <div class="meet-card-gaps"
+            x-text="$store.meets.gaps.length + ($store.meets.gaps.length === 1 ? ' segment was ' : ' segments were ') + 'missed — audio kept locally in the recording'"></div>
+    </template>
+    <div class="meet-card-actions">
+        <button class="meet-card-btn primary" @click="await $store.meets.generateNotes()" x-show="$store.stream.state === 'idle'">Generate notes</button>
+        <button class="meet-card-btn" @click="$store.meets.viewTranscript()">View transcript</button>
+        <button class="meet-card-btn" @click="await $store.meets.downloadRecording()">Download recording</button>
+        <button class="meet-card-btn meet-card-close" @click="$store.meets.dismissCard()" title="Dismiss">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+    </div>
+</div>
+
 <!-- live voice preview: shown above the input bar while recording. the textarea
      itself only receives committed segments, so this is where the live tail lives
      (or just a listening timer when voice_preview_style is "off") -->
 <p id="voice-live" x-cloak
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.recording">
+    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.recording && !$store.meets.active">
     <template x-if="$store.settings.settings.channels.settings.webui.voice_preview_style !== 'off'">
         <span class="voice-live-text"
             x-text="$store.voice.preview || 'listening…'"

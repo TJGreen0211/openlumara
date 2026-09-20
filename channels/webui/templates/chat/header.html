@@ -17,9 +17,14 @@
               x-cloak></span>
     </div>
     <div class="right">
-        {% if config.get("enable_streaming_state_display") %}
-            <span x-text="$store.stream.state.replace('_', ' ')" class="stream-state" x-show="!$store.ui.isMobile" x-cloak></span>
-        {% endif %}
+        <button class="btn" id="record-meet-btn"
+            x-show="$store.settings.settings.api.voice_enabled && !$store.meets.active"
+            x-cloak
+            :disabled="$store.stream.state !== 'idle' || $store.voice.recording || $store.meets.active"
+            title="Record a meeting — creates a new chat and transcribes in real time"
+            @click="await $store.meets.startMeeting()">
+            {% include 'svg/record.svg' %}
+        </button>
 
         <!-- TODO
         <button class="btn" id="search-btn" title="Search messages (Ctrl+F)">

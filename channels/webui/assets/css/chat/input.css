@@ -389,3 +389,261 @@ body.token-bar-hidden #chat-window #input {
     }
 }
 
+/* ==========================================================================
+ *  Meeting Recording Bar + Completion Card
+ *
+ *  while a meeting is live the #meet-bar control strip sits where #voice-live
+ *  does (absolutely above the input bar) and streams the last committed segment;
+ *  after stop the #meet-card completion card takes the same slot. the dictation
+ *  voice strip/button are hidden/locked while a meeting owns the mic (see the
+ *  #voice-live / #voice-record gating in the template), so neither overlaps them
+ * ========================================================================== */
+
+#chat-window #meet-bar {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 10px;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: calc(100% - 20px);
+    z-index: 6;
+
+    .meet-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        font-size: 13px;
+        color: var(--text-primary);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        white-space: nowrap;
+    }
+
+    .meet-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--error);
+        flex-shrink: 0;
+        animation: meetingPulse 1.5s ease-in-out infinite;
+    }
+
+    .meet-rec {
+        color: var(--error);
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        font-size: 11px;
+    }
+
+    .meet-timer,
+    .meet-words {
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+    }
+
+    .meet-sens {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 4px;
+        color: var(--text-muted);
+        font-size: 11px;
+        white-space: nowrap;
+
+        input {
+            width: 72px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+    }
+
+    .meet-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: all 0.15s ease;
+
+        svg { width: 14px; height: 14px; }
+
+        &:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+    }
+
+    .meet-stop {
+        gap: 5px;
+        width: auto;
+        height: 28px;
+        padding: 0 12px 0 10px;
+        border-radius: 999px;
+        background: var(--error);
+        border-color: var(--error);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+
+        svg { width: 11px; height: 11px; }
+
+        &:hover {
+            filter: brightness(1.12);
+            color: #fff;
+            border-color: var(--error);
+        }
+    }
+
+    .meet-strip {
+        margin: 0;
+        padding: 4px 14px;
+        font-size: 12px;
+        color: var(--text-muted);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+
+        .meet-strip-text {
+            font-style: italic;
+        }
+    }
+}
+
+@keyframes meetingPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+    50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* two identical fade-in animations so the strip can alternate between them to
+   re-trigger a fade on every new committed segment (mirrors the voice strip) */
+@keyframes meetFadeA {
+    from { opacity: 0.35; transform: translateY(1px); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes meetFadeB {
+    from { opacity: 0.35; transform: translateY(1px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* completion card: shows after stop until dismissed */
+#chat-window #meet-card {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 340px;
+    max-width: calc(100% - 20px);
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    z-index: 7;
+
+    .meet-card-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+
+        .meet-card-check {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            flex-shrink: 0;
+            position: relative;
+
+            &::after {
+                content: '';
+                position: absolute;
+                left: 5px;
+                top: 2.5px;
+                width: 4px;
+                height: 8px;
+                border: solid var(--bg-primary);
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+            }
+        }
+    }
+
+    .meet-card-gaps {
+        font-size: 12px;
+        color: var(--error);
+    }
+
+    .meet-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+
+        .meet-card-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 12.5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+
+            &:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+        }
+
+        .meet-card-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--bg-primary);
+
+            &:hover {
+                filter: brightness(1.12);
+                color: var(--bg-primary);
+            }
+        }
+
+        .meet-card-close {
+            margin-left: auto;
+            width: 30px;
+            padding: 6px;
+        }
+    }
+}
+
+/* the dictation mic button is locked (grey, no pulse) while a meeting owns the mic */
+#chat-window #input #voice-record.meeting-locked {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: var(--text-muted);
+}
+
