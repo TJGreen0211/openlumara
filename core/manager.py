@@ -28,8 +28,6 @@ class Manager:
         self.user_modules = {}
         self.broken_modules = [] # tracks modules that threw errors and skips them so that it doesn't break the whole framework
 
-        self.tools = []
-        self.tool_names = []
         self.pure_mode = False
         self.coding_mode = False
 
@@ -38,6 +36,25 @@ class Manager:
 
         self.log_buffer = []
         self.started = False
+
+    # --- tools properties ---
+    @property
+    def tools(self):
+        return self.channel.tool_loader.active_tools if self.channel else []
+
+    @tools.setter
+    def tools(self, value):
+        if self.channel:
+            self.channel.tool_loader.active_tools = value
+
+    @property
+    def tool_names(self):
+        return self.channel.tool_loader.active_names if self.channel else []
+
+    @tool_names.setter
+    def tool_names(self, value):
+        if self.channel:
+            self.channel.tool_loader.active_names = value
 
     def _remove_async_task(self, task):
         self._async_tasks.discard(task)
@@ -256,6 +273,25 @@ class Manager:
         if enabled_user_modules:
             self.log("core", "Loading user modules..")
             await self._load_modules(self.modules, user_modules, enabled_user_modules, is_user_modules=True)
+
+        # If dynamic tool loading is disabled, load all tools at startup
+        if not core.config.get("model", "dynamic_tool_loading", default=True):
+            self.log("core", "Dynamic tool loading is disabled. Loading all tools at startup.")
+            for channel in self.channels.values():
+                channel.tool_loader.load_all_tools()
+        else:
+            # Dynamic loading is on: preload the hardcoded default tools on top
+            # of the meta tools so a few frequently-used tools are always ready.
+            for channel in self.channels.values():
+                # all modules are loaded now: sync the tools_load description
+                # with the final list of enabled modules
+                channel.tool_loader.refresh_meta_tool_descriptions()
+                channel.tool_loader.load_default_tools()
+                # Now that the catalog is populated, restore any tools that were
+                # persisted in the auto-resumed chat's metadata. During autoload()
+                # the catalog was still empty so the initial restore_chat_tools()
+                # call in _set_current() couldn't load anything.
+                channel.tool_loader.restore_chat_tools()
 
         if not self.args.disable_auto_installer:
             # uninstall dependencies for disabled modules (only if deps are still installed)
@@ -518,6 +554,10 @@ class Manager:
         # re-add the module tools based on the new state (after on_ready's modifications)
         await self.load_module_tools(module)
 
+        # make sure any hardcoded default tools belonging to this module get re-preloaded
+        for channel in self.channels.values():
+            channel.tool_loader.load_default_tools()
+
         return True
 
     async def get_system_prompt(self):
@@ -531,8 +571,8 @@ class Manager:
         system_prompt = []
 
         active_character = None
-        if self.channel:
-            active_character = self.channel.context.chat.get("metadata").get("character")
+        if self.channel and self.channel.context.chat.current is not None:
+            active_character = (self.channel.context.chat.get("metadata") or {}).get("character")
 
         # automatically insert system prompts returned by modules (such as memory)
         sysprompt_top = []
@@ -598,8 +638,8 @@ class Manager:
 
         # don't return endprompt if characters module is active
         active_character = None
-        if self.channel:
-            active_character = self.channel.context.chat.get("metadata").get("character")
+        if self.channel and self.channel.context.chat.current is not None:
+            active_character = (self.channel.context.chat.get("metadata") or {}).get("character")
 
         # automatically insert system prompts returned by modules (such as memory)
         histend_prompt = []
@@ -650,179 +690,18 @@ class Manager:
         return settings_structure
 
     # --- tools ---
-    def parse_tool_docstring(self, docstring):
-        """
-        Parses Google-style docstring to extract param descriptions
-        and returns a cleaned docstring without the Args/Returns sections.
-        """
-        if not docstring:
-            return {}, ""
-
-        descriptions = {}
-        lines = docstring.split("\n")
-        clean_lines = []
-
-        skip_section = False
-        section_headers = {"Args:", "Returns:", "Raises:", "Note:", "Example:"}
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Check if we're entering a section to skip
-            if any(stripped.startswith(header) for header in section_headers):
-                skip_section = True
-                continue
-
-            # Check if we're still in a skip section (indented line)
-            if skip_section:
-                # Empty line or unindented line means end of section
-                if stripped == "" or (line and not line[0].isspace() and stripped):
-                    # But if it's another section header, stay in skip mode
-                    if not any(stripped.startswith(h) for h in section_headers):
-                        skip_section = False
-                        if stripped:
-                            clean_lines.append(line)
-                continue
-
-            clean_lines.append(line)
-
-        # Now parse Args section separately for descriptions
-        in_args = False
-        current_param = None
-        current_desc = []
-
-        for line in lines:
-            stripped = line.strip()
-
-            if stripped.startswith("Args:"):
-                in_args = True
-                continue
-
-            if in_args:
-                if any(stripped.startswith(h) for h in {"Returns:", "Raises:", "Note:", "Example:"}):
-                    if current_param and current_desc:
-                        descriptions[current_param] = " ".join(current_desc)
-                    break
-
-                if not stripped:
-                    continue
-
-                # Match: "param_name: description" or "param_name (type): description"
-                match = re.match(r"(\w+)(?:\s*\([^)]*\))?\s*:\s*(.+)", stripped)
-                if match:
-                    # Save previous param if exists
-                    if current_param and current_desc:
-                        descriptions[current_param] = " ".join(current_desc)
-
-                    current_param = match.group(1)
-                    current_desc = [match.group(2)]
-                elif current_param and stripped:
-                    # Continuation of previous param description
-                    current_desc.append(stripped)
-
-        # Save last param
-        if current_param and current_desc:
-            descriptions[current_param] = " ".join(current_desc)
-
-        # Clean up the description (remove leading/trailing whitespace, empty lines)
-        clean_doc = "\n".join(clean_lines).strip()
-
-        return descriptions, clean_doc
-
     async def load_module_tools(self, module):
-        for func_name in type(module).__dict__:
-            if func_name.startswith("_"):
-                # skip private methods and other private properties
-                continue
-
-            if func_name == "result" or func_name.startswith("on_"):
-                # builtin function
-                continue
-
-            if func_name in module.disabled_tools:
-                continue
-
-            try:
-                func_obj = getattr(module, func_name)
-            except:
-                continue
-
-            if not callable(func_obj):
-                continue
-
-            if getattr(func_obj, "_is_command", False):
-                # decorated command in a module
-                continue
-
-            # if there's a docstring, make sure to pass that on to the LLM
-            docstring = ""
-            if "__doc__" in dir(func_obj):
-                param_descriptions, docstring = self.parse_tool_docstring(func_obj.__doc__)
-
-            # dynamically load class methods from classes
-            func_params = dict(inspect.signature(func_obj).parameters)
-
-            func_params_translated = {}
-            required_args = []
-            # add method arguments (parameters) to the tool call object
-            for param_name, param in func_params.items():
-                # detect the type of a parameter
-                param_annotation = param.annotation
-                if param_annotation == inspect.Parameter.empty:
-                    param_type = "string"
-                elif param_annotation == str:
-                    param_type = "string"
-                elif param_annotation == int:
-                    param_type = "integer"
-                elif param_annotation == bool:
-                    param_type = "boolean"
-                elif param_annotation == list:
-                    param_type = "array"
-                elif param_annotation == dict:
-                    param_type = "object"
-
-                # add params without a default value to the required params list
-                if param.default == inspect.Parameter.empty:
-                    required_args.append(param_name)
-
-                func_param_desc = param_descriptions.get(param_name)
-                func_params_translated[param_name] = {"type": param_type}
-
-                # only insert param description if present
-                if func_param_desc:
-                    func_params_translated[param_name]["description"] = func_param_desc
-
-            # build toolcall object
-            tool = {
-                "type": "function",
-                "function": {
-                    "name": f"{module.name}_{func_name}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": func_params_translated,
-                        "required": required_args,
-                        "additionalProperties": False,
-                    },
-                    "strict": True,
-                },
-            }
-
-            # only insert docstring if it's present
-            if docstring:
-                tool["function"]["description"] = docstring
-
-            self.tools.append(tool)
-            self.tool_names.append(tool["function"]["name"])
+        """Register a module's tools in the catalog"""
+        for channel in self.channels.values():
+            channel.tool_loader.register_module(module)
+            # keep the dynamic tools_load description in sync with enabled modules
+            channel.tool_loader.refresh_meta_tool_descriptions()
 
     async def unload_module_tools(self, module):
-        """unloads all modules belonging to the specified module"""
-
-        self.tools = [t for t in self.tools
-                     if not t["function"]["name"].startswith(f"{module.name}_")]
-        self.tool_names = [n for n in self.tool_names
-                          if not n.startswith(f"{module.name}_")]
-        module.disabled_tools = []
-
+        """Unregister a module's tools from the catalog and active set."""
+        for channel in self.channels.values():
+            channel.tool_loader.unregister_module(module)
+            channel.tool_loader.refresh_meta_tool_descriptions()
         return True
 
     async def add_module_class(self, module, is_user_module=False):

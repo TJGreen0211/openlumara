@@ -130,7 +130,11 @@ class Commands:
         "modules": "lists modules",
         "module": "enables/disables a module by name",
         "channel": "toggles a channel",
-        "tools": "lists tools available to the AI",
+        "tools": {
+            "": "lists tools available to the AI",
+            "search <query>": "searches the tool catalog",
+            "load <name> [name2 ...]": "loads tools by exact name",
+        },
         "__SPACER__4": "",
         # system
         "config": "explore, view, and set config settings",
@@ -483,24 +487,76 @@ class Commands:
     
     async def cmd_tools(self, args: list):
         if not core.config.get("model").get("use_tools", False):
-            return "tools are turned off"
+            return "Tools are turned off globally."
+
+        dynamic_loading = core.config.get("model", "dynamic_tool_loading", default=True)
         
+        if args:
+            subcmd = args[0].lower()
+
+            # /tools load <module_name>
+            if subcmd == "load":
+                if not dynamic_loading:
+                    return "Dynamic tool loading is disabled. All tools are already loaded at startup."
+                module_names = args[1:]
+                if not module_names:
+                    return "Usage: /tools load <module_name> [module_name2 ...]"
+                lines = [f"▣ Load result for {len(module_names)} module(s):"]
+                for module_name in module_names:
+                    result = await self.channel.tool_loader.tools_load(module_name)
+                    if result.get("status") == "success":
+                        lines.append(f"  ✔ {module_name} tools loaded")
+                    else:
+                        lines.append(f"   ✖ Failed to load {module_name} tools!")
+                return "\n".join(lines)
+
+            else:
+                return f"Unknown subcommand: {subcmd}. Use /tools load, or /tools (no args) for help."
+
+        # No subcommand — show active + catalog
         tool_map = {}
         for tool in self.channel.manager.tools:
             tool_name = tool.get("function").get("name")
-            module_name = tool_name.split("_")[0]
-            
-            if module_name not in tool_map.keys():
+            module_name = "core" if tool_name in ("tools_load",) else tool_name.split("_")[0]
+
+            if module_name not in tool_map:
                 tool_map[module_name] = []
             tool_map[module_name].append(tool_name)
-        
-        tool_map_display = []
-        tool_map_display.append("enabled tools:")
-        for module_name, tools in tool_map.items():
-            tools_display = "\n".join(tools)
-            tool_map_display.append(f"== {module_name} ==\n{tools_display}")
-        
-        return "\n\n".join(tool_map_display)
+
+        lines = []
+        lines.append("== Active Tools ==")
+        if tool_map:
+            for mod, tools in sorted(tool_map.items()):
+                lines.append(f"  ▸ {mod}:")
+                for t in sorted(tools):
+                    lines.append(f"    • {t}")
+        else:
+            lines.append("  (none)")
+
+        # Show catalog only if dynamic loading is enabled
+        if dynamic_loading:
+            catalog_by_module = {}
+            for name, entry in self.channel.tool_loader.catalog.items():
+                if name in self.channel.tool_loader.active_names:
+                    # already loaded (including preloaded default tools)
+                    continue
+                mod = entry["module"]
+                if mod not in catalog_by_module:
+                    catalog_by_module[mod] = []
+                catalog_by_module[mod].append(name)
+
+            lines.append("\n== Available Tools (Not Loaded) ==")
+            if catalog_by_module:
+                for mod, names in sorted(catalog_by_module.items()):
+                    lines.append(f"  ▸ {mod}:")
+                    for n in sorted(names):
+                        lines.append(f"    • {n}")
+            else:
+                lines.append("  (none)")
+        else:
+            lines.append("\nℹ Dynamic tool loading is disabled. All tools are pre-loaded at startup.")
+
+        return "\n".join(lines)
     
     async def cmd_config(self, args: list):
         """explore, view, and set config settings"""

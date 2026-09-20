@@ -68,6 +68,9 @@ class Chat:
     # ------------------
     async def _set_current(self, index: int):
         """load a chat and its messages by index"""
+        old_id = self.data[self.current]["id"] if self.current is not None else None
+        new_id = self.data[index]["id"]
+
         self.current = index
 
         # store current index into a simple file, for chat autoloading later
@@ -77,6 +80,12 @@ class Chat:
 
         # load this chat's Messages object
         self.messages = core.messages.Messages(self.channel, self)
+
+        # reset active tools when switching to a different chat, then restore
+        # the tools this chat had loaded before, so it picks up where it left off
+        if old_id != new_id:
+            self.channel.tool_loader.reset_for_new_chat()
+            self.channel.tool_loader.restore_chat_tools()
 
     def _find_index(self, id: str):
         """find index of the chat with that ID"""
@@ -136,6 +145,30 @@ class Chat:
             return False
 
         return fingerprint == core.config.get("model", "name")
+
+    def get_loaded_modules(self):
+        """return the list of modules whose tools must be persisted in this chat"""
+        if self.current is None:
+            return []
+
+        metadata = self.data[self.current].get("metadata")
+
+        modules = metadata.get("loaded_modules", [])
+        return modules
+
+    def set_loaded_modules(self, names):
+        """persist a list of module names into this chat's metadata"""
+        if self.current is None:
+            return
+
+        chat = self.data[self.current]
+        metadata = chat.get("metadata")
+
+        if metadata.get("loaded_modules", []) == names:
+            return  # no change, skip the disk write
+
+        metadata["loaded_modules"] = names
+        self.data.save()
 
     def _migrate_if_needed(self):
         """Automatically migrate old format chat files if detected."""
@@ -298,6 +331,11 @@ class Chat:
     async def clear(self):
         if self.current is None:
             raise Exception("No chat is currently loaded!")
+
+        # Reset active tools on clear, and wipe the persisted module list so
+        # this chat starts fresh the next time it's loaded
+        self.channel.tool_loader.reset_for_new_chat()
+        self.set_loaded_modules([])
 
         await self.messages.clear()
 

@@ -43,12 +43,13 @@ class Context:
 
         # Configuration
         max_messages = int(core.config.get("api").get("max_messages", 200))
-        max_tokens = int(core.config.get("api").get("max_context", 8192))
+        max_tokens = int(core.config.get("api").get("max_context", 16768))
         system_role = "system" if not self.channel.manager.API.supports_developer_role else "developer"
         dev_role = "developer" if self.channel.manager.API.supports_developer_role else "user"
 
         # 1. Prepare Components
         system_msg = []
+        content = None
         if system_prompt:
             try:
                 content = await self.channel.manager.get_system_prompt()
@@ -265,7 +266,7 @@ class Context:
         message_hist_size_tokens = await self.count_tokens(message_history)
         message_hist_size_words = len(str(message_history).split())
         
-        histend_size_tokens = await self.count_tokens(await self.get(system_prompt=False, end_prompt=True, history=False))
+        histend_size_tokens = await self.count_tokens(histend)
         histend_size_words = len(str(histend).split()) if histend else 0
 
         tool_array_size_tokens = await self.count_tokens(self.channel.manager.tools)

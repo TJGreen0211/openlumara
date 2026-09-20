@@ -48,7 +48,9 @@ RUN apt-get install -y --no-install-recommends \
 RUN apt-get clean
 
 # create user and set up virtual environment
-RUN useradd -m -u 1000 -s /bin/bash lumara && chown -R 1000:1000 /home/lumara
+ARG UID=1000
+ARG GID=1000
+RUN useradd -m -u "${UID}" -s /bin/bash lumara && chown -R "${UID}:${GID}" /home/lumara
 USER lumara
 
 # set environment

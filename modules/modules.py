@@ -15,15 +15,21 @@ class Modules(core.module.Module):
         }
     }
 
-    async def on_startup(self):
+    async def on_ready(self):
         if not self.config.get("allow_ai_to_toggle"):
             self.disabled_tools.append("toggle")
 
     async def on_system_prompt(self):
+        if core.config.get("model", "dynamic_tool_loading"):
+            # if dynamic tool loading is on, the list of enabled modules gets sent in the tool prompt
+            # so don't send a duplicate in the system prompt
+            return None
+
         module_list = {
             "enabled": ", ".join(core.config.get("modules", "enabled", default=[])),
             "disabled": ", ".join(core.config.get("modules", "disabled", default=[]))
         }
+
         return str(module_list)
 
     async def toggle(self, name: str):

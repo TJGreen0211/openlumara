@@ -226,17 +226,20 @@ class SandboxedShell(core.module.Module):
             self.log("sandbox_shell", "buildx not found, using legacy builder.")
             build_env = os.environ.copy()
 
+        uid = self.config.get("run_as_user") or self.host_user_uid
+        gid = self.config.get("run_as_user") or self.host_user_gid
+
         try:
             if sys.platform == "win32":
                 process = await asyncio.create_subprocess_exec(
-                    self.runtime, 'build', '-t', full_image, '-f', dockerfile_path, '.',
+                    self.runtime, 'build', '--build-arg', f"UID={uid}", '--build-arg', f"GID={uid}", '-t', full_image, '-f', dockerfile_path, '.',
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     env=build_env
                 )
             else:
                 process = await asyncio.create_subprocess_exec(
-                    self.runtime, 'build', '-t', full_image, '-f', dockerfile_path, '.',
+                    self.runtime, 'build', '--build-arg', f"UID={uid}", '--build-arg', f"GID={uid}", '-t', full_image, '-f', dockerfile_path, '.',
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     preexec_fn=os.setsid,
@@ -324,7 +327,11 @@ class SandboxedShell(core.module.Module):
         uid = self.config.get("run_as_user") or self.host_user_uid
         gid = self.config.get("run_as_user") or self.host_user_gid
 
-        cmd = [self.runtime, 'run', '-d', '--init', '--name', self.container_name]
+        # --rm: if the container ever dies (e.g. OOM from a resource exhaustion attack),
+        # docker removes it automatically so we can cleanly start a fresh one.
+        # Persistence is unaffected: installed packages live in the image, and files
+        # live in the sandbox folder mount.
+        cmd = [self.runtime, 'run', '-d', '--rm', '--init', '--name', self.container_name]
 
         if self.use_gvisor:
             cmd.extend(['--runtime', 'runsc'])
@@ -335,6 +342,7 @@ class SandboxedShell(core.module.Module):
             '--user', f"{uid}:{gid}",
             '--cap-drop', 'ALL',
             '--cap-add', 'KILL',
+            '--read-only',
             '--security-opt', 'no-new-privileges:true',
             '--cpus', str(self.config.get("cpu_limit", default=0.5)),
             '--memory', self.config.get("memory_limit", default="512m"),
@@ -378,6 +386,19 @@ class SandboxedShell(core.module.Module):
         except Exception as e:
             self.log("sandbox_shell", f"Error starting container: {e}")
             self.container_name = None
+
+    async def _is_container_running(self):
+        """Checks whether the sandbox container currently exists and is running."""
+        if not self.runtime or not self.container_name:
+            return False
+        try:
+            stdout, _, _, _ = await self._run_async_cmd(
+                [self.runtime, 'ps', '--format', '{{.Names}}', '--filter', f'name={self.container_name}'],
+                timeout=5.0, limit=256
+            )
+            return self.container_name in stdout.decode('utf-8')
+        except Exception:
+            return False
 
     async def _stop_container(self):
         """Stops and removes the container."""
@@ -496,6 +517,14 @@ class SandboxedShell(core.module.Module):
         if not self.container_name:
             return self.result("Sandbox container not initialized.", False)
 
+        # the container can die at any time (e.g. OOM from a resource exhaustion attack).
+        # with --rm it's removed on death, so just start a fresh one.
+        if not await self._is_container_running():
+            self.log("sandbox_shell", "Container is not running, restarting it.")
+            await self._start_container()
+            if not await self._is_container_running():
+                return self.result("Sandbox container crashed and could not be restarted.", False)
+
         timeout_val = self.config.get("execution_timeout", default=10)
         output_limit = self.config.get("output_limit", default=2000)
         safety_timeout = timeout_val + 5
@@ -577,13 +606,11 @@ class SandboxedShell(core.module.Module):
         return str(result)
 
     def _get_setup(self):
-        uid = self.config.get('run_as_user') or self.host_user_uid
         gid = self.config.get('run_as_user') or self.host_user_gid
         method = self.config.get('method', default='dockerfile')
         lines = [
             f"Runtime: {self.runtime or 'Not available'}",
             f"Container Name: {self.container_name or 'Not running'}",
-            f"User ID: {uid}",
             f"method: {method}",
             f"Internet Access: {'enabled' if self.config.get('internet_access') else 'disabled'}",
             f"Persistent Data: {self.config.get('persistent_data', default=True)}",
