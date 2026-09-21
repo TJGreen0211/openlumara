@@ -68,7 +68,7 @@ class Chat:
     # ------------------
     async def _set_current(self, index: int):
         """load a chat and its messages by index"""
-        old_id = self.data[self.current]["id"] if self.current is not None else None
+        old_id = self.data[self.current]["id"] if self.current is not None and self.current < len(self.data) else None
         new_id = self.data[index]["id"]
 
         self.current = index
