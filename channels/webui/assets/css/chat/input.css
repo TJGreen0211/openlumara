@@ -318,12 +318,24 @@ body.token-bar-hidden #chat-window #input {
     border-radius: 999px;
     pointer-events: none;
     white-space: nowrap;
+    /* cap to the input bar so the pill never bleeds off the screen on narrow
+       phones (the text is nowrap and content-sized, so it must be bounded);
+       the span ellipsizes instead (mirrors #voice-live) */
+    max-width: calc(100% - 20px);
+    overflow: hidden;
     z-index: 5;
 
     svg {
         width: 12px;
         height: 12px;
         flex-shrink: 0;
+    }
+
+    span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 }
 
