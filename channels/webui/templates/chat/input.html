@@ -42,7 +42,7 @@
         'loading': $store.voice.transcribing,
         'meeting-locked': $store.meets.active
     }"
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled"
+    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && !$store.voice.isIphone()"
     @click="await $store.chat.transcribeVoice()">
     <svg x-show="(!$store.voice.recording && !$store.voice.transcribing) || $store.meets.active"
         xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -181,7 +181,7 @@ await simpleSocketSend({
     </template>
 </p>
 <p id="voice-native-hint" x-cloak
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.nativeDictationLikely() && !$store.voice.recording">
+    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.nativeDictationLikely() && !$store.voice.recording && !$store.voice.isIphone()">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
         <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>

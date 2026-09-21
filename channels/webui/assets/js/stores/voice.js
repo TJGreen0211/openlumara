@@ -146,6 +146,16 @@ const VOICE_STORE = {
         return iphony && /Safari|CriOS|Fxios|Firefox/i.test(ua) || false;
     },
 
+    // true on an actual iPhone/iPod, in any browser (Safari, Chrome/CriOS,
+    // Firefox/Fxios, or a WKWebView/PWA). on these we hide the in-app mic button
+    // and the native-dictation hint below - the user dictates with the keyboard's
+    // own mic. device-only (no Safari gate, unlike nativeDictationLikely) and
+    // deliberately NOT iPad and NOT width-based, so every other platform keeps its
+    // current behaviour
+    isIphone() {
+        return /iPhone|iPod/i.test(navigator.userAgent);
+    },
+
     // the webui channel settings are global (not per-user); the default is
     // "strip", which also covers a settings store that hasn't loaded yet
     _previewStyle() {
