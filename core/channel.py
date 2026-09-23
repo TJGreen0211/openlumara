@@ -530,6 +530,13 @@ class Channel:
         if result is not True:
             return {"type": "error", "content": str(result)}
 
+        # if the user just switched to this chat, this is the first message in
+        # it - queue the deferred slot restore now (fire and forget, no
+        # blocking). the op joins the API's FIFO slot queue ahead of the
+        # completion request below, so the first message can still benefit
+        # from the restored KV on the server
+        self.context.chat.maybe_restore_slot_cache()
+
         # build the context window
         context = await self.context.get(system_prompt=True, end_prompt=True)
 

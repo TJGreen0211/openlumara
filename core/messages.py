@@ -97,6 +97,9 @@ class Messages:
                 new_message["_metadata"]["injection"] = "\n\n".join(injections)
 
         self.data.append(new_message)
+        # history changed - the chat's slot KV on the AI server is now stale
+        # and needs re-saving when we switch away from this chat
+        self.chat._slot_dirty = True
         self._schedule_save()
         return True
 
@@ -106,11 +109,13 @@ class Messages:
             return False
 
         self.data[index] = message
+        self.chat._slot_dirty = True
         await self.save()
 
     async def delete(self, index: int):
         """delete message from current chat"""
         self.data.pop(index)
+        self.chat._slot_dirty = True
         index = len(self.data) - 1
         await self.save()
 
@@ -127,6 +132,7 @@ class Messages:
         new_messages = self.data[:index]
 
         self.data.load(new_messages)
+        self.chat._slot_dirty = True
         await self.save()
         return True
 

@@ -38,6 +38,11 @@ class ModuleConfig:
 
         return current
 
+    def to_dict(self):
+        """return the module's whole settings section as a plain dict (single disk load instead of
+        one per key) so modules can batch-read their config in one prompt build"""
+        return self.config.to_dict()
+
     def set(self, key: str, value):
         if key not in self.config:
             return None
