@@ -1,9 +1,11 @@
 /*
  * meeting session store ("Record meeting" mode)
  *
- * sits the app open during a meeting and streams the mic through the EXISTING
- * voice store (and its STT pipeline) into a timestamped transcript, on stop
- * sending that transcript as its own user message into a dedicated chat.
+ * sits the app open during a meeting and streams the auto-picked audio source
+ * (screen/tab audio via getDisplayMedia when the browser offers it, else the
+ * mic) through the EXISTING voice store (and its STT pipeline) into a
+ * timestamped transcript, on stop sending that transcript as its own user
+ * message into a dedicated chat.
  *
  * zero backend changes: everything here rides on voice.js (for the PCM / VAD /
  * commit pipeline), simpleSocketSend (new_chat + user_message over the
@@ -35,7 +37,9 @@ const MEETS_STORE = {
     // --- private -------------------------------------------------------
     _rec: null,                   // the MediaRecorder (re-created on resume)
     _mime: "",                    // chosen recorder mime (reused on resume)
-    _stream: null,                // the shared MediaStream (mic)
+    _stream: null,                // the shared MediaStream
+    _source: null,                // "screen" | "mic" - where _stream came from (auto-picked)
+    _stopping: false,             // latch while stopMeeting runs (onended re-entrancy guard)
     _wakeLock: null,              // the WakeLockSentinel (best effort)
     _wakeHandler: null,           // visibilitychange listener (re-request wake lock)
     _tickTimer: null,             // 1s heartbeat (timer label + interruption check)
@@ -53,6 +57,7 @@ const MEETS_STORE = {
     // the meets store sets voice.meetingVadAbsMin to one of these per slider step
     // (3 = the dictation default, so the slider's midpoint matches plain dictation)
     SENS: [0, 0.012, 0.008, 0.006, 0.0035, 0.002],
+    MEETINGS_CATEGORY: "Meetings",   // finished meetings are filed here (created lazily by the backend)
 
     /* -------------------------- derived ----------------------------- */
     get lastSegmentText() {
@@ -270,6 +275,48 @@ const MEETS_STORE = {
         }
     },
 
+    /* ------------------------ audio source --------------------------- */
+    // auto-pick the meeting's audio source: getDisplayMedia audio first (the
+    // meeting is usually in another tab or app - that capture is cleaner than
+    // the room mic), then the mic. cancelled pickers and browsers/platforms
+    // without display-capture audio (iOS Safari, Win10 Chrome, ...) degrade to
+    // the mic silently, so the button always does something. the mic runs
+    // room-friendly constraints: echo cancellation + noise suppression are
+    // tuned for solo dictation and can eat far-end speakers in a conference
+    // room; raw audio goes straight to whisper, and the sensitivity slider
+    // covers quiet speakers
+    async _acquireMeetingStream() {
+        const md = navigator.mediaDevices;
+        if (typeof md.getDisplayMedia === "function") {
+            let sys = null;
+            try {
+                sys = await md.getDisplayMedia({
+                    audio: true, video: false, selfBrowserSurface: "exclude"
+                });
+            } catch (err) {
+                sys = null;   // picker cancelled (or the OS refused) -> mic fallback
+            }
+            if (sys) {
+                if (sys.getAudioTracks().length) {
+                    return { stream: sys, source: "screen" };
+                }
+                // capture succeeded but the OS gave no audio -> release and use the mic
+                try { sys.getTracks().forEach((t) => t.stop()); } catch (e) {}
+            }
+        }
+        try {
+            const mic = await md.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false }
+            });
+            return { stream: mic, source: "mic" };
+        } catch (err) {
+            this.setError(err.name === "NotAllowedError"
+                ? "Microphone access was denied. Please allow microphone access in the browser settings."
+                : `Failed to start the meeting: ${err.message}`);
+            return null;
+        }
+    },
+
     /* ------------------------ public API ----------------------------- */
     // thin latch wrapper: the sequence below is await-heavy, so between an early
     // click and `active` turning true a rapid second click would otherwise start a
@@ -331,21 +378,35 @@ const MEETS_STORE = {
             return;
         }
 
-        // open the mic once; the voice (PCM) and the MediaRecorder (retention)
-        // share this single stream
-        let stream;
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true }
-            });
-        } catch (err) {
+        // open the audio source once; the voice (PCM) and the MediaRecorder
+        // (retention) share this single stream. the source is auto-picked:
+        // screen/tab audio first (one native picker), mic as the fallback
+        const acq = await this._acquireMeetingStream();
+        if (!acq) {
             this._clearLock();
-            this.setError(err.name === "NotAllowedError"
-                ? "Microphone access was denied. Please allow microphone access in your browser settings."
-                : `Failed to start the meeting: ${err.message}`);
             return;
         }
+        const stream = acq.stream;
+        this._source = acq.source;
         this._stream = stream;
+
+        // display capture can be ended mid-meeting from the browser chrome -
+        // without this the meeting would sit "active" on a dead stream, so stop
+        // it gracefully (the stop path flushes the recorder + transcript)
+        if (this._source === "screen") {
+            let ended = false;
+            const self = this;
+            stream.getAudioTracks().forEach((t) => {
+                t.onended = () => {
+                    if (ended || !self.active || self._stopping) {
+                        return;
+                    }
+                    ended = true;
+                    self.setError("Audio capture ended (screen sharing was stopped). The meeting was stopped.");
+                    self.stopMeeting();
+                };
+            });
+        }
 
         // reset per-meeting state + fresh id
         this.meetingId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : "m" + Date.now() + Math.random();
@@ -485,32 +546,64 @@ const MEETS_STORE = {
     },
 
     async stopMeeting() {
-        if (!this.active) {
+        // _stopping guards re-entry: releasing the stream fires the screen
+        // capture's track onended handlers mid-stop, which would otherwise call
+        // stopMeeting again while the first run is still in flight
+        if (!this.active || this._stopping) {
             return;
         }
-        const voice = Alpine.store("voice");
-        this._stopWatchers();
+        this._stopping = true;
+        try {
+            const voice = Alpine.store("voice");
+            this._stopWatchers();
 
-        // 1. flush the recorder (final chunk lands in IDB) BEFORE the voice
-        //    pipeline releases the shared stream (releaseAudio stops the tracks)
-        await this._stopRecorder();
+            // 1. flush the recorder (final chunk lands in IDB) BEFORE the voice
+            //    pipeline releases the shared stream (releaseAudio stops the tracks)
+            await this._stopRecorder();
 
-        // 2. drain the voice pipeline: waits the in-flight commit, commits the
-        //    tail (emitted via onSegmentCommitted), and releases the audio
-        await voice.stopMeetingRecording();
+            // 2. drain the voice pipeline: waits the in-flight commit, commits the
+            //    tail (emitted via onSegmentCommitted), and releases the audio
+            await voice.stopMeetingRecording();
 
-        this.active = false;
-        this._releaseWakeLock();
-        this._clearLock();
-        if (this._stream) {
-            try { this._stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-            this._stream = null;
+            this.active = false;
+            this._releaseWakeLock();
+            this._clearLock();
+            if (this._stream) {
+                try { this._stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+                this._stream = null;
+            }
+            this.durationSec = Math.round(voice.meetingElapsedSec());
+            this.finished = true;
+
+            // 3. send the transcript as its own user message into the meeting chat
+            await this._sendTranscript();
+        } finally {
+            this._stopping = false;
+            // once the meeting has ended, re-home its chat into the Meetings category.
+            // runs even if the stop path threw part-way (the chat already exists and
+            // carries the "Meeting ..." title); the helper is best-effort so it can
+            // never surface an error here
+            await this._fileInMeetings();
         }
-        this.durationSec = Math.round(voice.meetingElapsedSec());
-        this.finished = true;
+    },
 
-        // 3. send the transcript as its own user message into the meeting chat
-        await this._sendTranscript();
+    // move the meeting's chat into the Meetings category and refresh the sidebar.
+    // reuses the chat store's move helper (single POST + local category update +
+    // reloads). clears draggedChatCategory first: it only guards against a
+    // drag-and-drop re-drop into the same category, and a stale value left over from
+    // an earlier drag would otherwise make the helper no-op. best-effort - a failure
+    // is logged, never thrown
+    async _fileInMeetings() {
+        if (!this.chatId) {
+            return;
+        }
+        const chat = Alpine.store("chat");
+        try {
+            chat.draggedChatCategory = null;
+            await chat.moveChatToCategory(this.chatId, this.MEETINGS_CATEGORY);
+        } catch (e) {
+            console.warn("failed to file the meeting chat into the Meetings category", e);
+        }
     },
 
     // assemble the plain-text transcript (segments + pause/interruption markers +

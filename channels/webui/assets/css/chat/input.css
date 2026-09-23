@@ -536,6 +536,44 @@ body.token-bar-hidden #chat-window #input {
     }
 }
 
+/* mobile: the one-line control pill overflows the viewport (the bar only sets
+   `left`, so its width is content-driven), which clips the stop/pause buttons and
+   squishes the controls. give it a definite width and let it wrap to a second
+   row — sensitivity drops to its own line, status stays left, transport controls
+   sit flush right; desktop is untouched and stays a single pill */
+@media (max-width: 768px) {
+    #chat-window #meet-bar {
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: none;
+
+        .meet-row {
+            flex-wrap: wrap;
+            row-gap: 8px;
+            justify-content: center;
+            border-radius: 18px;
+            padding: 8px 10px;
+        }
+
+        /* pause/resume pushes itself (and stop) flush right, status stays left */
+        .meet-btn:not(.meet-stop) {
+            margin-left: auto;
+        }
+
+        .meet-sens {
+            order: 10;
+            flex: 1 1 100%;
+            justify-content: center;
+            margin-left: 0;
+        }
+
+        .meet-sens input {
+            width: 88px;
+        }
+    }
+}
+
 @keyframes meetingPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
     50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }

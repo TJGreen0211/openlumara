@@ -122,7 +122,7 @@ await simpleSocketSend({
             <input id="meet-sens-range" type="range" min="1" max="5" step="1"
                 :value="$store.meets.sensitivity"
                 @input="$store.meets.setSensitivity($event.target.value)"
-                :title="'Mic sensitivity ' + $store.meets.sensitivity + '/5 — lower for quiet/distant speakers'">
+                :title="'Mic sensitivity ' + $store.meets.sensitivity + '/5 — higher for quiet/distant speakers'">
         </span>
         <template x-if="!$store.meets.paused">
             <button class="meet-btn" @click="await $store.meets.pause()" title="Pause recording">
