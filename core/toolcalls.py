@@ -113,9 +113,10 @@ class ToolcallManager:
         # add it to context
         await self.channel.context.chat.messages.add(assistant_message)
 
-        # push if needed
+        # push if needed. NOTE: put the message on the push queue directly
+        # instead of calling push(), which would add it to context a second time
         if push:
-            await self.channel.push(assistant_message)
+            await self.channel.push_queue.put(assistant_message)
 
         timeout_val = float(core.config.get("core", "tool_timeout", default=10.0))
         tool_loader = self.channel.tool_loader
@@ -249,6 +250,11 @@ class ToolcallManager:
                 self.channel.log("toolcall", func_response.get("content"))
 
             func_response_str = None
+            if func_response is None:
+                # the tool explicitly returned nothing: abort the whole chain
+                # instead of recording a bogus "null" tool response
+                return
+
             if isinstance(func_response, str):
                 func_response_str = func_response
             else:

@@ -123,7 +123,22 @@ class Calendar(core.module.Module):
         delay = (event_time - now).total_seconds() - window_seconds
 
         if delay <= 0:
-            # If the event is happening right now or has passed, trigger immediately
+            # If the event occurred in the past (beyond window), mark it
+            # without spamming (e.g. events left unnotified across a restart)
+            if (now - event_time).total_seconds() > window_seconds:
+                storage = self._owner_storage(owner)
+                index = -1
+                for i, stored in enumerate(storage):
+                    if stored.get("id") == event['id']:
+                        index = i
+                        break
+                if index != -1:
+                    storage[index]["notify"] = False
+                    storage.save()
+                return
+
+            # If the event is happening right now or started recently,
+            # trigger immediately
             await self._notify_user(event, owner)
             return
 
@@ -157,7 +172,7 @@ class Calendar(core.module.Module):
             if not channel_name:
                 channel_name = self.config.get("notification_channel")
 
-            channel = self.manager.channels.get(channel_name)
+            channel = self.manager.channels.get(channel_name) or self.channel
 
             if channel:
                 event_time = datetime.datetime.fromisoformat(event["date"])
@@ -177,15 +192,17 @@ class Calendar(core.module.Module):
                 # context.chat.messages, so no separate add is needed
                 await channel.push(message)
 
-                # disable notification (write it back to the owner's storage)
-                index = -1
-                for i, stored in enumerate(storage):
-                    if stored.get("id") == event['id']:
-                        index = i
-                        break
-                if index != -1:
-                    storage[index]["notify"] = False
-                    storage.save()
+            # disable notification (write it back to the owner's storage),
+            # even when the target channel isn't available, so we don't
+            # re-notify on the next restart
+            index = -1
+            for i, stored in enumerate(storage):
+                if stored.get("id") == event['id']:
+                    index = i
+                    break
+            if index != -1:
+                storage[index]["notify"] = False
+                storage.save()
         finally:
             core.current_user.reset(token)
 

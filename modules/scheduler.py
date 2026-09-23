@@ -98,14 +98,16 @@ class Scheduler(core.module.Module):
 
         return owners
 
-    async def on_unload(self, *args, **kwargs):
-        """Clean up the dispatcher task on module unload."""
+    async def on_shutdown(self, *args, **kwargs):
+        """Clean up the dispatcher task on module shutdown or reload."""
         if hasattr(self, '_dispatcher_task') and self._dispatcher_task:
             self._dispatcher_task.cancel()
             try:
                 await self._dispatcher_task
             except asyncio.CancelledError:
                 pass
+
+    on_unload = on_shutdown
 
     # ---------------------------------------------------------
     # Dispatcher (Single Task Architecture)
@@ -389,12 +391,13 @@ Use tools if needed. For simple reminders, do not use tools.
             "content": action
         }
 
-        # Retry loop
-        base_delay = 5  # seconds
-        max_delay = 300  # 5 minutes cap
+        # Retry loop with bounded retries and exponential backoff
+        base_delay = 5
+        max_delay = 60
+        max_retries = 5
         response = None
 
-        while True:
+        for attempt in range(max_retries):
             try:
                 final_messages = []
                 match self.config.get("prompt_strategy"):
@@ -408,21 +411,29 @@ Use tools if needed. For simple reminders, do not use tools.
                         base_messages = await job_context.get(end_prompt=False)
                         final_messages = list(base_messages) + [instruction_message]
 
-                response = await self.manager.API.send(
+                resp = await self.manager.API.send(
                     final_messages,
                     use_tools=True,
                     tools=tools
                 )
 
-                if response:
-                    break  # Success
+                if resp and not isinstance(resp, core.api.APIError):
+                    response = resp
+                    break
 
-                self.log("scheduler", f"job {job_id}: empty response, retrying in {base_delay}s")
+                err_detail = str(resp) if isinstance(resp, core.api.APIError) else "empty response"
+                self.log("scheduler", f"job {job_id}: {err_detail} (attempt {attempt + 1}/{max_retries})")
 
             except Exception as e:
-                self.log("scheduler", f"job {job_id}: failed: {e}, retrying in {base_delay}s")
+                self.log("scheduler", f"job {job_id}: failed: {e} (attempt {attempt + 1}/{max_retries})")
 
-            await asyncio.sleep(base_delay)
+            if attempt < max_retries - 1:
+                retry_delay = min(base_delay * (2 ** attempt), max_delay)
+                await asyncio.sleep(retry_delay)
+
+        if not response or not isinstance(response, dict):
+            self.log("scheduler", f"job {job_id} aborted after {max_retries} failed attempts")
+            return
 
         # Process response
         final_content = response.get("content", "")

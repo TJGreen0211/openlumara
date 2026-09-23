@@ -196,6 +196,11 @@ class Webui(core.channel.Channel):
         # stores logs from channel.log()
         self.logs = []
 
+        # service worker data. computed once per server run: the old code
+        # walked the entire webui folder on every /sw.js request
+        self._sw_version = self._compute_cache_version()
+        self._sw_assets = self._compute_sw_assets()
+
         self.login_attempts = {}
 
         # per-user context instances
@@ -262,6 +267,44 @@ class Webui(core.channel.Channel):
 
         await self.server.serve()
 
+    def _compute_cache_version(self):
+        # generate an sw.js cache version based on this file's last modified time
+        # because bumping sw.js's version manually each time i update the webui
+        # is a total pain and i don't want to deal with it
+
+        # Get the latest modification time among all files in the folder
+        latest_mtime = os.path.getmtime(__file__)
+
+        for root, dirs, files in os.walk(core.get_path("channels/webui")):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    file_mtime = os.path.getmtime(file_path)
+                    if file_mtime > latest_mtime:
+                        latest_mtime = file_mtime
+                except (OSError, FileNotFoundError):
+                    # Skip files that can't be accessed
+                    pass
+
+        return f"v{int(latest_mtime)}"
+
+    def _compute_sw_assets(self):
+        # list of assets to precache, relative to the /assets mount point.
+        # (the old code scanned a nonexistent 'static/' folder, so the
+        # service worker silently cached nothing)
+        files_to_cache = []
+        assets_dir = os.path.join(self.path, "assets")
+        for subdir in ['js', 'css']:
+            dir_path = os.path.join(assets_dir, subdir)
+            if os.path.isdir(dir_path):
+                for root, _, files in os.walk(dir_path):
+                    for filename in files:
+                        full_path = os.path.join(root, filename)
+                        rel_path = os.path.relpath(full_path, assets_dir)
+                        files_to_cache.append('/assets/' + rel_path.replace(os.sep, '/'))
+        files_to_cache.sort()
+        return files_to_cache
+
     async def on_push(self, message, username=None):
         # deliver the push only to the user it belongs to (None = everyone).
         # username is captured at push() time and carried through the push queue,
@@ -315,8 +358,10 @@ class Webui(core.channel.Channel):
             # not initialized yet
             return False
 
-        # Store log in buffer for history
+        # Store log in buffer for history (capped to prevent unbounded memory growth)
         self.logs.append({"category": category, "message": message})
+        if len(self.logs) > 1000:
+            self.logs = self.logs[-1000:]
 
         # Broadcast log messages: admin-only in multi-user mode (logs may
         # contain other users' content), to everyone in single-user mode.
@@ -338,6 +383,17 @@ class Webui(core.channel.Channel):
     async def on_shutdown(self):
         # broadcast first so clients know we're going away
         await self.websocket_manager.broadcast({"type": "shutdown"})
+
+        # flush any pending debounced message saves for every cached user
+        # context (the base Channel._shutdown only flushes the default
+        # context), so a restart within the debounce window of a user's
+        # last message can't lose it
+        for uctx in list(getattr(self, "user_contexts", {}).values()):
+            try:
+                if uctx.chat.messages:
+                    await uctx.chat.messages.save()
+            except Exception:
+                pass
 
         # then properly stop uvicorn
         # this is a flag exposed by uvicorn itself, which causes it to start gracefully shutting down when set
@@ -1082,52 +1138,14 @@ async def create_fastapi(channel):
             channel.log(channel.name, f"failed to load theme {filepath}: {e}")
             return api_result(f"Failed to load theme: {str(e)}", success=False)
 
-    def generate_cache_version():
-        # generate an sw.js cache version based on this file's last modified time
-        # because bumping sw.js's version manually each time i update the webui
-        # is a total pain and i don't want to deal with it
-
-        webui_folder = core.get_path("channels/webui")
-
-        # Get the latest modification time among all files in the folder
-        latest_mtime = os.path.getmtime(__file__)  # fallback to this file
-
-        for root, dirs, files in os.walk(webui_folder):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    file_mtime = os.path.getmtime(file_path)
-                    if file_mtime > latest_mtime:
-                        latest_mtime = file_mtime
-                except (OSError, FileNotFoundError):
-                    # Skip files that can't be accessed
-                    pass
-
-        return f"v{int(latest_mtime)}"
-
     @app.get('/sw.js')
     async def service_worker():
-        base_path = core.get_path("channels/webui")
-        static_base = os.path.join(base_path, 'static')
-
-        files_to_cache = []
-        for subdir in ['js', 'css']:
-            dir_path = os.path.join(static_base, subdir)
-            if os.path.isdir(dir_path):
-                for root, _, files in os.walk(dir_path):
-                    for filename in files:
-                        full_path = os.path.join(root, filename)
-                        rel_path = os.path.relpath(full_path, static_base)
-                        files_to_cache.append('/static/' + rel_path)
-        files_to_cache.sort()
-
-        sw_template_path = os.path.join(base_path, 'sw.js')
+        sw_template_path = os.path.join(channel.path, 'sw.js')
         with open(sw_template_path) as f:
             sw_code = f.read()
 
-        version = generate_cache_version()
-
-        file_list = ',\n    '.join(f'"{f}"' for f in files_to_cache)
+        version = channel._sw_version
+        file_list = ',\n    '.join(f'"{f}"' for f in channel._sw_assets)
         sw_code = sw_code.replace('{{VERSION}}', version)
         sw_code = sw_code.replace('{{FILE_LIST}}', f'{file_list}\n')
 
@@ -1427,7 +1445,6 @@ class WebSocketManager:
                         cancel_token=cancel_token
                     )
                 ):
-                payload = serialize_for_json(partial)
 
                 if partial.get("type") == "token":
                     token = partial.get("content")

@@ -532,6 +532,9 @@ class APIClient():
             # easily through the high-level chat.completions.create, we use a task
             # so we can actually cancel the task itself.
 
+            # note: this poll is required for per-user mid-flight cancellation
+            # (per-request cancel_token) on non-streaming requests and during the
+            # first-token window of streams, before _recv_stream() starts checking.
             while not request_task.done():
                 if self.cancel_request or self._token_set(cancel_token):
                     request_task.cancel()
@@ -818,6 +821,7 @@ class APIClient():
         """Takes a response object and extracts the message from it, handling tool calls if needed. Streaming version."""
         final_tool_calls = []
         tool_call_buffer = {}
+        tool_call_dumps = {}
 
         token_usage = None
         total_prompt_tokens = 0
@@ -901,9 +905,16 @@ class APIClient():
                                 if tool_call_buffer[index].function.arguments is None:
                                     tool_call_buffer[index].function.arguments = ""
 
+                                # dump once, then update in place on subsequent chunks.
+                                # (the old code called model_dump() on every delta,
+                                # rebuilding the whole pydantic model each token)
+                                tool_call_dump = tool_call.model_dump()
+                                tool_call_dump["function"]["arguments"] = tool_call_buffer[index].function.arguments
+                                tool_call_dumps[index] = tool_call_dump
+
                                 yield {
                                     "type": "tool_call_delta",
-                                    "tool_calls": [tool_call_buffer[index].model_dump()]
+                                    "tool_calls": [tool_call_dump]
                                 }
                             else:
                                 # the documentation for this was awful, so i had to use AI to figure it out
@@ -916,20 +927,24 @@ class APIClient():
                                 # so the AI (GLM-5) decided we should set these if they show up
                                 # and then just assume it won't happen again
                                 # i guess if it does, it just overwrites it..
+                                tool_call_dump = tool_call_dumps[index]
                                 if tool_call.id:
                                     tool_call_buffer[index].id = tool_call.id
+                                    tool_call_dump["id"] = tool_call.id
                                 if tool_call.function.name:
                                     tool_call_buffer[index].function.name = tool_call.function.name
+                                    tool_call_dump["function"]["name"] = tool_call.function.name
 
                                 # function arguments seem to be the part that actually gets streamed
                                 # and which we must accumulate to get the full toolcall
                                 if tool_call.function.arguments:
                                     tool_call_buffer[index].function.arguments += tool_call.function.arguments
+                                    tool_call_dump["function"]["arguments"] = tool_call_buffer[index].function.arguments
 
                                     # the magic sauce that allows streaming toolcall arguments
                                     yield {
                                         "type": "tool_call_delta",
-                                        "tool_calls": [tool_call_buffer[index].model_dump()]
+                                        "tool_calls": [tool_call_dump]
                                     }
                                     # we use model_dump() so that it converts the pydantic models to python dicts that can be json serialized
 

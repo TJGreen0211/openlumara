@@ -30,13 +30,14 @@ def storage_file_path(name: str, storage_type: str, base: str) -> str:
 
 class StorageList(list):
     """subclassed list that handles storage of data. supports a variety of storage formats."""
-    def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, *args):
+    def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, compact_json=False, *args):
         super().__init__(*args)
 
         # store raw values for lazy resolution
         self.name = name
         self._base_path = path
         self.binary = False
+        self.compact_json = compact_json
 
         # cache for change detection
         self._last_modified = 0.0
@@ -105,10 +106,13 @@ class StorageList(list):
             return False
 
     def _file_changed(self):
-        """check if the file on disk has changed"""
+        """check if the file on disk has changed and cache the new mtime in a single stat"""
         try:
             current_mtime = os.path.getmtime(self.path)
-            return current_mtime != self._last_modified
+            if current_mtime == self._last_modified:
+                return False
+            self._last_modified = current_mtime
+            return True
         except OSError:
             return True
 
@@ -127,7 +131,13 @@ class StorageList(list):
 
         match self.type:
             case "json":
-                self._write(json.dumps(self, indent=2))
+                if self.compact_json:
+                    # chat history is rewritten on every message save, so keep its
+                    # serialization compact and non-escaped (the pretty + ASCII-escaped
+                    # default made it ~2x bigger and slower to dump/write)
+                    self._write(json.dumps(self, ensure_ascii=False))
+                else:
+                    self._write(json.dumps(self, indent=2))
             case "yaml":
                 self._write(yaml.safe_dump(self, default_flow_style=False, sort_keys=False, allow_unicode=True))
             case "msgpack":
@@ -149,7 +159,6 @@ class StorageList(list):
 
         # skip reload if file hasn't changed on disk
         if not self._file_changed():
-            self._update_mtime()
             return self
 
         self.clear()
@@ -174,8 +183,13 @@ class StorageList(list):
     def get(self, *args, **kwargs):
         if not TEMPORARY:
             self.load()
-
-        return super().__getitem__(args[0])
+        if not args:
+            return kwargs.get("default", None)
+        index = args[0]
+        default = args[1] if len(args) > 1 else kwargs.get("default", None)
+        if isinstance(index, int) and 0 <= index < len(self):
+            return super().__getitem__(index)
+        return default
 
 class StorageDict(dict):
     """subclassed dict that handles storage of data. supports a variety of storage formats."""
@@ -258,10 +272,13 @@ class StorageDict(dict):
             return False
 
     def _file_changed(self):
-        """check if the file on disk has changed"""
+        """check if the file on disk has changed and cache the new mtime in a single stat"""
         try:
             current_mtime = os.path.getmtime(self.path)
-            return current_mtime != self._last_modified
+            if current_mtime == self._last_modified:
+                return False
+            self._last_modified = current_mtime
+            return True
         except OSError:
             return True
 
@@ -402,7 +419,6 @@ class StorageDict(dict):
 
         # skip reload if file hasn't changed on disk
         if self.type not in ["markdown"] and not self._file_changed():
-            self._update_mtime()
             return True
 
         self.clear()
@@ -452,8 +468,7 @@ class StorageDict(dict):
         if not TEMPORARY and not self.override_temporary:
             self.load()
 
-        return super().get(*args)
-
+        return super().get(*args, **kwargs)
 class StorageText:
     """simple class that saves its content to a text file"""
     def __init__(self, name: str, manager=None, path=None, autoload=True, *args):
@@ -506,7 +521,6 @@ class StorageText:
         self._resolve_path()
         # skip reload if file hasn't changed on disk
         if not self._file_changed():
-            self._update_mtime()
             return self
 
         try:
@@ -532,10 +546,13 @@ class StorageText:
         return self
 
     def _file_changed(self):
-        """check if the file on disk has changed"""
+        """check if the file on disk has changed and cache the new mtime in a single stat"""
         try:
             current_mtime = os.path.getmtime(self.path)
-            return current_mtime != self._last_modified
+            if current_mtime == self._last_modified:
+                return False
+            self._last_modified = current_mtime
+            return True
         except OSError:
             return True
 
