@@ -378,6 +378,13 @@ const MEETS_STORE = {
             return;
         }
 
+        // prime the AudioContext NOW: everything above this line is
+        // synchronous, so this tap's user gesture is still live. iOS Safari
+        // starts audio only from a context created in-gesture, and the mic
+        // permission dialog that _acquireMeetingStream pops below burns the
+        // gesture the moment it opens (see voice.primeAudio)
+        voice.primeAudio();
+
         // open the audio source once; the voice (PCM) and the MediaRecorder
         // (retention) share this single stream. the source is auto-picked:
         // screen/tab audio first (one native picker), mic as the fallback

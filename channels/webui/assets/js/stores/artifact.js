@@ -50,6 +50,40 @@ const ARTIFACT_STORE = {
         } catch { /* ignore malformed / stale storage */ }
     },
 
+    // Chat history is server-persisted, unlike localStorage. Rebuild this
+    // chat's entry point from its saved coder calls after history is loaded.
+    restoreFromHistory(chatId, turnHistory) {
+        if (!chatId || !Array.isArray(turnHistory)) return;
+
+        let latest = null;
+        for (const turn of turnHistory) {
+            for (const message of Array.isArray(turn?.messages) ? turn.messages : []) {
+                for (const toolCall of Array.isArray(message?.tool_calls) ? message.tool_calls : []) {
+                    const name = toolCall?.function?.name;
+                    if (!name || !/(?:^|_)(file_create|file_edit|open_preview)$/.test(name)) continue;
+
+                    let args;
+                    try {
+                        const rawArgs = toolCall.function.arguments;
+                        args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+                    } catch {
+                        continue;
+                    }
+
+                    if (typeof args?.sandbox !== 'string' || !args.sandbox
+                        || typeof args.path !== 'string' || !/\.html?$/i.test(args.path)) {
+                        continue;
+                    }
+                    latest = { sandbox: args.sandbox, path: args.path };
+                }
+            }
+        }
+
+        if (!latest) return;
+        this.byChat[chatId] = latest;
+        this._persist();
+    },
+
     _persist() {
         try {
             localStorage.setItem(ARTIFACT_PERSIST_KEY, JSON.stringify({

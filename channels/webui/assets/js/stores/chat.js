@@ -40,6 +40,7 @@ CHAT_STORE = {
         this.selectedChat = result.id;
         this.turnHistory = result.turn_history;
         this.currentTokenUsage = result.token_usage;
+        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
 
         // ensure the chat exists in the visible sidebar list before scrolling
         // (only possible when it belongs to the currently selected category)
@@ -64,6 +65,7 @@ CHAT_STORE = {
         this.selectedChat = chatId;
         this.selectedCategory = result.category;
         this.turnHistory = result.turn_history;
+        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
 
         ui = Alpine.store('ui');
         this.currentTokenUsage = result.token_usage;
@@ -201,6 +203,7 @@ CHAT_STORE = {
         // data refresh must not change the category the user is looking at
 
         this.turnHistory = result.turn_history;
+        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
     },
 
     async reloadCategories() {

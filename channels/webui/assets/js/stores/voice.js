@@ -205,6 +205,30 @@ const VOICE_STORE = {
         return (2 * common) / (aw.length + bw.length);
     },
 
+    // creates (or resumes) the AudioContext. the iOS twist: Safari on iPhone /
+    // iPad only starts audio from a context created - or resumed - during a
+    // LIVE user gesture (transient activation); desktop browsers use sticky
+    // activation, where any gesture the page ever received suffices. a single
+    // await (the getUserMedia permission dialog, a websocket round-trip, ...)
+    // burns the gesture, so every entry point that can still hold one (the
+    // meeting tap, the dictation tap) calls this in its own synchronous prefix,
+    // BEFORE its first await. startRecording reuses the primed context, so this
+    // never creates a second one
+    primeAudio() {
+        try {
+            if (!this._ctx) {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                this._ctx = new Ctx({ sampleRate: this.targetRate });
+            }
+            if (this._ctx.state === "suspended") {
+                this._ctx.resume().catch(() => {});
+            }
+        } catch (err) {
+            this._ctx = null;
+        }
+        return this._ctx;
+    },
+
     async startRecording(opts = {}) {
         if (this.recording) {
             return true;
@@ -214,6 +238,11 @@ const VOICE_STORE = {
             this.error = "Voice input is not supported in this browser.";
             return false;
         }
+
+        // prime the context now: for dictation this call's own synchronous
+        // prefix still runs inside the tap that started it, so the gesture is
+        // alive here even though the getUserMedia dialog below will burn it
+        this.primeAudio();
 
         const mode = (opts && opts.mode === "meeting") ? "meeting" : "dictation";
         this.mode = mode;
@@ -263,12 +292,30 @@ const VOICE_STORE = {
         this._stream = stream;
 
         try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            this._ctx = new Ctx({ sampleRate: this.targetRate });
+            // reuse the context primed inside the tap (see primeAudio()); only
+            // create one here if that prime couldn't run, so the failure still
+            // lands in this guarded block
+            if (!this._ctx) {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                this._ctx = new Ctx({ sampleRate: this.targetRate });
+            }
             this._rate = this._ctx.sampleRate;
 
             this._workletUrl = URL.createObjectURL(new Blob([VOICE_WORKLET_CODE], { type: "application/javascript" }));
             await this._ctx.audioWorklet.addModule(this._workletUrl);
+
+            // a context that is not running means no audio will ever flow (on
+            // iOS: the gesture was gone before the context got primed). fail
+            // loudly instead of sitting on a silent "recording" that never
+            // transcribes
+            if (this._ctx.state !== "running") {
+                try { await this._ctx.resume(); } catch (err) { /* stays suspended */ }
+            }
+            if (this._ctx.state !== "running") {
+                this._releaseAudio();
+                this.error = "The browser blocked the audio context. Allow microphone access, then tap the button again.";
+                return false;
+            }
 
             this._pcmBuf = new Float32Array(this._rate * 30);
             this._pcmLength = 0;

@@ -863,6 +863,7 @@ class APIClient():
                     streamed_token = chunk.choices[0].delta
 
                     content_yield = None
+                    reasoning_yield = None
 
                     # handle content token streaming
                     if streamed_token.content:
@@ -873,24 +874,29 @@ class APIClient():
                                 getattr(streamed_token, "reasoning", None)
 
                     if reason_part:
-                        content_yield = {"type": "reasoning", "content": reason_part}
+                        reasoning_yield = {"type": "reasoning", "content": reason_part}
 
                     # add timing data to the yielded token
                     if streamed_token.content or reason_part:
+                        timing_yield = content_yield or reasoning_yield
+
                         # Send timing data: Use native if available, otherwise calculate
                         native_timings = getattr(chunk, 'timings', None)
                         if native_timings:
-                            content_yield["timings"] = native_timings
+                            timing_yield["timings"] = native_timings
 
                         else:
                             # Fallback: Calculate tokens/s based on time between chunks
                             if delta_ms > 1: # Only yield if significant time passed
-                                content_yield["timings"] = {
+                                timing_yield["timings"] = {
                                     "predicted_ms": delta_ms,
                                     "predicted_n": 1
                                 }
 
-                    # and finally, yield the content token
+                    # Reasoning in a mixed delta precedes its corresponding content.
+                    if reasoning_yield:
+                        yield reasoning_yield
+
                     if content_yield:
                         yield content_yield
 
