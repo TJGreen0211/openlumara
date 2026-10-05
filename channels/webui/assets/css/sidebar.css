@@ -399,6 +399,22 @@
     }
 }
 
+/* Bottom action row pinned to the bottom of the chat list */
+.sidebar-bottom-actions {
+    display: flex;
+    align-items: stretch;
+    gap: var(--gap);
+    margin-top: auto;  /* pins the row to the bottom of the flex column */
+
+    .sidebar-btn { margin-top: 0; }  /* the row owns the auto margin now */
+
+    .new-chat-btn {
+        flex: 1 1 auto;
+        width: auto;
+        min-width: 0;
+    }
+}
+
 /* Category drop target highlight during drag */
 #category-list .item.drop-target {
     background: rgba(var(--primary-rgb), 0.3);

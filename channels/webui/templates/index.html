@@ -103,6 +103,11 @@
                 >
                     {% include 'chat/index.html' %}
                 </section>
+
+                <!-- live site preview (auto-opens when the AI writes an HTML file) -->
+                <section id="preview-panel" x-show="$store.artifact.open && $store.artifact.current" x-cloak>
+                    {% include 'chat/preview_panel.html' %}
+                </section>
             </section>
 
             <section id="modals">

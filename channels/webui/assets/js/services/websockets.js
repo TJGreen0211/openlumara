@@ -175,6 +175,33 @@ async function handleWebSocketMessage(data) {
                 await chat.reloadCategories();
             }
 
+            // track live-preview artifacts as the AI touches HTML files. tool
+            // calls stream BEFORE the server executes them, so file writes from
+            // this turn aren't on disk yet: file tools only *record* the
+            // artifact, and stream_complete opens the panel once the writes
+            // have landed. open_preview opens it immediately, since the file
+            // already exists by the time the model calls it
+            const seg = stream.turn.messages[stream.turn.messages.length - 1];
+            if (seg && seg.type === 'tool_calls' && Array.isArray(seg.tool_calls)) {
+                for (const tc of seg.tool_calls) {
+                    const name = tc.function?.name;
+                    // tools are namespaced as {module}_{method} (e.g. coder_file_create,
+                    // coder_open_preview), so match the trailing method name, not the bare name
+                    if (!name || !/(?:^|_)(file_create|file_edit|open_preview)$/.test(name)) continue;
+
+                    let args = {};
+                    try { args = partialJsonParse(tc.function?.arguments ?? '{}') || {}; } catch { continue; }
+
+                    if (!args.sandbox || !args.path) continue;
+
+                    if (/(?:^|_)open_preview$/.test(name)) {
+                        Alpine.store('artifact').onOpenPreview(args.sandbox, args.path);
+                    } else {
+                        Alpine.store('artifact').onFileTouched(args.sandbox, args.path);
+                    }
+                }
+            }
+
             break;
 
         case "push":
@@ -292,6 +319,10 @@ async function handleWebSocketMessage(data) {
             await chat.reloadChats();
 
             stream.state = 'idle';
+
+            // the turn's file writes have landed, so open a preview that was
+            // only recorded mid-stream and refresh one that's already open
+            Alpine.store('artifact').finalize();
 
             break;
     }

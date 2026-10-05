@@ -42,3 +42,16 @@ async function simpleSocketSend(data) {
 
     return true
 }
+
+async function reportDetectedTimezone() {
+    // tell the backend this browser's IANA timezone so the AI's "current time"
+    // reflects the user's zone instead of the server's. best-effort / non-fatal:
+    // if it fails the server simply falls back to its own zone.
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (!tz) return;
+        await simpleApiPost('/api/settings/detected_timezone', { timezone: tz });
+    } catch (e) {
+        // ignore: detection is optional
+    }
+}

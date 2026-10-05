@@ -17,49 +17,90 @@
               x-cloak></span>
     </div>
     <div class="right">
-        <button class="btn" id="record-meet-btn"
-            x-show="$store.settings.settings.api.voice_enabled && !$store.meets.active"
-            x-cloak
-            :disabled="$store.stream.state !== 'idle' || $store.voice.recording || $store.meets.active"
-            title="Record a meeting — creates a new chat and transcribes in real time"
-            @click="await $store.meets.startMeeting()">
-            {% include 'svg/record.svg' %}
-        </button>
-
-        <!-- TODO
+        <!-- TODO: global search
         <button class="btn" id="search-btn" title="Search messages (Ctrl+F)">
             {% include 'svg/search.svg' %}
         </button>
         -->
-        <button class="btn" id="settings-btn" title="Settings (Ctrl+S)" @click="await $store.ui.openModal('settings')">
-            {% include 'svg/gear.svg' %}
-        </button>
-        <button class="btn" title="Export chat" @click="$store.chat.export()">
-            {% include 'svg/download.svg' %}
-        </button>
-        <!-- TODO
-        <button class="btn shortcuts-btn" title="Keyboard shortcuts (?)" x-show="!$store.ui.isMobile" x-cloak>
-            {% include 'svg/keyboard.svg' %}
-        </button>
-        -->
 
         <!--
-        storage editor was too much to quickly remake from scratch for this release.
-        so, TODO: make a good openluamra storage editor... preferably in the core instead of the webui. then just hook the webui into it
+            record a meeting. creates a new chat and transcribes in real time.
+            only shown when voice is enabled and no meeting is already active
+        -->
+        <button class="btn" id="record-meet-btn"
+            title="Record a meeting"
+            x-show="$store.settings.settings.api.voice_enabled && !$store.meets.active"
+            x-cloak
+            :disabled="$store.stream.state !== 'idle' || $store.voice.recording || $store.meets.active"
+            @click="await $store.meets.startMeeting()">
+            {% include 'svg/record.svg' %}
+        </button>
 
-        <button class="btn" title="Storage Editor" x-show="!$store.ui.isMobile" x-cloak>
+        <!--
+            live site preview toggle. contextual: only shown for the current chat
+            when it has an artifact, and intentionally never folded into the kebab menu
+        -->
+        <button class="btn" id="preview-toggle-btn"
+            title="Toggle site preview"
+            x-show="$store.artifact.current" x-cloak
+            :class="{'active': $store.artifact.open}"
+            @click="$store.artifact.toggle()">
             {% include 'svg/folder.svg' %}
         </button>
-        -->
-        <button class="btn" title="Clear chat" @click="
-            if (!confirm('Are you sure you want to clear this chat?')) { return }
 
-            await simpleSocketSend({
-                'type': 'user_message',
-                'content': '/clear'
-            })
-        ">
-            {% include 'svg/trash.svg' %}
-        </button>
+        <!--
+            overflow menu. the menu + backdrop are teleported to <body> with fixed
+            positioning so the header's `overflow-x: hidden` can't clip the dropdown
+        -->
+        <div class="kebab" x-data="{
+            open: false,
+            pos: { top: 0, left: 0 },
+            toggle() {
+                if (!this.open) {
+                    const r = this.$refs.btn.getBoundingClientRect();
+                    const width = 210;
+                    this.pos = {
+                        top: r.bottom + 6,
+                        left: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8))
+                    };
+                }
+                this.open = !this.open;
+            },
+            close() { this.open = false; },
+            pick(fn) { this.open = false; fn(); },
+            clearChat() {
+                this.open = false;
+                if (!confirm('Are you sure you want to clear this chat?')) return;
+                simpleSocketSend({ 'type': 'user_message', 'content': '/clear' });
+            }
+        }">
+            <button class="btn" id="kebab-btn" x-ref="btn" title="More"
+                :class="{'active': open}" @click="toggle()">
+                {% include 'svg/kebab.svg' %}
+            </button>
+
+            <template x-teleport="body">
+                <div class="kebab-backdrop" x-show="open" x-cloak @click="close()"></div>
+            </template>
+
+            <template x-teleport="body">
+                <div class="kebab-menu" x-show="open" x-cloak
+                    :style="{ top: pos.top + 'px', left: pos.left + 'px' }">
+                    <button @click="pick(() => $store.chat.export())">
+                        {% include 'svg/download.svg' %}<span>Export chat</span>
+                    </button>
+                    <button @click="clearChat()">
+                        {% include 'svg/trash.svg' %}<span>Clear chat</span>
+                    </button>
+                    <button @click="pick(() => $store.ui.openModal('settings'))">
+                        {% include 'svg/gear.svg' %}<span>Settings</span>
+                    </button>
+                </div>
+            </template>
+        </div>
+
+        <!--
+            TODO: storage editor (make a good openlumara storage editor in the core, then hook the webui into it)
+        -->
     </div>
 </header>

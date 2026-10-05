@@ -1,0 +1,21 @@
+<!-- live site preview: toolbar + iframe -->
+<div class="preview-toolbar">
+    <span class="preview-title" x-text="$store.artifact.title"></span>
+    <span class="spacer"></span>
+    <button title="Refresh" @click="$store.artifact.refresh()">
+        {% include 'svg/reload.svg' %}
+    </button>
+    <button title="Open in a new tab" @click="$store.artifact.openInNewTab()">
+        {% include 'svg/external.svg' %}
+    </button>
+    <button title="Download this file" @click="$store.artifact.download()">
+        {% include 'svg/download.svg' %}
+    </button>
+    <button title="Close preview" @click="$store.artifact.close()">
+        {% include 'svg/cross.svg' %}
+    </button>
+</div>
+<iframe id="preview-iframe"
+        :src="$store.artifact.entryUrl"
+        :class="{'no-src': !$store.artifact.entryUrl}"
+        title="Site preview"></iframe>

@@ -62,6 +62,11 @@ class Coder(core.module.Module):
             "depends": "insert_sandbox_paths_into_system_prompt"
         },
 
+        "show_preview_hint": {
+            "default": True,
+            "description": "Instructs the AI to call open_preview with the entry HTML file after building a website."
+        },
+
         # blacklists
         "folder_blacklist": {
             "default": ["venv", "__pycache__"],
@@ -141,6 +146,13 @@ class Coder(core.module.Module):
 
         if self.config.get("use_coding_prompt") and self.config.get("coding_prompt"):
             final_output.append(f"## Coding Guidelines\nYOU MUST ALWAYS follow these guidelines while using the coder:\n{self.config.get('coding_prompt')}")
+
+        if self.config.get("show_preview_hint") and not self.config.get("read-only"):
+            final_output.append(
+                "## Live Preview\nAfter building an HTML site the user should see, call open_preview with the entry "
+                "HTML file (e.g. index.html) so it renders in the WebUI's preview panel. The user will then ask for "
+                "changes in plain language - apply them with the file tools, then call open_preview again."
+            )
 
         if self.config.get("read-only"):
             final_output.append("## IMPORTANT: Read-Only Mode\nYour coder module is in read-only mode and you cannot write to files. Provide output code to the user directly in your messages.")
@@ -460,7 +472,9 @@ class Coder(core.module.Module):
         # a race condition vulnerability that can escape sandboxes
         # am i the only one that thinks TOCTOU kinda sounds like TOC TUA aka HAWK TUAH? oh no
         try:
-            with open(target_path, 'x') as f:
+            # explicit utf-8: the platform default (cp1252 on Windows) would break
+            # file_read/file_edit, which both read back with encoding="utf-8"
+            with open(target_path, 'x', encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
             return self.result(str(e), success=False)
@@ -695,6 +709,18 @@ class Coder(core.module.Module):
            return self.result(str(e), success=False)
 
        return self.result(f"Successfully edited file {path}")
+
+    # ----------------------
+    # tools: webui preview
+    # ----------------------
+    async def open_preview(self, sandbox: str, path: str):
+        """Opens the given file in the WebUI's live preview panel. Call this after creating or
+        editing an HTML file (or site) the user should see. For multi-page sites, use the entry
+        HTML file (e.g. index.html). The user can then tell you to change things in plain words."""
+        target_path = await self._get_sandbox_subpath(sandbox, path)
+        if not os.path.isfile(target_path):
+            return self.result("That file does not exist yet. Create it first, then call open_preview.", success=False)
+        return self.result({"preview": {"sandbox": sandbox, "path": path}})
 
     # ---------------------
     # user-facing commands

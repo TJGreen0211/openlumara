@@ -18,6 +18,7 @@ document.addEventListener('alpine:init', async () => {
     Alpine.store('upload', UPLOAD_STORE);
     Alpine.store('voice', VOICE_STORE);
     Alpine.store('meets', MEETS_STORE);
+    Alpine.store('artifact', ARTIFACT_STORE);
     if (typeof USERS_STORE !== 'undefined') {
         Alpine.store('users', USERS_STORE);
     }
@@ -30,7 +31,15 @@ document.addEventListener('alpine:init', async () => {
     Alpine.directive('auto-scroll', autoScroll);
     Alpine.directive('copy-code', copyCode);
 
+    // restore the per-chat preview map *before* the websocket connects, so an
+    // in-flight stream can't persist a new entry that init() would then
+    // overwrite with the stale saved map
+    Alpine.store('artifact').init();
+
     await connectWebSocket();
+
+    // report the user's timezone (per-user) so the AI reflects it, not the server's
+    await reportDetectedTimezone();
 
     // register the service worker
     if ('serviceWorker' in navigator) {

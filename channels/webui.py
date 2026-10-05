@@ -17,6 +17,7 @@ import core
 import os
 import json
 import asyncio
+import hashlib
 import time
 
 # webui stuff
@@ -24,6 +25,7 @@ import fastapi, fastapi.templating, fastapi.staticfiles
 import starlette, starlette.middleware.sessions
 import uvicorn
 import base64
+import zoneinfo
 
 # security libraries
 import secrets
@@ -268,25 +270,41 @@ class Webui(core.channel.Channel):
         await self.server.serve()
 
     def _compute_cache_version(self):
-        # generate an sw.js cache version based on this file's last modified time
-        # because bumping sw.js's version manually each time i update the webui
-        # is a total pain and i don't want to deal with it
+        # generate an sw.js cache version by hashing the *content* of every file
+        # the webui serves (this file + assets + templates), because bumping
+        # sw.js's version manually each time i update the webui is a total pain
+        # and i don't want to deal with it
 
-        # Get the latest modification time among all files in the folder
-        latest_mtime = os.path.getmtime(__file__)
+        # the old version was the latest file mtime, which never changed when a
+        # deploy preserved timestamps (docker builds, rsync, some git checkouts).
+        # with a cache-first service worker and version-less asset urls, that
+        # meant phones kept serving the old cached CSS/JS forever after a deploy
+        # (e.g. the pre-fix meeting/voice layout). a content hash changes
+        # whenever the served files change, so the new service worker activates
+        # and clears the stale cache
 
-        for root, dirs, files in os.walk(core.get_path("channels/webui")):
-            for file in files:
+        hasher = hashlib.sha256()
+        try:
+            with open(__file__, "rb") as f:
+                hasher.update(f.read())
+        except (OSError, FileNotFoundError):
+            pass
+
+        webui_dir = core.get_path("channels/webui")
+        for root, dirs, files in os.walk(webui_dir):
+            for file in sorted(files):
                 file_path = os.path.join(root, file)
                 try:
-                    file_mtime = os.path.getmtime(file_path)
-                    if file_mtime > latest_mtime:
-                        latest_mtime = file_mtime
+                    rel_path = os.path.relpath(file_path, webui_dir).replace(os.sep, "/")
+                    hasher.update(rel_path.encode("utf-8"))
+                    with open(file_path, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            hasher.update(chunk)
                 except (OSError, FileNotFoundError):
                     # Skip files that can't be accessed
                     pass
 
-        return f"v{int(latest_mtime)}"
+        return "v" + hasher.hexdigest()[:16]
 
     def _compute_sw_assets(self):
         # list of assets to precache, relative to the /assets mount point.
@@ -928,6 +946,36 @@ async def create_fastapi(channel):
 
         return api_result(success=True)
 
+    @app.post("/api/settings/detected_timezone")
+    async def set_detected_timezone(request: fastapi.Request):
+        """Stores the browser-detected IANA timezone for the current user (per-user).
+
+        The time module consults this only when the user hasn't set an explicit
+        timezone override, so the AI's "current time" reflects the user's zone
+        instead of the server's. An empty string clears the stored value."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        tz = (body.get("timezone") or "").strip()
+
+        # empty is allowed (clears detection); otherwise it must resolve to a
+        # real zone. validated via ZoneInfo() rather than available_timezones()
+        # so convenience names browsers report (e.g. "UTC") are accepted, and so
+        # the whole zone database isn't re-scanned on every request
+        if tz:
+            try:
+                zoneinfo.ZoneInfo(tz)
+            except Exception:
+                return api_result("invalid timezone", success=False)
+
+        path = core.get_data_path("detected_timezone")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(tz)
+
+        return api_result(success=True)
+
     # --- User management (admin only)
     def _require_admin(request):
         """Check if user is admin, re-validating against user store."""
@@ -1065,6 +1113,35 @@ async def create_fastapi(channel):
             return api_result(str(result), success=False)
 
         return api_result(success=True)
+
+    # ----------------------------
+    # Artifact (live site preview) API
+    # ----------------------------
+    @app.get("/api/artifact/{sandbox}/{path:path}")
+    async def artifact_file(sandbox: str, path: str):
+        """serves a file from a coder sandbox so the in-app preview iframe can render it"""
+        coder = channel.manager.modules.get("coder")
+        if not coder:
+            return fastapi.responses.JSONResponse({"detail": "coder module not available"}, status_code=503)
+
+        try:
+            full = await coder._get_sandbox_subpath(sandbox, path)   # already path-safe via core.sandbox_path
+        except Exception:
+            return fastapi.responses.JSONResponse({"detail": "not found"}, status_code=404)
+
+        if not os.path.isfile(full):
+            return fastapi.responses.JSONResponse({"detail": "not found"}, status_code=404)
+
+        media = fastapi.responses.FileResponse(full)
+        media.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        media.headers["Pragma"] = "no-cache"
+        # served same-origin, so a hostile page the AI builds (e.g. from
+        # prompt-injected content) could otherwise read the parent DOM, the
+        # session cookie, and call the app API. the CSP sandbox gives the
+        # document an opaque origin; allow-scripts/allow-modals keep normal
+        # sites functional
+        media.headers["Content-Security-Policy"] = "sandbox allow-scripts allow-modals"
+        return media
 
     # ----------------------------
     # System.. stuff

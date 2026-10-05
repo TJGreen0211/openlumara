@@ -12,6 +12,7 @@ header {
         display: flex;
         align-items: center;
         gap: 14px;
+        min-width: 0;
     }
     .right {
         display: flex;
@@ -27,6 +28,13 @@ header {
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
+
+        /* keep the title on a single line and let it shrink + ellipsize so the
+           action buttons on the right never get pushed off-screen */
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .btn {
@@ -50,6 +58,17 @@ header {
         }
         &:active {
             transform: translateY(0);
+        }
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        &:disabled:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border-color: var(--border-color);
+            transform: none;
         }
 
         svg {
@@ -92,6 +111,73 @@ header {
         &.disconnected {
             background: #f87171;
             box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
+        }
+    }
+}
+
+/* kebab overflow menu. the button lives in the header, but the menu and backdrop
+   are teleported to <body> with fixed positioning (see header.html), so they are
+   styled here at the top level, not nested under `header {}` */
+.kebab {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+#kebab-btn.active {
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: var(--bg-secondary);
+}
+
+.kebab-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: transparent;
+}
+
+.kebab-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 200px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+
+    button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 9px 10px;
+        background: transparent;
+        border: none;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+
+        svg {
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+        }
+
+        span {
+            flex: 1;
+        }
+
+        &:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
         }
     }
 }

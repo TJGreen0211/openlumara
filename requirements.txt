@@ -9,3 +9,4 @@ pypdf2
 python-ulid
 requests
 httpx
+tzdata

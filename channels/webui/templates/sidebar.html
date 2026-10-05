@@ -205,8 +205,10 @@
         </template>
     </div>
 
-    <button class="sidebar-btn" @click="$store.chat.newChat()" :disabled="$store.stream.state !== 'idle'">
-        {% include 'svg/add.svg' %}
-        New Chat
-    </button>
+    <div class="sidebar-bottom-actions">
+        <button class="sidebar-btn new-chat-btn" @click="$store.chat.newChat()" :disabled="$store.stream.state !== 'idle'">
+            {% include 'svg/add.svg' %}
+            New Chat
+        </button>
+    </div>
 </div>
