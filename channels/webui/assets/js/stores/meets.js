@@ -4,13 +4,13 @@
  * sits the app open during a meeting and streams the auto-picked audio source
  * (screen/tab audio via getDisplayMedia when the browser offers it, else the
  * mic) through the EXISTING voice store (and its STT pipeline) into a
- * timestamped transcript, on stop sending that transcript as its own user
- * message into a dedicated chat.
+ * timestamped transcript, on stop sending that transcript with meeting-notes
+ * instructions into a dedicated chat.
  *
  * zero backend changes: everything here rides on voice.js (for the PCM / VAD /
- * commit pipeline), simpleSocketSend (new_chat + user_message over the
- * websocket), the chat store (switch/rename), RecordingStore (IndexedDB audio
- * retention) and plain fetch helpers.
+ * commit pipeline), the chat store (category-aware chat creation), simpleSocketSend
+ * (user_message over the websocket), RecordingStore (IndexedDB audio retention)
+ * and plain fetch helpers.
  *
  * the voice pipeline is shared with normal dictation; this store OWNS the
  * MediaStream (feeding both the voice store's AudioContext and a parallel
@@ -20,6 +20,7 @@
 const MEETS_STORE = {
     // --- visible state -------------------------------------------------
     active: false,
+    stopping: false,
     finished: false,
     error: null,
     chatId: null,
@@ -57,7 +58,8 @@ const MEETS_STORE = {
     // the meets store sets voice.meetingVadAbsMin to one of these per slider step
     // (3 = the dictation default, so the slider's midpoint matches plain dictation)
     SENS: [0, 0.012, 0.008, 0.006, 0.0035, 0.002],
-    MEETINGS_CATEGORY: "Meetings",   // finished meetings are filed here (created lazily by the backend)
+    MEETINGS_CATEGORY: "Meetings",
+    NOTES_PROMPT: "Write meeting notes from the transcript in this chat. Structure: summary, decisions made, action items (name the owner if one was stated), open questions.",
 
     /* -------------------------- derived ----------------------------- */
     get lastSegmentText() {
@@ -336,6 +338,7 @@ const MEETS_STORE = {
 
     async _doStartMeeting() {
         this.error = null;
+        this.stopping = false;
         const voice = Alpine.store("voice");
         const chat = Alpine.store("chat");
         const streamStore = Alpine.store("stream");
@@ -417,12 +420,14 @@ const MEETS_STORE = {
 
         // reset per-meeting state + fresh id
         this.meetingId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : "m" + Date.now() + Math.random();
+        this.chatId = null;
         this.segments = [];
         this.gaps = [];
         this.markers = [];
         this.wordCount = 0;
         this.paused = false;
         this.dismissed = false;
+        this.finished = false;
         this.durationSec = 0;
         this.tick = 0;
         this.stripKey = 0;
@@ -435,8 +440,14 @@ const MEETS_STORE = {
         // to IndexedDB, including any pre-roll before the new chat finishes
         this._makeRecorder();
 
-        // dedicated chat for this meeting
-        await this._createMeetingChat();
+        // create directly in Meetings instead of inheriting the current chat's category
+        try {
+            await this._createMeetingChat();
+        } catch (err) {
+            this._abort();
+            this.setError(`Failed to create the meeting chat: ${err.message || err}`);
+            return;
+        }
 
         // re-request the wake lock whenever the tab becomes visible again
         this._wakeHandler = () => {
@@ -466,38 +477,20 @@ const MEETS_STORE = {
 
     async _createMeetingChat() {
         const chat = Alpine.store("chat");
-        const beforeId = (chat.chat && chat.chat.id) || chat.selectedChat || null;
-        await simpleSocketSend({ type: "new_chat" });
-
-        // chat_switched -> loadChat makes chat.id observable; give it ~3s to land
-        const deadline = Date.now() + 3000;
-        let newId = null;
-        while (Date.now() < deadline) {
-            const cur = (chat.chat && chat.chat.id) || chat.selectedChat || null;
-            if (cur && cur !== beforeId) {
-                newId = cur;
-                break;
-            }
-            await new Promise((r) => setTimeout(r, 50));
+        await chat.newCategory(this.MEETINGS_CATEGORY);
+        this.chatId = (chat.chat && chat.chat.id) || chat.selectedChat || null;
+        if (!this.chatId) {
+            throw new Error("The new meeting chat could not be loaded.");
         }
-        if (!newId) {
-            // the switch didn't land in time - fall back to whatever is selected now
-            newId = (chat.chat && chat.chat.id) || chat.selectedChat || null;
-        }
-        this.chatId = newId;
-        if (newId) {
-            try { await chat.reloadChats(); } catch (e) {}
-            try { await chat.ensureChatVisible(newId); } catch (e) {}
-            try {
-                await simpleApiPost(`/api/chat/rename/${newId}`, { title: this.title });
-            } catch (e) {
-                console.warn("meeting chat rename failed (continuing)", e);
-            }
+        try {
+            await simpleApiPost(`/api/chat/rename/${this.chatId}`, { title: this.title });
+        } catch (e) {
+            console.warn("meeting chat rename failed (continuing)", e);
         }
     },
 
     addSegment(seg) {
-        if (!this.active) {
+        if (!this.active && !this.stopping) {
             return;
         }
         this.segments.push({ tsSec: seg.tsSec, text: seg.text });
@@ -506,7 +499,7 @@ const MEETS_STORE = {
     },
 
     addGap(g) {
-        if (!this.active) {
+        if (!this.active && !this.stopping) {
             return;
         }
         this.gaps.push({ tsSec: g.tsSec, n: g.index });
@@ -560,9 +553,13 @@ const MEETS_STORE = {
             return;
         }
         this._stopping = true;
+        this.active = false;
+        this.stopping = true;
+        this.finished = true;
         try {
             const voice = Alpine.store("voice");
             this._stopWatchers();
+            this.durationSec = Math.round(voice.meetingElapsedSec());
 
             // 1. flush the recorder (final chunk lands in IDB) BEFORE the voice
             //    pipeline releases the shared stream (releaseAudio stops the tracks)
@@ -572,7 +569,6 @@ const MEETS_STORE = {
             //    tail (emitted via onSegmentCommitted), and releases the audio
             await voice.stopMeetingRecording();
 
-            this.active = false;
             this._releaseWakeLock();
             this._clearLock();
             if (this._stream) {
@@ -580,43 +576,20 @@ const MEETS_STORE = {
                 this._stream = null;
             }
             this.durationSec = Math.round(voice.meetingElapsedSec());
-            this.finished = true;
 
             // 3. send the transcript as its own user message into the meeting chat
             await this._sendTranscript();
+        } catch (err) {
+            this.setError(`Failed to finish the meeting: ${err.message || err}`);
+            throw err;
         } finally {
             this._stopping = false;
-            // once the meeting has ended, re-home its chat into the Meetings category.
-            // runs even if the stop path threw part-way (the chat already exists and
-            // carries the "Meeting ..." title); the helper is best-effort so it can
-            // never surface an error here
-            await this._fileInMeetings();
-        }
-    },
-
-    // move the meeting's chat into the Meetings category and refresh the sidebar.
-    // reuses the chat store's move helper (single POST + local category update +
-    // reloads). clears draggedChatCategory first: it only guards against a
-    // drag-and-drop re-drop into the same category, and a stale value left over from
-    // an earlier drag would otherwise make the helper no-op. best-effort - a failure
-    // is logged, never thrown
-    async _fileInMeetings() {
-        if (!this.chatId) {
-            return;
-        }
-        const chat = Alpine.store("chat");
-        try {
-            chat.draggedChatCategory = null;
-            await chat.moveChatToCategory(this.chatId, this.MEETINGS_CATEGORY);
-        } catch (e) {
-            console.warn("failed to file the meeting chat into the Meetings category", e);
+            this.stopping = false;
         }
     },
 
     // assemble the plain-text transcript (segments + pause/interruption markers +
-    // gap markers, ordered by time) and send it as a user message. using "--"
-    // lines keeps it parseable as plain text, and it lands in the chat context so
-    // "generate notes" can read it back for free
+    // gap markers, ordered by time), followed by instructions to generate notes
     async _sendTranscript() {
         const lines = [];
         lines.push(`Meeting transcript - ${this.title}`);
@@ -641,6 +614,7 @@ const MEETS_STORE = {
         for (const e of events) {
             lines.push(e.line);
         }
+        lines.push("", this.NOTES_PROMPT);
 
         await simpleSocketSend({ type: "user_message", content: lines.join("\n") });
     },
@@ -651,7 +625,7 @@ const MEETS_STORE = {
         }
         await simpleSocketSend({
             type: "user_message",
-            content: "Write meeting notes from the transcript in this chat. Structure: summary, decisions made, action items (name the owner if one was stated), open questions."
+            content: this.NOTES_PROMPT
         });
     },
 
@@ -725,6 +699,8 @@ const MEETS_STORE = {
             this.meetingId = null;
         }
         const voice = Alpine.store("voice");
+        this.active = false;
+        this.stopping = false;
         voice.onSegmentCommitted = null;
         voice.onGap = null;
         this._clearLock();

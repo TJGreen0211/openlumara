@@ -149,15 +149,21 @@ await simpleSocketSend({
 <div id="meet-card" x-cloak
     x-show="$store.meets.finished && !$store.meets.dismissed">
     <div class="meet-card-title">
-        <span class="meet-card-check"></span>
-        Recorded <span x-text="$store.meets.durationLabel()"></span> &middot; <span x-text="$store.meets.wordCount + ' words'"></span>
+        <template x-if="$store.meets.stopping">
+            <span>Meeting stopped. Finalizing transcript and saving recording&hellip;</span>
+        </template>
+        <template x-if="!$store.meets.stopping">
+            <span><span class="meet-card-check"></span>
+                Recorded <span x-text="$store.meets.durationLabel()"></span> &middot; <span x-text="$store.meets.wordCount + ' words'"></span>
+            </span>
+        </template>
     </div>
     <template x-if="$store.meets.gaps.length > 0">
         <div class="meet-card-gaps"
             x-text="$store.meets.gaps.length + ($store.meets.gaps.length === 1 ? ' segment was ' : ' segments were ') + 'missed — audio kept locally in the recording'"></div>
     </template>
-    <div class="meet-card-actions">
-        <button class="meet-card-btn primary" @click="await $store.meets.generateNotes()" x-show="$store.stream.state === 'idle'">Generate notes</button>
+    <div class="meet-card-actions" x-show="!$store.meets.stopping">
+        <button class="meet-card-btn primary" @click="await $store.meets.generateNotes()" x-show="$store.stream.state === 'idle'">Regenerate notes</button>
         <button class="meet-card-btn" @click="$store.meets.viewTranscript()">View transcript</button>
         <button class="meet-card-btn" @click="await $store.meets.downloadRecording()">Download recording</button>
         <button class="meet-card-btn meet-card-close" @click="$store.meets.dismissCard()" title="Dismiss">
