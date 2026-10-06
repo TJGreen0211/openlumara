@@ -20,9 +20,11 @@ CHAT_STORE = {
     turnHistory: [],
     editingMessageIndex: null,
     editContent: '',
+    editAttached: [],
 
     user_input: '',
     last_user_input: '',
+    _sendAckTimer: null,
 
     currentTokenUsage: 0,
 
@@ -261,7 +263,51 @@ CHAT_STORE = {
             files: files
         });
 
+        if (!success) {
+            // the websocket is gone; the payload would have been dropped
+            // silently. put the message back so it isn't lost.
+            this.user_input = text;
+            stream.state = 'idle';
+            return;
+        }
+
+        // the backend confirms receipt with user_message_added. if that never
+        // arrives the socket was half-dead (TCP gone but readyState still
+        // OPEN), so restore the message and force a reconnect instead of
+        // silently eating it.
+        this._sendAckTimer = setTimeout(() => this._checkSendAck(text), 10000);
+
         uploadStore.clear();
+    },
+
+    _checkSendAck(text) {
+        this._sendAckTimer = null;
+
+        const stream = Alpine.store('stream');
+        if (stream.state !== 'message_sending') {
+            // the backend acknowledged, or the stream already resolved
+            return;
+        }
+
+        // no ack within the window: the send went into a dead socket.
+        // restore the message and close the socket so onclose reconnects.
+        if (this.user_input) {
+            // the user already started a new draft in the meantime; keep both
+            this.user_input = text + '\n\n' + this.user_input;
+        } else {
+            this.user_input = text;
+        }
+        stream.state = 'idle';
+        if (window.socket) {
+            window.socket.close();
+        }
+    },
+
+    _clearSendAck() {
+        if (this._sendAckTimer) {
+            clearTimeout(this._sendAckTimer);
+            this._sendAckTimer = null;
+        }
     },
 
     async transcribeVoice() {
@@ -323,24 +369,85 @@ CHAT_STORE = {
         if (!msg) { return; }
         
         this.editingMessageIndex = msg.index;
-        this.editContent = msg.content;
+        // multimodal messages store content as blocks; edit only the user's text block
+        this.editContent = Array.isArray(msg.content)
+            ? (msg.content.find((b, i) => b.type === 'text' && !msg._metadata?.filenames?.[i])?.text ?? '')
+            : msg.content;
+        // existing attachments (names only; new files carry raw File objects)
+        this.editAttached = (msg._metadata?.filenames || []).filter(f => f).map(name => ({ name }));
         Alpine.store('ui').scrollToTurnIndex = turnIndex;
     },
 
     async cancelEdit() {
         this.editingMessageIndex = null;
         this.editContent = '';
+        this.editAttached = [];
+    },
+
+    addEditFile(event) {
+        for (const file of event.target.files) {
+            if (!this.editAttached.some(e => e.name === file.name)) {
+                this.editAttached.push({ name: file.name, file });
+            }
+        }
+        event.target.value = "";
+    },
+
+    removeEditFile(name) {
+        this.editAttached = this.editAttached.filter(e => e.name !== name);
     },
 
     async saveEdit(index) {
+        // rebuild multimodal content: replace the user's text block, keep file blocks
+        const msg = this.turnHistory.flatMap(t => t.messages || []).find(m => m.index === index);
+        let content = this.editContent;
+        let filenames = null;
+
+        if (msg && Array.isArray(msg.content)) {
+            const blocks = [];
+            const names = [];
+            let replacedText = false;
+            msg.content.forEach((block, i) => {
+                const fname = msg._metadata?.filenames?.[i];
+                if (fname && !this.editAttached.some(e => e.name === fname)) { return; } // file removed
+                if (block.type === 'text' && !fname && !replacedText) {
+                    replacedText = true;
+                    blocks.push({ ...block, text: this.editContent });
+                } else {
+                    blocks.push(block);
+                }
+                names.push(fname || '');
+            });
+            if (!replacedText && this.editContent) {
+                blocks.unshift({ type: 'text', text: this.editContent });
+                names.unshift('');
+            }
+            content = blocks;
+            filenames = names;
+        }
+
+        // newly attached files (raw File objects) - converted to blocks by the backend
+        const newFiles = this.editAttached.filter(e => e.file);
+        let files = null;
+        if (newFiles.length > 0) {
+            const uploadStore = Alpine.store("upload");
+            files = await Promise.all(newFiles.map(async (e) => ({
+                name: e.name,
+                data: await uploadStore.readFileAsBase64(e.file)
+            })));
+        }
+
         await simpleSocketSend({
             "type": "message_edit",
             "index": index,
-            "content": this.editContent
+            "content": content,
+            "filenames": filenames,
+            "files": files
         });
 
         this.editingMessageIndex = null;
         this.editContent = '';
+        this.editAttached = [];
     },
 
     /* ----------------------

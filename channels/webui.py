@@ -1356,7 +1356,7 @@ async def create_fastapi(channel):
                         case "chat_delete":
                             chat_id = data.get("chat_id")
                             if not chat_id:
-                                return False
+                                continue
 
                             await uctx.chat.delete(chat_id)
                             await ws_mgr.broadcast({
@@ -1369,7 +1369,7 @@ async def create_fastapi(channel):
                             files_data = data.get("files")
 
                             if not text and not files_data:
-                                break
+                                continue
 
                             files_dict = None
                             if files_data:
@@ -1382,11 +1382,43 @@ async def create_fastapi(channel):
                             await ws_mgr.start_stream(channel, chat_id, message=text, files=files_dict, ws_username=ws_username)
                         case "message_edit":
                             index = data.get("index")
-                            if index < 0:
-                                return False
+                            if index is None or index < 0:
+                                continue
 
                             message = await uctx.chat.messages.get(index)
-                            message["content"] = data.get("content")
+                            content = data.get("content")
+                            filenames = data.get("filenames")
+
+                            # new files attached during edit (same format as user_message)
+                            files_data = data.get("files")
+                            if files_data:
+                                files_dict = {
+                                    f["name"]: base64.b64decode(f["data"])
+                                    for f in files_data
+                                }
+
+                                # if the message had plain string content, convert it to blocks
+                                # so file blocks can be appended
+                                if isinstance(content, str):
+                                    content = [{"type": "text", "text": content}]
+                                    filenames = [""]
+
+                                # keep filenames aligned with content if not provided
+                                if filenames is None:
+                                    filenames = ["" for _ in content]
+
+                                for filename, file_data in files_dict.items():
+                                    block = channel._file_to_block(filename, file_data)
+                                    if block is None:
+                                        continue
+                                    content.append(block)
+                                    filenames.append(filename)
+
+                            message["content"] = content
+
+                            if filenames is not None:
+                                message.setdefault("_metadata", {})["filenames"] = filenames
+
                             await uctx.chat.messages.edit(index, message)
 
                             await ws_mgr.broadcast({
@@ -1394,8 +1426,8 @@ async def create_fastapi(channel):
                             }, username=ws_username)
                         case "message_delete":
                             index = data.get("index")
-                            if index < 0:
-                                return False
+                            if index is None or index < 0:
+                                continue
 
                             await uctx.chat.messages.delete_from(index)
                             await ws_mgr.broadcast({
@@ -1412,7 +1444,7 @@ async def create_fastapi(channel):
                                         "type": "error",
                                         "error": "Could not regenerate message (no preceding user message found)"
                                     }, username=ws_username)
-                                    return
+                                    continue
 
                                 user_message = await uctx.chat.messages.get(last_user_message_index)
 
@@ -1421,7 +1453,8 @@ async def create_fastapi(channel):
                                 await uctx.chat.messages.delete_from(max(0, last_user_message_index))
 
                                 await ws_mgr.broadcast({"type": "sync"}, username=ws_username)
-                                await ws_mgr.start_stream(channel, uctx.chat.get("id"), user_message.get("content"), ws_username=ws_username)
+                                # pass the full message so _metadata survives re-sending
+                                await ws_mgr.start_stream(channel, uctx.chat.get("id"), user_message, ws_username=ws_username)
                         case _:
                             channel.log(channel.name, f"Unknown websocket command received: {msg_type}")
 

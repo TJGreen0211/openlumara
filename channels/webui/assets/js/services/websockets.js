@@ -31,6 +31,13 @@ async function connectWebSocket() {
         Alpine.store('ui').connectionState = 'connected';
         isWsConnected = true;
         wsReconnecting = false;
+
+        // a send that failed against a dead socket can leave the stream state
+        // wedged in message_sending; a fresh connection always starts idle
+        // (the backend cancels this user's stream task on disconnect, so
+        // there is no live stream to clobber here)
+        Alpine.store('stream').state = 'idle';
+
         await Alpine.store("chat").reloadChat();
     };
 
@@ -103,6 +110,9 @@ async function handleWebSocketMessage(data) {
             break;
 
         case "user_message_added":
+            // the backend received the message; cancel the send-ack watchdog
+            chat._clearSendAck();
+
             // reload chat from backend so that the new user message shows up
             await chat.reloadChat();
 

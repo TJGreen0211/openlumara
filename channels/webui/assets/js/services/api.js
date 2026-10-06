@@ -35,12 +35,16 @@ async function simpleApiPost(url, content=null) {
 async function simpleSocketSend(data) {
     try {
         console.log(data);
-        return window.socket.send(JSON.stringify(data));
+        if (!window.socket || window.socket.readyState !== WebSocket.OPEN) {
+            // the socket is gone or closing; send() would drop the payload
+            // without raising, so report the failure instead of pretending success
+            return false;
+        }
+        window.socket.send(JSON.stringify(data));
+        return true;
     } catch (e) {
         return false
     }
-
-    return true
 }
 
 async function reportDetectedTimezone() {

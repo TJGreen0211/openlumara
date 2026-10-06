@@ -22,7 +22,7 @@
 
         <!-- Add User Form -->
         <template x-if="showAddForm">
-            <div class="add-user-form" @submit.prevent="$store.users.createUser(newUsername, newPassword, newRole).then(() => { showAddForm = false; newUsername = ''; newPassword = ''; newRole = 'user'; })">
+            <form class="add-user-form" @submit.prevent="$store.users.createUser(newUsername, newPassword, newRole).then(() => { showAddForm = false; newUsername = ''; newPassword = ''; newRole = 'user'; })">
                 <div class="form-row">
                     <input type="text" x-model="newUsername" placeholder="Username" required class="input-field">
                     <input type="password" x-model="newPassword" placeholder="Password" required class="input-field">
@@ -32,7 +32,7 @@
                     </select>
                     <button type="submit" class="btn-small" :disabled="$store.users.loading">Create</button>
                 </div>
-            </div>
+            </form>
         </template>
 
         <!-- Users Table -->
@@ -68,7 +68,7 @@
             <div class="modal-overlay" @click.self="editingUser = null">
                 <div class="modal-dialog">
                     <h4>Edit User: <span x-text="editingUser"></span></h4>
-                    <div class="edit-form" @submit.prevent="$store.users.updateUser(editingUser, { [editField]: editValue }).then(() => { editingUser = null; editField = null; editValue = ''; })">
+                    <form class="edit-form" @submit.prevent="$store.users.updateUser(editingUser, { [editField]: editValue }).then(() => { editingUser = null; editField = null; editValue = ''; })">
                         <template x-if="editField === 'role'">
                             <div class="form-row">
                                 <label>New Role:</label>
@@ -88,7 +88,7 @@
                             <button type="submit" class="btn-small" :disabled="$store.users.loading || (editField === 'password' && !editValue)">Save</button>
                             <button type="button" class="btn-small btn-secondary" @click="editingUser = null">Cancel</button>
                         </div>
-                    </div>
+                    </form>
                 </div>
             </div>
         </template>

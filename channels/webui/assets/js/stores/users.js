@@ -15,6 +15,14 @@ const USERS_STORE = {
         };
     },
 
+    async _checkResponse(response) {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) {
+            throw new Error(data.data || 'Request failed');
+        }
+        return data.data;
+    },
+
     async init() {
         const role = document.querySelector('html').getAttribute('data-user-role');
         this.isAdmin = role === 'admin';
@@ -39,11 +47,11 @@ const USERS_STORE = {
         this.loading = true;
         this.error = null;
         try {
-            await fetch('/api/users', {
+            await this._checkResponse(await fetch('/api/users', {
                 method: 'POST',
                 headers: this._csrfHeaders(),
                 body: JSON.stringify({ username, password, role })
-            });
+            }));
             await this.loadUsers();
         } catch (err) {
             this.error = err.message || 'Failed to create user';
@@ -56,11 +64,11 @@ const USERS_STORE = {
         this.loading = true;
         this.error = null;
         try {
-            await fetch(`/api/users/${encodeURIComponent(username)}`, {
+            await this._checkResponse(await fetch(`/api/users/${encodeURIComponent(username)}`, {
                 method: 'PATCH',
                 headers: this._csrfHeaders(),
                 body: JSON.stringify(changes)
-            });
+            }));
             await this.loadUsers();
         } catch (err) {
             this.error = err.message || 'Failed to update user';
@@ -73,10 +81,10 @@ const USERS_STORE = {
         this.loading = true;
         this.error = null;
         try {
-            await fetch(`/api/users/${encodeURIComponent(username)}`, {
+            await this._checkResponse(await fetch(`/api/users/${encodeURIComponent(username)}`, {
                 method: 'DELETE',
                 headers: { 'X-CSRF-Token': this._getCsrfToken() }
-            });
+            }));
             await this.loadUsers();
         } catch (err) {
             this.error = err.message || 'Failed to delete user';
