@@ -144,8 +144,8 @@ CHAT_STORE = {
         await this.reloadChat();
     },
 
-    async newCategory(categoryName) {
-        await simpleApiPost('/api/chat/new', { category: categoryName });
+    async newCategory(categoryName, metadata = null) {
+        await simpleApiPost('/api/chat/new', { category: categoryName, metadata });
 
         const result = await simpleApiFetch('/api/chat/current');
         if (!result) { return; }

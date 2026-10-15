@@ -1,4 +1,13 @@
-<template x-if="message && $store.chat.editingMessageIndex !== turn.first_message_index">
+<!-- meeting boundary: a styled divider instead of a bubble (invisible to the AI) -->
+<template x-if="message && message._metadata?.signal === 'MEETING_CUTOFF'">
+    <div class="meeting-divider">
+        <span class="meeting-divider-line"></span>
+        <span class="meeting-divider-label" x-text="message.content"></span>
+        <span class="meeting-divider-line"></span>
+    </div>
+</template>
+
+<template x-if="message && message._metadata?.signal !== 'MEETING_CUTOFF' && $store.chat.editingMessageIndex !== turn.first_message_index">
     <div class="fullwidth">
         <template x-if="Array.isArray(message.content)">
             <div class="multimodal-content">

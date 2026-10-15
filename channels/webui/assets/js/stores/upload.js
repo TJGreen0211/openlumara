@@ -60,10 +60,17 @@ const UPLOAD_STORE = {
             if (item.type.startsWith('image/')) {
                 const blob = item.getAsFile();
                 if (blob) {
-                    // Create a File object with a generated name
+                    // Create a File object with a generated name, made unique
+                    // because Date.now() collides when several images are
+                    // pasted within the same millisecond
                     const timestamp = Date.now();
                     const ext = blob.type.split('/')[1] || 'png';
-                    const file = new File([blob], `pasted-image-${timestamp}.${ext}`, {
+                    let name = `pasted-image-${timestamp}.${ext}`;
+                    let n = 1;
+                    while (this.files.some(f => f.name === name)) {
+                        name = `pasted-image-${timestamp}-${n++}.${ext}`;
+                    }
+                    const file = new File([blob], name, {
                         type: blob.type
                     });
                     this.files.push(file);

@@ -126,6 +126,16 @@ async function handleWebSocketMessage(data) {
             stream.state = 'message_received';
             break;
 
+        case "error":
+            // top-level command errors (e.g. oversized uploads, failed regenerate).
+            // no stream was started, so unstick the UI instead of waiting on the
+            // send-ack watchdog to recover
+            chat._clearSendAck();
+            stream.state = 'idle';
+            Alpine.store('notifications').send(data.error || 'Unknown error');
+            alert(data.error || 'Unknown error');
+            break;
+
         case "turn_stream":
             const segment = data.turn;
 
@@ -306,6 +316,20 @@ async function handleWebSocketMessage(data) {
         case "chat_switched":
             // make sure we sync chat switches across instances
             await chat.loadChat(data.id);
+            break;
+
+        case "chat_metadata_updated":
+            // rename or meeting-room toggle (from this tab or another one):
+            // refresh the open chat's metadata/title in place, then the sidebar
+            if (data.id && data.id !== chat.selectedChat) {
+                // another chat changed - only the sidebar list carries it
+                await chat.reloadChats();
+                break;
+            }
+            if (data.title) { chat.chat.title = data.title; }
+            if (data.tags) { chat.chat.tags = data.tags; }
+            if (data.metadata) { chat.chat.metadata = data.metadata; }
+            await chat.reloadChats();
             break;
 
         case "stream_complete":

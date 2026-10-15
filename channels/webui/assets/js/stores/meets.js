@@ -324,19 +324,21 @@ const MEETS_STORE = {
     // click and `active` turning true a rapid second click would otherwise start a
     // second meeting (the voice.recording / cross-tab guards all lag the mic + chat
     // phase). setting _starting synchronously here is the only guard that catches it
-    async startMeeting() {
-        if (this.active || this._starting) {
+    async startMeeting(opts = {}) {
+        // stopping = the previous meeting is still flushing its transcript;
+        // starting now could land the new boundary BEFORE that transcript
+        if (this.active || this.stopping || this._starting) {
             return;
         }
         this._starting = true;
         try {
-            return await this._doStartMeeting();
+            return await this._doStartMeeting(opts.targetChatId || null);
         } finally {
             this._starting = false;
         }
     },
 
-    async _doStartMeeting() {
+    async _doStartMeeting(targetChatId = null) {
         this.error = null;
         this.stopping = false;
         const voice = Alpine.store("voice");
@@ -352,6 +354,12 @@ const MEETS_STORE = {
         }
         if (streamStore.state !== "idle") {
             this.setError("Wait for the current reply to finish before starting a meeting.");
+            return;
+        }
+        if (targetChatId && chat.selectedChat !== targetChatId) {
+            // in-chat meetings only ever start from the room's own UI, so the
+            // room must be the open chat - never record into a random chat
+            this.setError("Open the meeting room chat first to start a meeting in it.");
             return;
         }
 
@@ -440,13 +448,28 @@ const MEETS_STORE = {
         // to IndexedDB, including any pre-roll before the new chat finishes
         this._makeRecorder();
 
-        // create directly in Meetings instead of inheriting the current chat's category
-        try {
-            await this._createMeetingChat();
-        } catch (err) {
-            this._abort();
-            this.setError(`Failed to create the meeting chat: ${err.message || err}`);
-            return;
+        if (targetChatId) {
+            // in-chat meeting: reuse the open meeting room (keep its title), and
+            // drop a boundary marker so this meeting's notes only see its own
+            // transcript. the stream is already acquired, so a failure here must
+            // tear everything back down.
+            this.chatId = targetChatId;
+            try {
+                await simpleApiPost(`/api/chat/meeting/boundary/${this.chatId}`, { title: this.title });
+            } catch (err) {
+                this._abort();
+                this.setError(`Failed to start the meeting in this chat: ${err.message || err}`);
+                return;
+            }
+        } else {
+            // create directly in Meetings instead of inheriting the current chat's category
+            try {
+                await this._createMeetingChat();
+            } catch (err) {
+                this._abort();
+                this.setError(`Failed to create the meeting chat: ${err.message || err}`);
+                return;
+            }
         }
 
         // re-request the wake lock whenever the tab becomes visible again
@@ -477,7 +500,8 @@ const MEETS_STORE = {
 
     async _createMeetingChat() {
         const chat = Alpine.store("chat");
-        await chat.newCategory(this.MEETINGS_CATEGORY);
+        // chats created by the record button are meeting rooms from the start
+        await chat.newCategory(this.MEETINGS_CATEGORY, { meeting_room: true });
         this.chatId = (chat.chat && chat.chat.id) || chat.selectedChat || null;
         if (!this.chatId) {
             throw new Error("The new meeting chat could not be loaded.");
@@ -616,7 +640,9 @@ const MEETS_STORE = {
         }
         lines.push("", this.NOTES_PROMPT);
 
-        await simpleSocketSend({ type: "user_message", content: lines.join("\n") });
+        // chat_id pins the transcript to the meeting chat even if the user
+        // navigated to another chat meanwhile (the server switches + broadcasts)
+        await simpleSocketSend({ type: "user_message", content: lines.join("\n"), chat_id: this.chatId });
     },
 
     async generateNotes() {
@@ -625,8 +651,26 @@ const MEETS_STORE = {
         }
         await simpleSocketSend({
             type: "user_message",
-            content: this.NOTES_PROMPT
+            content: this.NOTES_PROMPT,
+            chat_id: this.chatId
         });
+    },
+
+    // completion-card action: start another meeting in the same room, even if
+    // the user navigated to another chat after the previous one finished
+    async startNewMeeting() {
+        if (!this.chatId || this.active || this.stopping) {
+            return;
+        }
+        const chat = Alpine.store("chat");
+        if (chat.selectedChat !== this.chatId) {
+            await chat.loadChat(this.chatId);
+        }
+        if (chat.selectedChat !== this.chatId) {
+            this.setError("Could not open the meeting room chat.");
+            return;
+        }
+        await this.startMeeting({ targetChatId: this.chatId });
     },
 
     async viewTranscript() {

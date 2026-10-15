@@ -288,12 +288,17 @@ class Channel:
 
         For sending through send() and send_stream()
 
-        Structure is:
-        {
-            "my_file.png": (file handler object),
-            "my_audio.mp3": (file handler object),
-            and so on
-        }
+        Structure is an ordered list of (filename, file data) pairs, so that
+        multiple files sharing a name are all kept:
+        [
+            ("my_file.png", (file bytes)),
+            ("my_file.png", (file bytes)),
+            ("my_audio.mp3", (file bytes)),
+        ]
+
+        A dict of {filename: file data} is also accepted for backwards
+        compatibility, but duplicate filenames in a dict collapse into one
+        entry, so prefer the list form.
         """
         content_blocks = []
 
@@ -321,7 +326,14 @@ class Channel:
 
         message_dict = {"role": "user"}
 
-        for filename, file_data in files.items():
+        # normalize to an ordered list of (name, data) pairs; a dict is accepted
+        # for backwards compatibility but silently dedupes same-name files
+        if isinstance(files, dict):
+            file_pairs = list(files.items())
+        else:
+            file_pairs = [tuple(f) for f in files]
+
+        for filename, file_data in file_pairs:
             block = self._file_to_block(filename, file_data)
             if block is None:
                 continue

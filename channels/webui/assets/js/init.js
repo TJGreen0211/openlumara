@@ -43,7 +43,10 @@ document.addEventListener('alpine:init', async () => {
 
     // register the service worker
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js');
+        // updateViaCache: 'none' forces the browser to refetch /sw.js from the
+        // network on every update check, so a stale cached service worker can
+        // never keep serving stale precached CSS/JS after a deploy
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
     }
 
     // check if we're on a phone

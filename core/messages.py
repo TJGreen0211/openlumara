@@ -63,7 +63,10 @@ class Messages:
         if "_metadata" not in new_message.keys():
             new_message["_metadata"] = {}
 
-        if (not self.chat.get("title") or self.chat.get("title") == "New chat") and message.get("role") == "user" and not cmd:
+        # signal messages (eg. meeting boundaries) must never hijack the chat title
+        is_signal = bool(message.get("_metadata", {}).get("signal"))
+        untitled = not self.chat.get("title") or self.chat.get("title") == "New chat"
+        if untitled and message.get("role") == "user" and not cmd and not is_signal:
             # auto-set title (if the message was not a command)
             msg_content = self.channel._extract_content(new_message)
             if isinstance(msg_content, str):

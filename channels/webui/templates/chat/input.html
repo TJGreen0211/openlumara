@@ -42,7 +42,7 @@
         'loading': $store.voice.transcribing,
         'meeting-locked': $store.meets.active
     }"
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && !$store.voice.isIphone()"
+    x-show="$store.stream.state === 'idle' && $store.settings.settings?.api?.voice_enabled && !$store.voice.isIphone()"
     @click="await $store.chat.transcribeVoice()">
     <svg x-show="(!$store.voice.recording && !$store.voice.transcribing) || $store.meets.active"
         xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -111,7 +111,7 @@ await simpleSocketSend({
      recording control bar; after it stops the completion card takes the same slot.
      both are absolutely positioned above the input bar exactly like #voice-live -->
 <div id="meet-bar" x-cloak
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.meets.active">
+    x-show="$store.stream.state === 'idle' && $store.settings.settings?.api?.voice_enabled && $store.meets.active">
     <div class="meet-row">
         <span class="meet-dot"></span>
         <span class="meet-rec">REC</span>
@@ -164,6 +164,7 @@ await simpleSocketSend({
     </template>
     <div class="meet-card-actions" x-show="!$store.meets.stopping">
         <button class="meet-card-btn primary" @click="await $store.meets.generateNotes()" x-show="$store.stream.state === 'idle'">Regenerate notes</button>
+        <button class="meet-card-btn" @click="await $store.meets.startNewMeeting()" x-show="$store.stream.state === 'idle'">Start new meeting</button>
         <button class="meet-card-btn" @click="$store.meets.viewTranscript()">View transcript</button>
         <button class="meet-card-btn" @click="await $store.meets.downloadRecording()">Download recording</button>
         <button class="meet-card-btn meet-card-close" @click="$store.meets.dismissCard()" title="Dismiss">
@@ -176,18 +177,18 @@ await simpleSocketSend({
      itself only receives committed segments, so this is where the live tail lives
      (or just a listening timer when voice_preview_style is "off") -->
 <p id="voice-live" x-cloak
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.recording && !$store.meets.active">
-    <template x-if="$store.settings.settings.channels.settings.webui.voice_preview_style !== 'off'">
+    x-show="$store.stream.state === 'idle' && $store.settings.settings?.api?.voice_enabled && $store.voice.recording && !$store.meets.active">
+    <template x-if="$store.settings.settings?.channels?.settings?.webui?.voice_preview_style !== 'off'">
         <span class="voice-live-text"
             x-text="$store.voice.preview || 'listening…'"
             :style="$store.voice.previewKey % 2 === 1 ? 'animation: voiceFadeInA 0.25s ease' : 'animation: voiceFadeInB 0.25s ease'"></span>
     </template>
-    <template x-if="$store.settings.settings.channels.settings.webui.voice_preview_style === 'off'">
+    <template x-if="$store.settings.settings?.channels?.settings?.webui?.voice_preview_style === 'off'">
         <span>Listening&hellip; <span class="voice-live-timer" x-text="$store.voice.elapsedLabel()"></span></span>
     </template>
 </p>
 <p id="voice-native-hint" x-cloak
-    x-show="$store.stream.state === 'idle' && $store.settings.settings.api.voice_enabled && $store.voice.nativeDictationLikely() && !$store.voice.recording && !$store.voice.isIphone()">
+    x-show="$store.stream.state === 'idle' && $store.settings.settings?.api?.voice_enabled && $store.voice.nativeDictationLikely() && !$store.voice.recording && !$store.voice.isIphone()">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
         <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>

@@ -561,6 +561,8 @@ class APIClient():
             error_str = str(e).lower()
             if "model" in error_str and ("not found" in error_str or "missing" in error_str):
                 return APIError("Model with that name does not exist!", e)
+            elif "image" in error_str and ("at most 0" in error_str or "does not support image" in error_str):
+                return APIError("The selected model does not support image input. Switch to a vision-capable model (e.g. one with an mmproj/vision projector loaded), or remove the image and try again.", e)
             else:
                 # It's a different kind of 400 error (e.g., invalid parameters)
                 return APIError("Bad request", e)

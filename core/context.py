@@ -1,10 +1,38 @@
 import core
 import json
 
+
+def apply_cutoff(messages):
+    """
+    unified last-cutoff-wins rule for chat history: find the last message marked
+    with a cutoff signal and drop everything before it.
+
+    - SUMMARIZATION_CUTOFF: current behavior, prepend the summarize prompt so the
+      model knows the earlier history was cut for summarization.
+    - MEETING_CUTOFF: meeting boundary - the new meeting's context starts fresh,
+      no prompt is injected.
+
+    the cutoff message itself is a signal message and gets stripped from the
+    context by the caller's signal filter, so it never reaches the model.
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        signal = messages[i].get("_metadata", {}).get("signal")
+        if signal == "SUMMARIZATION_CUTOFF":
+            return [{"role": "user", "content": "Summarize our chat so far."}] + messages[i + 1:]
+        if signal == "MEETING_CUTOFF":
+            return messages[i + 1:]
+
+    return messages
+
+
 class Context:
     # special message type (not intended to be added to context) that
     # will cause context.get() to cut off messages before this cutoff point
     SUMMARIZATION_CUTOFF = {"_metadata": {"signal": "SUMMARIZATION_CUTOFF"}}
+
+    # meeting boundary marker: cuts everything before it out of the LLM context
+    # so each meeting in a meeting-room chat only sees its own transcript
+    MEETING_CUTOFF = {"_metadata": {"signal": "MEETING_CUTOFF"}}
 
     def __init__(self, channel, username=None):
         self.channel = channel
@@ -70,10 +98,7 @@ class Context:
             # from which to actually return the chat history
 
             # find the last occurence of it and return only the messages from that point onward
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i].get("_metadata", {}).get("signal") == "SUMMARIZATION_CUTOFF":
-                    messages = [{"role": "user", "content": "Summarize our chat so far."}] + messages[i + 1:]
-                    break
+            messages = apply_cutoff(messages)
 
             # Remove ghost messages and signal messages from history
             messages = [msg for msg in messages if not msg.get("_metadata", {}).get("ghost") and not msg.get("_metadata", {}).get("signal")]

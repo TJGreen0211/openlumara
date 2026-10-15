@@ -38,34 +38,34 @@
             ### libraries ###
         -->
         <!-- text area autoresize plugin for Alpine.js -->
-        <script src="{{ url_for('assets', path='js/libs/alpine-autosize.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/alpine-autosize.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- automatic animation plugin for Alpine.js -->
-        <script src="{{ url_for('assets', path='js/libs/alpine-animation.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/alpine-animation.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- intersect plugin for Alpine.js (allows lazy loading, keeping stuff unloaded until scrolled into the viewport) -->
-        <script src="{{ url_for('assets', path='js/libs/alpine-intersect.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/alpine-intersect.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- DOMPurify (XSS protection) -->
-        <script src="{{ url_for('assets', path='js/libs/purify.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/purify.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- highlight.js (code syntax highlighter) -->
-        <script src="{{ url_for('assets', path='js/libs/highlight.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/highlight.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- marked (markdown support) -->
-        <script src="{{ url_for('assets', path='js/libs/marked.min.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/libs/marked.min.js') ~ '?v=' ~ asset_version }}"></script>
 
         <!-- Alpine.js <3 (thank you for making a lightweight framework that fits perfectly with openlumara) -->
-        <script src="{{ url_for('assets', path='js/libs/alpine.min.js') }}" defer></script>
+        <script src="{{ url_for('assets', path='js/libs/alpine.min.js') ~ '?v=' ~ asset_version }}" defer></script>
 
         <!-- 
             ### stylesheets ### 
         -->
         {% for file in css_files %}
-        <link rel="stylesheet" href="{{ url_for('assets', path='css/'+file) }}" />
+        <link rel="stylesheet" href="{{ url_for('assets', path='css/'+file) ~ '?v=' ~ asset_version }}" />
         {% endfor %}
 
-        <link rel="stylesheet" id="code-theme" href="{{ url_for('assets', path='css/code-themes/github-dark.css') }}">
+        <link rel="stylesheet" id="code-theme" href="{{ url_for('assets', path='css/code-themes/github-dark.css') ~ '?v=' ~ asset_version }}">
 
     </head>
     <body>
@@ -117,12 +117,12 @@
 
         <!-- utility functions used by everything else -->
         {% for file in js_utils %}
-        <script src="{{ url_for('assets', path='js/utils/'+file) }}"></script>
+        <script src="{{ url_for('assets', path='js/utils/'+file) ~ '?v=' ~ asset_version }}"></script>
         {% endfor %}
 
         <!-- javascript files -->
         {% for file in js_files %}
-        <script src="{{ url_for('assets', path='js/'+file) }}"></script>
+        <script src="{{ url_for('assets', path='js/'+file) ~ '?v=' ~ asset_version }}"></script>
         {% endfor %}
 
         <!--
@@ -136,10 +136,10 @@
 
         <!-- Alpine stores -->
         {% for js_file in alpine_stores %}
-        <script src="{{ url_for('assets', path='js/stores/'+js_file) }}"></script>
+        <script src="{{ url_for('assets', path='js/stores/'+js_file) ~ '?v=' ~ asset_version }}"></script>
         {% endfor %}
 
         <!-- and finally, initialize! -->
-        <script src="{{ url_for('assets', path='js/init.js') }}"></script>
+        <script src="{{ url_for('assets', path='js/init.js') ~ '?v=' ~ asset_version }}"></script>
     </body>
 </html>

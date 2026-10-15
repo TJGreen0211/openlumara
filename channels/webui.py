@@ -17,6 +17,7 @@ import core
 import os
 import json
 import asyncio
+import datetime
 import hashlib
 import time
 
@@ -262,6 +263,12 @@ class Webui(core.channel.Channel):
             proxy_headers=True,
             forwarded_allow_ips = "127.0.0.1",
 
+            # the 16MB default kills the whole websocket connection when a
+            # websocket message (e.g. a chat send with several photos base64'd
+            # inline) exceeds it, silently dropping every file in the message.
+            # allow up to 128MB so multi-file uploads arrive intact.
+            ws_max_size=128 * 1024 * 1024,
+
             # only log critical http errors
             log_level="error"
         )
@@ -319,7 +326,10 @@ class Webui(core.channel.Channel):
                     for filename in files:
                         full_path = os.path.join(root, filename)
                         rel_path = os.path.relpath(full_path, assets_dir)
-                        files_to_cache.append('/assets/' + rel_path.replace(os.sep, '/'))
+                        # the templates link assets as ?v=<content hash>, so the
+                        # precache entries must carry the same query or the
+                        # offline fallback would never match a request
+                        files_to_cache.append('/assets/' + rel_path.replace(os.sep, '/') + '?v=' + self._sw_version)
         files_to_cache.sort()
         return files_to_cache
 
@@ -459,6 +469,30 @@ def get_recursive_assets(assets_path, ext, skip: list = []):
 
     return sorted(files)
 
+# upload size caps, checked on the base64 strings BEFORE decoding. without a
+# cap, one huge websocket message amplifies into many simultaneous copies
+# (json.loads copy, decoded bytes, re-encoded block, storage dump, api dump,
+# broadcast) and then lives in the chat history forever.
+MAX_UPLOAD_FILE_B64 = 32 * 1024 * 1024    # per file, ~24MB raw
+MAX_UPLOAD_TOTAL_B64 = 96 * 1024 * 1024   # per message, ~72MB raw
+
+def upload_size_error(files_data):
+    """Returns an error message if attached files exceed the size caps, else None."""
+    if not files_data:
+        return None
+
+    for f in files_data:
+        if len(f.get("data") or "") > MAX_UPLOAD_FILE_B64:
+            return (f"File '{f.get('name')}' is too large. "
+                    f"Each file must stay under {MAX_UPLOAD_FILE_B64 // 1048576}MB.")
+
+    total = sum(len(f.get("data") or "") for f in files_data)
+    if total > MAX_UPLOAD_TOTAL_B64:
+        return (f"Attached files are too large together ({total // 1048576}MB). "
+                f"One message is limited to {MAX_UPLOAD_TOTAL_B64 // 1048576}MB total.")
+
+    return None
+
 def inject_indexes_into_messages(lst: list):
     """speaks for itself lol"""
     return [{**dickt, 'index': index} for index, dickt in enumerate(lst)]
@@ -549,6 +583,7 @@ async def create_fastapi(channel):
         return channel.templates.TemplateResponse(request, "index.html", {
             "version": channel.version,
             "config": channel.config,
+            "asset_version": channel._sw_version,
             "css_files": css_files,
             "alpine_stores": alpine_stores,
             "js_utils": js_utils,
@@ -562,7 +597,8 @@ async def create_fastapi(channel):
     async def login_page(request: fastapi.Request):
         """Shows the login form."""
         if channel.config.get("require_login"):
-            return channel.templates.TemplateResponse(request, "login.html", {"error": None})
+            return channel.templates.TemplateResponse(request, "login.html", {
+                "error": None, "asset_version": channel._sw_version})
         else:
             return fastapi.responses.RedirectResponse(url="/", status_code=303)
 
@@ -593,7 +629,8 @@ async def create_fastapi(channel):
         password = form.get("password")
 
         if not username or not password:
-            return channel.templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
+            return channel.templates.TemplateResponse(request, "login.html", {
+                "error": "Invalid credentials", "asset_version": channel._sw_version})
 
         auth_result = channel.user_manager.authenticate(username, password)
         if auth_result:
@@ -611,7 +648,8 @@ async def create_fastapi(channel):
             channel.login_attempts[client_ip] = []
         channel.login_attempts[client_ip].append(now)
 
-        return channel.templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
+        return channel.templates.TemplateResponse(request, "login.html", {
+            "error": "Invalid credentials", "asset_version": channel._sw_version})
 
     # ---- logout
     @app.get("/logout")
@@ -738,12 +776,25 @@ async def create_fastapi(channel):
     async def chat_new(request: fastapi.Request):
         """Creates a new chat"""
         uctx, _ = await _get_uctx(request)
+        category = "general"
+        title = None
+        metadata = None
         try:
             body = await request.json()
-            category = body.get('category', 'general') if body else 'general'
+            if body:
+                category = body.get("category", "general")
+                title = body.get("title")
+                metadata = body.get("metadata")
         except Exception:
-            category = 'general'
-        return api_result(await uctx.chat.new(category=category))
+            pass
+
+        kwargs = {"category": category}
+        if title:
+            kwargs["title"] = title
+        if isinstance(metadata, dict):
+            kwargs["metadata"] = metadata
+
+        return api_result(await uctx.chat.new(**kwargs))
 
     @app.post("/api/chat/rename/{chat_id}")
     async def chat_rename(chat_id: str, request: fastapi.Request):
@@ -789,6 +840,85 @@ async def create_fastapi(channel):
             await uctx.chat.set("category", new_category, index=index)
 
             return api_result(success=True)
+        except Exception as e:
+            return api_result(str(e), success=False)
+
+    @app.post("/api/chat/meeting_room/{chat_id}")
+    async def chat_set_meeting_room(chat_id: str, request: fastapi.Request):
+        """Marks or unmarks a chat as a meeting room (multiple meetings in one chat)"""
+        uctx, username = await _get_uctx(request)
+        try:
+            data = await request.json()
+            enabled = bool(data.get("enabled"))
+
+            index = uctx.chat._find_index(chat_id)
+            if index is None:
+                return api_result("Chat not found", success=False)
+
+            # legacy chats may lack the metadata key entirely, and Chat.set()
+            # raises for keys not already present, so mutate the stored dict
+            # directly (same pattern as Chat.set_loaded_modules)
+            chat = uctx.chat.data[index]
+            metadata = chat.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                chat["metadata"] = metadata
+
+            metadata["meeting_room"] = enabled
+            uctx.chat.data.save()
+
+            await channel.websocket_manager.broadcast({
+                "type": "chat_metadata_updated",
+                "id": chat.get("id"),
+                "metadata": metadata,
+            }, username=username)
+
+            return api_result(success=True)
+        except Exception as e:
+            return api_result(str(e), success=False)
+
+    @app.post("/api/chat/meeting/boundary/{chat_id}")
+    async def chat_meeting_boundary(chat_id: str, request: fastapi.Request):
+        """Appends a meeting boundary marker to a chat, isolating the new meeting's
+        context from previous meetings (no-op on an empty chat)"""
+        uctx, username = await _get_uctx(request)
+        try:
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+
+            index = uctx.chat._find_index(chat_id)
+            if index is None:
+                return api_result("Chat not found", success=False)
+
+            # messages.add always targets the currently loaded chat, so switch
+            # to the target chat first and let the user's other tabs follow
+            if uctx.chat.get("id") != chat_id:
+                await uctx.chat.load(chat_id)
+                await channel.websocket_manager.broadcast({
+                    "type": "chat_switched", "id": chat_id
+                }, username=username)
+
+            history = await uctx.chat.messages.get()
+            if not history:
+                # first meeting in a fresh room needs no divider
+                return api_result({"appended": False}, success=True)
+
+            now = datetime.datetime.now()
+            await uctx.chat.messages.add({
+                "role": "user",
+                "content": f"New meeting · {now.strftime('%Y-%m-%d %H:%M')}",
+                "_metadata": {
+                    "signal": "MEETING_CUTOFF",
+                    "meeting": {
+                        "startedAt": now.isoformat(),
+                        "title": data.get("title") or "",
+                    },
+                },
+            })
+
+            return api_result({"appended": True}, success=True)
         except Exception as e:
             return api_result(str(e), success=False)
 
@@ -1324,6 +1454,7 @@ async def create_fastapi(channel):
                                 await uctx.chat.set("title", new_title)
                                 await ws_mgr.broadcast({
                                     "type": "chat_metadata_updated",
+                                    "id": uctx.chat.get("id"),
                                     "title": new_title,
                                     "tags": uctx.chat.get("tags") or []
                                 }, username=ws_username)
@@ -1367,19 +1498,50 @@ async def create_fastapi(channel):
                         case "user_message":
                             text = data.get("content")
                             files_data = data.get("files")
+                            target_chat_id = data.get("chat_id")
 
                             if not text and not files_data:
                                 continue
 
-                            files_dict = None
+                            files_list = None
                             if files_data:
-                                files_dict = {
-                                    f["name"]: base64.b64decode(f["data"])
+                                size_error = upload_size_error(files_data)
+                                if size_error:
+                                    await ws_mgr.broadcast({
+                                        "type": "error",
+                                        "error": size_error
+                                    }, username=ws_username)
+                                    continue
+
+                                # ordered list of (name, bytes) pairs - a dict here
+                                # would silently drop files that share a name
+                                files_list = [
+                                    (f["name"], base64.b64decode(f["data"]))
                                     for f in files_data
-                                }
+                                ]
 
                             chat_id = uctx.chat.get("id") or "default"
-                            await ws_mgr.start_stream(channel, chat_id, message=text, files=files_dict, ws_username=ws_username)
+
+                            # explicit chat targeting (meeting transcripts must land
+                            # in the meeting chat even if the user navigated away).
+                            # the UI follows the transcript via chat_switched.
+                            if target_chat_id and target_chat_id != chat_id:
+                                try:
+                                    await uctx.chat.load(target_chat_id)
+                                except Exception as e:
+                                    await ws_mgr.broadcast({
+                                        "type": "error",
+                                        "error": f"Failed to load chat: {e}"
+                                    }, username=ws_username)
+                                    continue
+
+                                await ws_mgr.broadcast({
+                                    "type": "chat_switched",
+                                    "id": target_chat_id,
+                                }, username=ws_username)
+                                chat_id = target_chat_id
+
+                            await ws_mgr.start_stream(channel, chat_id, message=text, files=files_list, ws_username=ws_username)
                         case "message_edit":
                             index = data.get("index")
                             if index is None or index < 0:
@@ -1392,10 +1554,18 @@ async def create_fastapi(channel):
                             # new files attached during edit (same format as user_message)
                             files_data = data.get("files")
                             if files_data:
-                                files_dict = {
-                                    f["name"]: base64.b64decode(f["data"])
+                                size_error = upload_size_error(files_data)
+                                if size_error:
+                                    await ws_mgr.broadcast({
+                                        "type": "error",
+                                        "error": size_error
+                                    }, username=ws_username)
+                                    continue
+
+                                files_list = [
+                                    (f["name"], base64.b64decode(f["data"]))
                                     for f in files_data
-                                }
+                                ]
 
                                 # if the message had plain string content, convert it to blocks
                                 # so file blocks can be appended
@@ -1407,7 +1577,7 @@ async def create_fastapi(channel):
                                 if filenames is None:
                                     filenames = ["" for _ in content]
 
-                                for filename, file_data in files_dict.items():
+                                for filename, file_data in files_list:
                                     block = channel._file_to_block(filename, file_data)
                                     if block is None:
                                         continue
@@ -1564,6 +1734,18 @@ class WebSocketManager:
                             try:
                                 user_msg_payload = token.copy()
                                 user_msg_payload['index'] = index
+
+                                # the client already has the files locally, and the
+                                # full blocks come back via reloadChat() anyway -
+                                # echoing multi-megabyte base64 blocks back over the
+                                # socket just doubles bandwidth and stalls the loop
+                                content = user_msg_payload.get("content")
+                                if isinstance(content, list):
+                                    user_msg_payload["content"] = [
+                                        b for b in content
+                                        if not (isinstance(b, dict) and b.get("type") in ("image_url", "input_audio"))
+                                    ]
+
                                 await self.broadcast({
                                     "type": "user_message_added",
                                     "message": user_msg_payload,

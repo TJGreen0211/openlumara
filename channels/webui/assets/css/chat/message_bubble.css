@@ -298,3 +298,34 @@
         }
     }
 }
+
+/* meeting boundary divider: rendered instead of a bubble for MEETING_CUTOFF
+   messages. purely visual - the message is stripped from the AI context */
+.meeting-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin: 10px 0;
+    user-select: none;
+
+    .meeting-divider-line {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, transparent, var(--border-color), transparent);
+    }
+
+    .meeting-divider-label {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        padding: 3px 12px;
+        white-space: nowrap;
+    }
+}

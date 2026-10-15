@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - TJ GPT</title>
-    <link rel="stylesheet" href="{{ url_for('assets', path='css/base/base.css') }}">
-    <link rel="stylesheet" href="{{ url_for('assets', path='css/base/variables.css') }}">
-    <link rel="stylesheet" href="{{ url_for('assets', path='css/login.css') }}">
+    <link rel="stylesheet" href="{{ url_for('assets', path='css/base/base.css') ~ '?v=' ~ asset_version }}">
+    <link rel="stylesheet" href="{{ url_for('assets', path='css/login.css') ~ '?v=' ~ asset_version }}">
 </head>
 <body>
     <div class="login-wrapper">

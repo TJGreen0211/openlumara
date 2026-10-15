@@ -39,7 +39,7 @@
     <template x-for="(turn, turnIndex) in $store.chat.turnHistory" :key="turnIndex">
         <div class="fullwidth turn" :data-turn-index="turnIndex">
             <!-- user turn (always one message) -->
-            <template x-if="turn.role === 'user'">
+            <template x-if="turn.role === 'user' && !turn.messages[0]?._metadata?.signal">
                 <div class="message-wrapper user" x-data="{ get message() { return turn.messages[0] } }">
                     <div class="message user">
                         {% include 'chat/turns/user.html' %}
@@ -47,6 +47,14 @@
                             {% include 'chat/message_buttons.html' %}
                         </div>
                     </div>
+                </div>
+            </template>
+
+            <!-- meeting boundary: a styled divider with no bubble and no message
+                 buttons (regenerating from a divider would re-stream its text) -->
+            <template x-if="turn.role === 'user' && turn.messages[0]?._metadata?.signal === 'MEETING_CUTOFF'">
+                <div class="message-wrapper user" x-data="{ get message() { return turn.messages[0] } }">
+                    {% include 'chat/turns/user.html' %}
                 </div>
             </template>
 
