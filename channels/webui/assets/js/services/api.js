@@ -3,7 +3,7 @@
  */
 async function simpleApiFetch(url) {
     // fetches something from the API and returns the data extracted from the JSON response
-    raw_data = await(
+    const raw_data = await(
         await fetch(url)
     ).json()
 
@@ -15,7 +15,7 @@ async function simpleApiFetch(url) {
 }
 async function simpleApiPost(url, content=null) {
     // posts something to the API and returns the data extracted from the JSON response
-    raw_data = await(
+    const raw_data = await(
         await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -34,7 +34,8 @@ async function simpleApiPost(url, content=null) {
 
 async function simpleSocketSend(data) {
     try {
-        console.log(data);
+        // the type only: the full payload can carry megabytes of base64 files
+        console.log('ws send:', data.type);
         if (!window.socket || window.socket.readyState !== WebSocket.OPEN) {
             // the socket is gone or closing; send() would drop the payload
             // without raising, so report the failure instead of pretending success

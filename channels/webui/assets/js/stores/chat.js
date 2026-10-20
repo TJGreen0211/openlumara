@@ -30,6 +30,7 @@ CHAT_STORE = {
     user_input: '',
     last_user_input: '',
     _sendAckTimer: null,
+    _reloadSeq: 0,
 
     currentTokenUsage: 0,
 
@@ -45,7 +46,7 @@ CHAT_STORE = {
 
         this.chat = result;
         this.selectedChat = result.id;
-        this.turnHistory = result.turn_history;
+        this.turnHistory = this._withoutActiveStream(result.turn_history);
         this.currentTokenUsage = result.token_usage;
         Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
 
@@ -253,23 +254,33 @@ CHAT_STORE = {
     },
 
     async reloadChat() {
-        stream = Alpine.store("stream");
-
         if (!this.selectedChat) {
             console.log("tried to reload the chat, but no chat is loaded!");
             return;
         }
 
+        // overlapping reloads (a reconnect, a sync and a stream_complete can all
+        // fire one) may resolve out of order on a slow network; only the most
+        // recently started one may write, or an older snapshot clobbers a newer one
+        const seq = ++this._reloadSeq;
         const result = await simpleApiFetch(`/api/chat/current`);
-        if (!result) { return }
+        if (!result || seq !== this._reloadSeq) { return }
 
         this.chat = result;
         this.selectedChat = result.id;
         // note: deliberately not touching selectedCategory here - a plain
         // data refresh must not change the category the user is looking at
 
-        this.turnHistory = result.turn_history;
+        this.turnHistory = this._withoutActiveStream(result.turn_history);
         Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
+    },
+
+    _withoutActiveStream(turns) {
+        // while a resumed stream is running, the backend history already holds
+        // its intermediate (tool call) messages, which the live stream bubble shows
+        const cutoff = Alpine.store('stream').cutoffIndex;
+        if (cutoff == null || !Array.isArray(turns)) { return turns; }
+        return turns.filter(t => t.first_message_index == null || t.first_message_index <= cutoff);
     },
 
     async reloadCategories() {
@@ -290,7 +301,7 @@ CHAT_STORE = {
 
 
     async send(text) {
-        stream = Alpine.store('stream');
+        const stream = Alpine.store('stream');
         if (stream.state !== 'idle') {
             // don't allow sending during a stream
             // (TODO: allow nudging (interrupting the stream and sending a new message))
@@ -371,9 +382,9 @@ CHAT_STORE = {
             this.user_input = text;
         }
         stream.state = 'idle';
-        if (window.socket) {
-            window.socket.close();
-        }
+        // not socket.close(): on a dead socket that waits on a close handshake
+        // that never comes, and nothing reconnects until it gives up
+        forceWsReconnect();
     },
 
     _clearSendAck() {

@@ -641,8 +641,10 @@ const MEETS_STORE = {
         lines.push("", this.NOTES_PROMPT);
 
         // chat_id pins the transcript to the meeting chat even if the user
-        // navigated to another chat meanwhile (the server switches + broadcasts)
-        await simpleSocketSend({ type: "user_message", content: lines.join("\n"), chat_id: this.chatId });
+        // navigated to another chat meanwhile (the server switches + broadcasts).
+        // queued rather than dropped if the socket is down: after a long meeting
+        // on a phone with the screen locked, it usually is
+        queueSocketSend({ type: "user_message", content: lines.join("\n"), chat_id: this.chatId });
     },
 
     async generateNotes() {

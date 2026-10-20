@@ -17,6 +17,7 @@ import core
 import os
 import json
 import asyncio
+import collections
 import datetime
 import hashlib
 import time
@@ -198,8 +199,8 @@ class Webui(core.channel.Channel):
         self.port = self.config.get("port")
         self.url = f"http://{self.host}:{self.port}"
 
-        # stores logs from channel.log()
-        self.logs = []
+        # stores logs from channel.log() (the old list was re-sliced on every line)
+        self.logs = collections.deque(maxlen=1000)
 
         # service worker data. computed once per server run: the old code
         # walked the entire webui folder on every /sw.js request
@@ -320,6 +321,9 @@ class Webui(core.channel.Channel):
         return self.user_contexts[username]
 
     async def run(self):
+        # on_log can be called from worker threads; it hands log lines to this loop
+        self._loop = asyncio.get_running_loop()
+
         self.log("webui", f"Starting WebUI on {self.url}")
 
         # serve the app using uvicorn
@@ -337,6 +341,12 @@ class Webui(core.channel.Channel):
             # inline) exceeds it, silently dropping every file in the message.
             # allow up to 128MB so multi-file uploads arrive intact.
             ws_max_size=128 * 1024 * 1024,
+
+            # protocol pings find dead connections. the 20s default timeout is
+            # tight for phones on mobile data; a stream keeps running across a
+            # drop now anyway, so tolerating a slow pong costs nothing
+            ws_ping_interval=20,
+            ws_ping_timeout=30,
 
             # only log critical http errors
             log_level="error"
@@ -455,15 +465,13 @@ class Webui(core.channel.Channel):
             # not initialized yet
             return False
 
-        # Store log in buffer for history (capped to prevent unbounded memory growth)
+        # Store log in buffer for history (the deque caps it at 1000 entries)
         self.logs.append({"category": category, "message": message})
-        if len(self.logs) > 1000:
-            self.logs = self.logs[-1000:]
 
         # Broadcast log messages: admin-only in multi-user mode (logs may
         # contain other users' content), to everyone in single-user mode.
-        # Since on_log is sync but manager.broadcast is async, we schedule
-        # it as a task
+        # queueing onto the connections' outboxes is synchronous, so no task
+        # per log line is needed
         log_message = {
             "type": "log",
             "category": category,
@@ -471,15 +479,22 @@ class Webui(core.channel.Channel):
         }
         admins_only = bool(self.config.get("require_login", False))
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.websocket_manager.broadcast(log_message, admins_only=admins_only))
+            running = asyncio.get_running_loop()
         except RuntimeError:
-            # No event loop running - create one for this task
-            asyncio.ensure_future(self.websocket_manager.broadcast(log_message, admins_only=admins_only))
+            running = None
+
+        loop = getattr(self, "_loop", None)
+        if running is not None and running is loop:
+            self.websocket_manager.broadcast_nowait(log_message, admins_only=admins_only)
+        elif loop is not None and not loop.is_closed():
+            # logged from a worker thread: the outbox queues belong to the loop
+            loop.call_soon_threadsafe(self.websocket_manager.broadcast_nowait, log_message, None, admins_only)
 
     async def on_shutdown(self):
-        # broadcast first so clients know we're going away
+        # broadcast first so clients know we're going away (and give the
+        # outboxes a moment to actually send it)
         await self.websocket_manager.broadcast({"type": "shutdown"})
+        await self.websocket_manager.drain(timeout=1.0)
 
         # flush any pending debounced message saves for every cached user
         # context (the base Channel._shutdown only flushes the default
@@ -561,6 +576,17 @@ def upload_size_error(files_data):
                 f"One message is limited to {MAX_UPLOAD_TOTAL_B64 // 1048576}MB total.")
 
     return None
+
+async def decode_upload_files(files_data):
+    """Decodes uploaded files into an ordered list of (name, bytes) pairs.
+
+    a list, not a dict, so files that share a name aren't silently dropped.
+    decoding tens of megabytes of base64 runs in a thread, so it doesn't
+    freeze the event loop (every other user's stream) while it works
+    """
+    def decode():
+        return [(f["name"], base64.b64decode(f["data"])) for f in files_data]
+    return await asyncio.to_thread(decode)
 
 async def save_attachments_to_site(coder, site, files_list):
     """
@@ -763,9 +789,15 @@ async def create_fastapi(channel):
     async def logout(request: fastapi.Request):
         """Logs the user out by clearing their session."""
         username = request.session.get("username")
+        sid = request.session.get("_csrf")
         if username and hasattr(channel, 'user_contexts'):
             channel.user_contexts.pop(username, None)
         request.session.clear()
+        # an already-open socket was authenticated at handshake time and would
+        # otherwise keep working after logout. only this session's sockets:
+        # the user's other devices stay logged in
+        if sid:
+            await channel.websocket_manager.close_where(sid=sid, code=4001, reason="Logged out")
         return fastapi.responses.RedirectResponse(url="/login", status_code=303)
 
     # ------------------
@@ -782,12 +814,23 @@ async def create_fastapi(channel):
             return await channel._get_user_context(username), username
         return channel.context, None
 
+    def _current_chat_id(uctx):
+        # chat.get() raises when no chat is loaded yet
+        try:
+            return uctx.chat.get("id")
+        except Exception:
+            return None
+
     # --- chats
     # -- GET
     @app.get("/api/chat/load/{chat_id}")
     async def chat_load(chat_id: str, request: fastapi.Request):
         """Loads a specific chat by its id"""
         uctx, username = await _get_uctx(request)
+        if chat_id != _current_chat_id(uctx):
+            # a stream still writing into the current chat would continue
+            # into the loaded one
+            await channel.websocket_manager.cancel_stream(username)
         try:
             success = await uctx.chat.load(chat_id)
         except Exception as e:
@@ -892,7 +935,9 @@ async def create_fastapi(channel):
     @app.post("/api/chat/new")
     async def chat_new(request: fastapi.Request):
         """Creates a new chat"""
-        uctx, _ = await _get_uctx(request)
+        uctx, username = await _get_uctx(request)
+        # the new chat becomes current: stop a stream that would continue into it
+        await channel.websocket_manager.cancel_stream(username)
         category = "general"
         title = None
         metadata = None
@@ -936,7 +981,9 @@ async def create_fastapi(channel):
     @app.post("/api/chat/delete/{chat_id}")
     async def chat_delete(chat_id: str, request: fastapi.Request):
         """Deletes a chat by its ID"""
-        uctx, _ = await _get_uctx(request)
+        uctx, username = await _get_uctx(request)
+        if chat_id == _current_chat_id(uctx):
+            await channel.websocket_manager.cancel_stream(username)
         await uctx.chat.delete(chat_id)
         return api_result(success=True)
 
@@ -1330,13 +1377,7 @@ async def create_fastapi(channel):
                 await module.on_user_deleted(username)
             except Exception as e:
                 channel.log("error", f"{module.name}: error in on_user_deleted(): {core.detail_error(e)}")
-        for ws, u in list(channel.websocket_manager.active_connections):
-            if u == username:
-                channel.websocket_manager.disconnect(ws)
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
+        await channel.websocket_manager.close_where(username=username, code=4001, reason="User deleted")
 
         return api_result(success=True)
 
@@ -1541,7 +1582,7 @@ async def create_fastapi(channel):
         since logs may contain other users' content)"""
         if not _system_authorize(request):
             return api_result("Unauthorized", success=False)
-        return api_result(channel.logs)
+        return api_result(list(channel.logs))
 
     # -- POST
     @app.post("/api/system/restart")
@@ -1657,38 +1698,58 @@ async def create_fastapi(channel):
         # or expired cookie, so the mere presence of a "session" cookie proves
         # nothing (any client could send session=x and land on the global context)
         ws_username = None
+        ws_sid = None
         if channel.config.get("require_login", False):
             session = websocket.scope.get("session") or {}
             if session.get("authenticated"):
                 ws_username = session.get("username")
+                # per-login random token: lets /logout close this session's sockets
+                ws_sid = session.get("_csrf")
             if not ws_username:
                 # check if rate limited
                 client_ip = websocket.client.host if websocket.client else "unknown"
                 now = time.time()
+                reason = "Unauthorized"
 
                 if client_ip in channel.login_attempts:
                     channel.login_attempts[client_ip] = [
                         t for t in channel.login_attempts[client_ip] if now - t < 900
                     ]
                     if len(channel.login_attempts[client_ip]) >= 5:
-                        await websocket.close(code=4001, reason="Rate limited")
-                        return
+                        reason = "Rate limited"
 
-                # failure
-                await websocket.close(code=4001, reason="Unauthorized")
+                # closing before accept() turns into an HTTP 403 on the handshake,
+                # which the browser reports as a bare 1006 - then the client can't
+                # tell "logged out" from "network down" and retries forever.
+                # accept first so it receives 4001 and goes to the login page
+                await websocket.accept()
+                await websocket.close(code=4001, reason=reason)
                 return
 
         ws_mgr = channel.websocket_manager
 
-        await ws_mgr.connect(websocket, username=ws_username)
-
         try:
+            await ws_mgr.connect(websocket, username=ws_username, sid=ws_sid)
+
             while True:
                 data_text = await websocket.receive_text()
 
                 try:
                     data = json.loads(data_text)
                     msg_type = data.get("type")
+
+                    # heartbeat: the client can't see protocol-level pings, so it
+                    # uses this to spot a half-open socket (e.g. after iOS
+                    # resumes a backgrounded page) and reconnect
+                    if msg_type == "ping":
+                        ws_mgr.send(websocket, {"type": "pong", "id": data.get("id")})
+                        continue
+
+                    # the client's copy of the streaming turn no longer lines up
+                    # with a turn_delta offset: resend the whole snapshot
+                    if msg_type == "resync":
+                        ws_mgr.send_resume(websocket, ws_username)
+                        continue
 
                     # Set user context for per-user data isolation
                     if ws_username:
@@ -1751,6 +1812,9 @@ async def create_fastapi(channel):
                             if not chat_id:
                                 continue
 
+                            # the stream may be writing into the chat being deleted
+                            if chat_id == _current_chat_id(uctx):
+                                await ws_mgr.cancel_stream(ws_username)
                             await uctx.chat.delete(chat_id)
                             await ws_mgr.broadcast({
                                 "type": "chat_switched",
@@ -1775,12 +1839,12 @@ async def create_fastapi(channel):
                                     }, username=ws_username)
                                     continue
 
-                                # ordered list of (name, bytes) pairs - a dict here
-                                # would silently drop files that share a name
-                                files_list = [
-                                    (f["name"], base64.b64decode(f["data"]))
-                                    for f in files_data
-                                ]
+                                files_list = await decode_upload_files(files_data)
+
+                            # finish off a running stream before touching the chat:
+                            # loading the target chat first would let the old
+                            # stream's partial reply land in it
+                            await ws_mgr.cancel_stream(ws_username)
 
                             chat_id = uctx.chat.get("id") or "default"
 
@@ -1833,10 +1897,7 @@ async def create_fastapi(channel):
                                     }, username=ws_username)
                                     continue
 
-                                files_list = [
-                                    (f["name"], base64.b64decode(f["data"]))
-                                    for f in files_data
-                                ]
+                                files_list = await decode_upload_files(files_data)
 
                                 # if the message had plain string content, convert it to blocks
                                 # so file blocks can be appended
@@ -1870,6 +1931,8 @@ async def create_fastapi(channel):
                             if index is None or index < 0:
                                 continue
 
+                            # a running stream would append after the cut
+                            await ws_mgr.cancel_stream(ws_username)
                             await uctx.chat.messages.delete_from(index)
                             await ws_mgr.broadcast({
                                 "type": "sync"
@@ -1878,6 +1941,10 @@ async def create_fastapi(channel):
                             index = data.get("index")
 
                             if index is not None and channel:
+                                # stop the current stream before truncating the
+                                # history it is still writing to
+                                await ws_mgr.cancel_stream(ws_username)
+
                                 last_user_message_index = await uctx.chat.messages.get_last_message_with_role("user", cutoff_index=index)
 
                                 if last_user_message_index == -1:
@@ -1905,9 +1972,11 @@ async def create_fastapi(channel):
                     channel.log(channel.name, f"WebSocket command error: {core.detail_error(e)}")
 
         except fastapi.WebSocketDisconnect:
-            ws_mgr.disconnect(websocket)
+            pass
         except Exception as e:
             channel.log(channel.name, f"WebSocket error: {core.detail_error(e)}")
+        finally:
+            # also runs on cancellation (shutdown), so no connection is ever leaked
             ws_mgr.disconnect(websocket)
 
     return app
@@ -1915,18 +1984,116 @@ async def create_fastapi(channel):
 # -------------------
 # Websocket Manager
 # -------------------
+def _utf16_len(text):
+    # offsets are checked against JS string lengths, which count UTF-16 units
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _same_slot(a, b):
+    """whether segment b updates segment a in place (the frontend's grouping rule)"""
+    return a.get("type") == b.get("type") and a.get("tool_call_id") == b.get("tool_call_id")
+
+
+class _TurnSender:
+    """coalesces a stream's turn updates before they hit the socket.
+
+    group_stream yields the whole accumulated segment on every token, so
+    forwarding each one costs O(n^2) bytes over a reply (megabytes for a long
+    answer, which backs up slow mobile connections until the ping timeout
+    drops them). instead:
+      - updates are sent at most every FLUSH_INTERVAL; a segment change or
+        the end of the stream always flushes first, so nothing is lost
+      - growing text segments go out as turn_delta appends with the UTF-16
+        offset they apply at, so a client can drop a duplicate (e.g. after a
+        stream_resume snapshot raced ahead of it) or ask for a resync
+    entry["turn"] tracks exactly what was broadcast, which is what
+    stream_resume hands out and what the next delta is relative to.
+    """
+
+    FLUSH_INTERVAL = 0.05
+    TEXT_KEYS = {"content": "content", "reasoning": "reasoning_content"}
+
+    def __init__(self, manager, entry, username):
+        self.manager = manager
+        self.entry = entry
+        self.username = username
+        self.pending = None
+        self.timer = None
+
+    async def update(self, segment):
+        if self.pending is not None and not _same_slot(self.pending, segment):
+            await self.flush()
+        self.pending = segment
+        if self.timer is None or self.timer.done():
+            self.timer = asyncio.create_task(self._flush_later())
+
+    async def _flush_later(self):
+        # keep going while updates land during a flush, so the latest one is
+        # never stranded until the next token (which may be a while away)
+        while True:
+            await asyncio.sleep(self.FLUSH_INTERVAL)
+            await self.flush()
+            if self.pending is None:
+                return
+
+    async def flush(self):
+        segment, self.pending = self.pending, None
+        if segment is None:
+            return
+
+        messages = self.entry["turn"]["messages"]
+        last = messages[-1] if messages else None
+        key = self.TEXT_KEYS.get(segment.get("type"))
+        old = (last.get(key) or "") if key and last else ""
+        new = (segment.get(key) or "") if key else ""
+
+        if key and last and _same_slot(last, segment) and new.startswith(old):
+            messages[-1] = segment
+            if new == old:
+                return
+            payload = {"type": "turn_delta", "key": key, "offset": _utf16_len(old), "append": new[len(old):]}
+        else:
+            WebSocketManager._merge_segment(self.entry["turn"], segment)
+            payload = {"type": "turn_stream", "turn": segment}
+
+        await self.manager.broadcast(payload, username=self.username)
+
+    async def close(self):
+        if self.timer and not self.timer.done():
+            self.timer.cancel()
+        await self.flush()
+
+
 class WebSocketManager:
+    # every connection gets its own outbox drained by its own writer task, so a
+    # slow or half-dead client (a phone on bad signal) only ever stalls itself.
+    # broadcasting used to await each send in turn, so one stuck socket froze
+    # the stream for that user's other tabs and every admin log broadcast
+    OUTBOX_SIZE = 1000
+    SEND_TIMEOUT = 30
+
     def __init__(self, channel):
         self.channel = channel
 
+        # (websocket, username) pairs
         self.active_connections = []
+
+        # websocket -> {"queue", "task", "sid"} (sid identifies the login session)
+        self.outboxes = {}
 
         # one stream task per connected user (keyed by username, or None for anonymous)
         self.streams = {}
         self.roles = {}
 
-    async def connect(self, websocket: fastapi.WebSocket, username=None):
+    async def connect(self, websocket: fastapi.WebSocket, username=None, sid=None):
         await websocket.accept()
+
+        queue = asyncio.Queue(maxsize=self.OUTBOX_SIZE)
+        self.outboxes[websocket] = {
+            "queue": queue,
+            "task": asyncio.create_task(self._writer(websocket, queue)),
+            "sid": sid,
+        }
         self.active_connections.append((websocket, username))
 
         if username:
@@ -1937,9 +2104,50 @@ class WebSocketManager:
 
         # always signal ready on connect so the client can load data
         # (the frontend ignores it if a chat isn't selected yet)
-        await websocket.send_json({
+        self.send(websocket, {
             "type": "ready"
         })
+
+        # a stream outlives its connections (phones drop the socket whenever the
+        # page is backgrounded), so hand a reconnecting tab everything streamed so far
+        self.send_resume(websocket, username)
+
+    def send_resume(self, websocket, username):
+        """send the user's running stream (if any) as a snapshot that later
+        turn_stream/turn_delta updates continue on top of"""
+        entry = self.streams.get(username)
+        if entry and not entry["task"].done():
+            self.send(websocket, {
+                "type": "stream_resume",
+                "turn": entry["turn"],
+                "state": entry["state"],
+                "index": entry["index"],
+            })
+
+    def send(self, websocket, message: dict):
+        """queue a message for one connection (in order with its broadcasts)"""
+        outbox = self.outboxes.get(websocket)
+        if outbox is None:
+            return
+        try:
+            outbox["queue"].put_nowait(message)
+        except asyncio.QueueFull:
+            # it isn't reading: drop it, the client reconnects and resumes
+            self.channel.log(self.channel.name, "Dropping a websocket client that stopped reading")
+            asyncio.ensure_future(self.close(websocket, code=1013))
+
+    async def _writer(self, websocket, queue):
+        while True:
+            message = await queue.get()
+            try:
+                await asyncio.wait_for(websocket.send_json(message), timeout=self.SEND_TIMEOUT)
+            except Exception:
+                # gone (or stuck past the timeout); the endpoint's receive loop
+                # notices too and finishes the cleanup
+                self.disconnect(websocket)
+                return
+            finally:
+                queue.task_done()
 
     def disconnect(self, websocket: fastapi.WebSocket):
         username = None
@@ -1952,40 +2160,91 @@ class WebSocketManager:
             (ws, u) for ws, u in self.active_connections if ws is not websocket
         ]
 
-        if username:
+        outbox = self.outboxes.pop(websocket, None)
+        if outbox and outbox["task"] is not asyncio.current_task():
+            outbox["task"].cancel()
+
+        # the role is per user, not per tab: only forget it with the last connection
+        if username and not any(u == username for _, u in self.active_connections):
             self.roles.pop(username, None)
 
-        # cleanup this user's stream task (if any) - but only when no other
-        # connection for the same key remains, so one tab closing/refreshing
-        # doesn't kill a stream another tab is watching
-        if not any(u == username for ws, u in self.active_connections):
-            entry = self.streams.pop(username, None)
-            if entry and not entry["task"].done():
-                entry["task"].cancel()
+        # the user's stream (if any) deliberately keeps running: it finishes and
+        # saves the full reply, and a reconnecting tab picks it up through
+        # stream_resume. only stop, a chat switch or a new message cancel it
+
+    async def close(self, websocket, code=1000, reason=None):
+        self.disconnect(websocket)
+        try:
+            await asyncio.wait_for(websocket.close(code=code, reason=reason), timeout=2)
+        except Exception:
+            pass
+
+    async def close_where(self, username=None, sid=None, code=1000, reason=None):
+        """close every connection of a user, or of one login session"""
+        targets = [
+            ws for ws, u in self.active_connections
+            if (username is not None and u == username)
+            or (sid is not None and self.outboxes.get(ws, {}).get("sid") == sid)
+        ]
+        for ws in targets:
+            await self.close(ws, code=code, reason=reason)
+
+    def broadcast_nowait(self, message: dict, username=None, admins_only=False):
+        for ws, conn_username in list(self.active_connections):
+            if username and conn_username != username:
+                continue
+            if admins_only and self.roles.get(conn_username) != "admin":
+                continue
+            self.send(ws, message)
 
     async def broadcast(self, message: dict, username=None, admins_only=False):
-        disconnected = []
-        for ws, conn_username in self.active_connections:
-            try:
-                if username and conn_username != username:
-                    continue
-                if admins_only and self.roles.get(conn_username) != "admin":
-                    continue
-                if ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
-                    await ws.send_json(message)
-            except Exception:
-                disconnected.append(ws)
+        self.broadcast_nowait(message, username=username, admins_only=admins_only)
 
-        for conn in disconnected:
-            self.disconnect(conn)
+    async def drain(self, timeout=1.0):
+        """wait (briefly) for queued messages to go out, e.g. before shutdown"""
+        joins = [asyncio.ensure_future(o["queue"].join()) for o in self.outboxes.values()]
+        if joins:
+            await asyncio.wait(joins, timeout=timeout)
+            for j in joins:
+                j.cancel()
 
     async def cancel_stream(self, username=None):
         entry = self.streams.pop(username, None)
         if entry and not entry["task"].done():
+            entry["cancel"].set()
             entry["task"].cancel()
+            # wait for its cleanup: the cancelled stream still saves its partial
+            # reply into whatever chat is loaded when it gets there, and sends
+            # stream_complete. left running, it would write into the chat the
+            # caller loads next and finalize the client mid-way through the
+            # next stream
+            await asyncio.wait({entry["task"]}, timeout=5)
 
-    async def _stream_task(self, message: str, index, files: list = None, ws_username=None, cancel_token=None):
+    # stream state a reconnecting client resumes in, by raw token type
+    # (mirrors what the frontend derives from the same tokens)
+    RESUME_STATES = {
+        "reasoning": "thinking",
+        "content": "streaming",
+        "tool_call_delta": "calling_tools",
+        "tool_calls": "calling_tools",
+        "tool": "processing_tools",
+        "prompt_progress": "processing",
+    }
+
+    @staticmethod
+    def _merge_segment(turn, segment):
+        """apply one turn_stream segment to a turn snapshot, the same way the frontend does"""
+        messages = turn["messages"]
+        last = messages[-1] if messages else None
+        if last and last.get("type") == segment.get("type") and last.get("tool_call_id") == segment.get("tool_call_id"):
+            messages[-1] = segment
+        else:
+            messages.append(segment)
+
+    async def _stream_task(self, message: str, index, files: list = None, ws_username=None,
+                           cancel_token=None, entry=None):
         user_message_confirmed = False
+        sender = _TurnSender(self, entry, ws_username)
 
         try:
             async for partial in self.channel.turncollector.group_stream(
@@ -2037,22 +2296,41 @@ class WebSocketManager:
                         case _:
                             if not user_message_confirmed:
                                 user_message_confirmed = True
+                                entry["state"] = "message_received"
                                 await self.broadcast({
                                     "type": "user_message_confirmed",
                                     "index": index
                                 }, username=ws_username)
 
+                            previous_state = entry["state"]
+                            entry["state"] = self.RESUME_STATES.get(token_type, entry["state"])
+
+                            # content/reasoning text reaches the client through the
+                            # turn updates, and repeated tool_call_deltas only re-set
+                            # the same state, so don't echo those per token
+                            if token_type in ("content", "reasoning"):
+                                continue
+                            if token_type == "tool_call_delta" and previous_state == "calling_tools":
+                                continue
+
+                            # keep the client's view of the turn ahead of state changes
+                            await sender.flush()
                             await self.broadcast({
                                 "type": "token",
                                 "content": token
                             }, username=ws_username)
 
                 elif partial.get("type") == "turn":
-                    await self.broadcast({
-                        "type": "turn_stream",
-                        "turn": partial.get("content")
-                    }, username=ws_username)
+                    # group_stream re-yields (and keeps mutating) the same segment
+                    # dict, so queue a copy of it as it is right now
+                    await sender.update(dict(partial.get("content")))
         finally:
+            await sender.close()
+
+            # a finished stream must not be resumed by the next connection
+            if self.streams.get(ws_username) is entry:
+                self.streams.pop(ws_username, None)
+
             # always finalize the stream, no matter what
             await self.broadcast({
                 "type": "stream_complete"
@@ -2075,9 +2353,17 @@ class WebSocketManager:
         token = asyncio.Event()
         uctx.cancel_token = token
 
+        # turn/state/index are what stream_resume hands a reconnecting client
+        entry = {
+            "cancel": token,
+            "turn": {"role": "assistant", "messages": []},
+            "state": "message_sending",
+            "index": next_index,
+        }
         try:
-            task = asyncio.create_task(self._stream_task(message, next_index, files=files, ws_username=ws_username, cancel_token=token))
-            self.streams[ws_username] = {"task": task, "cancel": token}
+            entry["task"] = asyncio.create_task(self._stream_task(
+                message, next_index, files=files, ws_username=ws_username, cancel_token=token, entry=entry))
+            self.streams[ws_username] = entry
         except Exception as e:
             channel.log(channel.name, f"Background stream error: {core.detail_error(e)}")
 
