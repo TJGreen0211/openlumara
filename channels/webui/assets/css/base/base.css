@@ -29,6 +29,13 @@ input, button, select, h1, h2, h3, textarea {
     font-family: inherit;
 }
 
+/* counts and timestamps line up instead of jittering as digits change */
+#sidebar .count,
+#sidebar .date,
+time {
+    font-variant-numeric: tabular-nums;
+}
+
 div  {
     &.flex {
         display: flex;

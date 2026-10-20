@@ -87,7 +87,7 @@
             border: none;
             background: transparent;
             color: var(--text-primary);
-            font-size: 1rem;
+            font-size: var(--text-md);
             font-family: inherit;
             line-height: 1.5;
             outline: none;
@@ -113,7 +113,7 @@
             padding: 0 24px;
             height: 48px;
             border-radius: var(--radius-lg);
-            font-size: 0.95rem;
+            font-size: var(--text-md);
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -132,15 +132,16 @@
             }
         }
 
+        /* the one primary action on screen, so it carries the accent; it
+           drops back to neutral while there's nothing to send */
         #send {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
+            background: var(--accent);
+            border: 1px solid var(--accent);
+            color: var(--accent-contrast, var(--bg-primary));
 
-            &:hover {
-                background: var(--bg-tertiary);
-                color: var(--accent);
-                border-color: var(--accent);
-                box-shadow: 0 4px 12px rgba(var(--accent-rgb, 171, 171, 171), 0.3);
+            &:hover:not(:disabled) {
+                filter: brightness(1.08);
+                box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
 
                 ::after {
                     transform: translateX(100%);
@@ -157,8 +158,10 @@
             }
 
             &:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
+                background: var(--bg-secondary);
+                border-color: var(--border-color);
+                color: var(--text-muted);
+                cursor: default;
                 transform: none;
             }
         }
@@ -177,7 +180,7 @@
 
             .stop-text {
                 display: block;
-                font-size: 0.95rem;
+                font-size: var(--text-md);
                 font-weight: 600;
                 line-height: 1;
             }

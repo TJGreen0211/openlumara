@@ -93,7 +93,7 @@
             border: none;
             border-bottom: 1px solid var(--border-sidebar);
             color: var(--text-primary);
-            font-size: 1rem;
+            font-size: var(--text-md);
             font-weight: 600;
             cursor: pointer;
             text-align: left;
@@ -111,12 +111,12 @@
         padding: 8px 12px;
 
         h1 {
-            font-size: 1.05rem;
+            font-size: var(--text-md);
         }
 
         .btn {
             padding: 6px 8px;
-            font-size: 0.8rem;
+            font-size: var(--text-xs);
 
             svg {
                 width: 14px;
@@ -139,7 +139,7 @@
     #send, #stop {
         height: 44px;
         padding: 0 16px;
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
     }
 
     /* Prevent horizontal overflow */
@@ -168,7 +168,7 @@
 /* === EXTRA SMALL (< 400px) === */
 @media (max-width: 400px) {
     header h1 {
-        font-size: 1rem;
+        font-size: var(--text-md);
     }
 
     .message {
@@ -295,7 +295,7 @@
     }
 
     .chat-title-text {
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         max-width: 200px;
     }
 

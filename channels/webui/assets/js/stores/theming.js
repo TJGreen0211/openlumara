@@ -1,5 +1,8 @@
+// used for first-time visitors, and when a saved family no longer exists
+const DEFAULT_THEME_FAMILY = 'colors-blue';
+
 THEME_STORE = {
-    family: localStorage.getItem('themeFamily') || 'monochrome',
+    family: localStorage.getItem('themeFamily') || DEFAULT_THEME_FAMILY,
     mode: localStorage.getItem('themeMode') || 'dark',
     themeCache: {},  // Cache for loaded theme data
     themeList: [],   // List of available theme families
@@ -13,7 +16,13 @@ THEME_STORE = {
 
         // Load base theme and current theme family - async, will apply when ready
         this.loadThemeFamily('base').then(() => {
-            this.loadThemeFamily(this.family).then(() => {
+            this.loadThemeFamily(this.family).then(async (data) => {
+                // a stale saved name (the old 'monochrome' default never existed)
+                // would otherwise leave the page with no theme at all
+                if (!data && this.family !== DEFAULT_THEME_FAMILY) {
+                    this.family = DEFAULT_THEME_FAMILY;
+                    await this.loadThemeFamily(this.family);
+                }
                 this.apply(this.family, this.mode);
             });
         });
@@ -93,6 +102,8 @@ THEME_STORE = {
             }
         }
 
+        this.applyAccentContrast();
+
         // Switch code syntax highlighting theme based on mode
         const codeThemeLink = document.getElementById('code-theme');
         if (codeThemeLink) {
@@ -115,6 +126,26 @@ THEME_STORE = {
         }));
     },
 
+    // themes only define --accent, so derive a readable text color for things
+    // filled with it (e.g. the send button): black on light accents, white on dark
+    applyAccentContrast() {
+        const root = document.documentElement;
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--accent)';
+        document.body.appendChild(probe);
+        const [r, g, b] = (getComputedStyle(probe).color.match(/[\d.]+/g) || [0, 0, 0]).map(Number);
+        probe.remove();
+
+        // WCAG relative luminance
+        const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+        const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+
+        // 0.179 is where black and white text have equal WCAG contrast, but
+        // white reads better on saturated mid-tones (indigo, violet, blue), so
+        // only switch to black for genuinely light accents (nord frost, white)
+        root.style.setProperty('--accent-contrast', luminance > 0.4 ? '#000000' : '#ffffff');
+    },
+
     // Toggle mode (dark/light)
     toggleMode() {
         this.apply(this.family, this.mode === 'dark' ? 'light' : 'dark');
@@ -130,7 +161,11 @@ THEME_STORE = {
             root.style.setProperty('--font-primary', `'${font}', sans-serif`);
             root.style.setProperty('--code-font', `'${font}', monospace`);
         } else {
-            root.style.setProperty('--font-primary', "Arial, sans-serif");
+            // "System Default": go back to base.json's stacks (the OS UI font),
+            // including the code font a previous custom pick overrode
+            const base = this.themeCache['base'] || {};
+            root.style.setProperty('--font-primary', base['--font-primary'] || 'system-ui, sans-serif');
+            root.style.setProperty('--code-font', base['--code-font'] || 'monospace');
         }
     },
     

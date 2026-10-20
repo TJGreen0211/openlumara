@@ -23,7 +23,7 @@
     @keydown.enter="
         if (!$event.shiftKey && !$event.isComposing && $event.keyCode !== 229 && !$store.ui.isMobile) {
             $event.preventDefault();
-            if (!$store.chat.user_input) { return; }
+            if (!$store.chat.user_input?.trim() && !$store.upload.files.length) { return; }
 
             await $store.chat.send($store.chat.user_input);
             $el.style.height = '48px';
@@ -70,12 +70,13 @@
 <button id="send" aria-label="Send message"
     @click="
         $event.preventDefault();
-        if (!$store.chat.user_input) { return; }
+        if (!$store.chat.user_input?.trim() && !$store.upload.files.length) { return; }
 
         await $store.chat.send($store.chat.user_input);
         $refs['user-input'].style.height = '48px';
     "
     x-show="$store.stream.state === 'idle'"
+    :disabled="!$store.chat.user_input?.trim() && !$store.upload.files.length"
 >Send</button>
 
 <button id="stop" aria-label="Stop generation" x-show="$store.stream.state != 'idle'" x-cloak @click="

@@ -18,7 +18,7 @@ function settingsModal() {
         mobile: window.innerWidth <= 768,
 
         // Theme state (synced with Alpine store)
-        themeFamily: localStorage.getItem('themeFamily') || 'monochrome',
+        themeFamily: localStorage.getItem('themeFamily') || DEFAULT_THEME_FAMILY,
         themeMode: localStorage.getItem('themeMode') || 'dark',
 
         // Font settings

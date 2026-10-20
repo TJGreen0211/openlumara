@@ -21,7 +21,7 @@
     border-bottom: 1px solid var(--border-color);
 
     .preview-title {
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         color: var(--text-muted);
         white-space: nowrap;
         overflow: hidden;
@@ -34,7 +34,7 @@
         min-width: 90px;
         max-width: 45%;
         padding: 3px 6px;
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         color: var(--text-primary);
         background: var(--bg-secondary);
         border: 1px solid var(--border-color);
@@ -58,7 +58,7 @@
         border-radius: var(--radius-sm);
 
         button {
-            font-size: 0.8rem;
+            font-size: var(--text-xs);
             padding: 3px 10px;
             color: var(--text-muted);
 
@@ -112,7 +112,7 @@
         align-items: center;
         gap: 6px;
         padding: 5px 10px;
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         color: var(--text-primary);
         background: var(--bg-tertiary);
         border: 1px solid var(--border-color);
@@ -140,7 +140,7 @@
             flex: 1;
             min-width: 0;
             padding: 5px 8px;
-            font-size: 0.85rem;
+            font-size: var(--text-sm);
             color: var(--text-primary);
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
@@ -150,13 +150,13 @@
 
     .media-hint, .media-empty {
         margin: 0;
-        font-size: 0.8rem;
+        font-size: var(--text-xs);
         color: var(--text-muted);
     }
 
     .media-error {
         margin: 0;
-        font-size: 0.8rem;
+        font-size: var(--text-xs);
         color: var(--error);
         white-space: pre-line;
     }
@@ -190,7 +190,7 @@
             align-items: center;
             gap: 6px;
             padding: 6px 8px 0;
-            font-size: 0.75rem;
+            font-size: var(--text-xs);
             color: var(--text-secondary);
 
             .name {
@@ -202,7 +202,7 @@
             .badge {
                 flex-shrink: 0;
                 padding: 0 5px;
-                font-size: 0.7rem;
+                font-size: var(--text-xs);
                 color: var(--accent);
                 border: 1px solid var(--accent);
                 border-radius: var(--radius-sm);
@@ -220,7 +220,7 @@
         .replace {
             margin-right: auto;
             padding: 2px 8px;
-            font-size: 0.75rem;
+            font-size: var(--text-xs);
         }
 
         button {

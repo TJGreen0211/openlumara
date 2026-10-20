@@ -27,7 +27,7 @@
       label {
         display: block;
         margin-bottom: 0.5rem;
-        font-size: 0.9rem;
+        font-size: var(--text-sm);
       }
 
       input {
@@ -71,7 +71,7 @@
       color: var(--error, #ff4d4d);
       text-align: center;
       margin-bottom: 1rem;
-      font-size: 0.9rem;
+      font-size: var(--text-sm);
     }
   }
 }

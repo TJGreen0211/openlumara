@@ -21,7 +21,8 @@ header {
     }
 
     h1 {
-        font-size: 1.35rem;
+        font-family: var(--font-display);
+        font-size: var(--text-xl);
         font-weight: 700;
         letter-spacing: -0.02em;
         background: linear-gradient(135deg, var(--accent) 0%, var(--text-primary) 100%);
@@ -43,7 +44,7 @@ header {
         border: 1px solid var(--border-color);
         border-radius: var(--radius-md);
         color: var(--text-secondary);
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         cursor: pointer;
         transition: all 0.2s ease;
         display: flex;
@@ -160,7 +161,7 @@ header {
         border: none;
         border-radius: var(--radius-sm);
         color: var(--text-secondary);
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         text-align: left;
         cursor: pointer;
         transition: background 0.15s ease, color 0.15s ease;

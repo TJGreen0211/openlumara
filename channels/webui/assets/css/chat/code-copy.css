@@ -11,7 +11,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     cursor: pointer;
     opacity: 0;
     transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);

@@ -51,7 +51,7 @@
 
         h2 {
             margin: 0;
-            font-size: 1.1rem;
+            font-size: var(--text-lg);
             color: var(--text-primary);
             font-weight: 600;
             letter-spacing: -0.02em;
@@ -64,7 +64,7 @@
         background: transparent;
         border: 1px solid var(--border-color);
         border-radius: var(--radius-sm);
-        font-size: 1.25rem;
+        font-size: var(--text-xl);
         line-height: 1;
         color: var(--text-secondary);
         cursor: pointer;
@@ -100,7 +100,7 @@
     }
 
     .section-desc {
-        font-size: 0.85rem;
+        font-size: var(--text-sm);
         color: var(--text-secondary);
         margin: 0 0 20px 0;
         line-height: 1.5;
@@ -142,7 +142,7 @@
 
     .message {
         margin: 0;
-        font-size: 0.95rem;
+        font-size: var(--text-md);
         line-height: 1.6;
         color: var(--text-primary);
     }
