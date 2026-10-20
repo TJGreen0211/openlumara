@@ -1,11 +1,11 @@
-<div class="flex fullwidth">
-    <!-- Reasoning block -->
-    <template x-if="Object.hasOwn(message, 'reasoning_content') || message.type === 'reasoning'">
-        {% include 'chat/reasoning.html' %}
+<div class="flex fullwidth" x-data="{ get message() { return seg.message } }">
+    <!-- Steps block (grouped reasoning + tool calls) -->
+    <template x-if="seg.kind === 'steps'">
+        {% include 'chat/steps.html' %}
     </template>
 
     <!-- Content block -->
-    <template x-if="message.role === 'assistant' && (Object.hasOwn(message, 'content') || message.type === 'content') && typeof message.content === 'string'">
+    <template x-if="seg.kind === 'content'">
         <div>
             <template x-if="$store.chat.editingMessageIndex !== turn.last_message_index">
                 <div>
@@ -22,10 +22,5 @@
                 </div>
             </template>
         </div>
-    </template>
-
-    <!-- Tool calls block -->
-    <template x-if="Object.hasOwn(message, 'tool_calls') || message.type === 'tool_calls'">
-        {% include 'chat/toolcalls.html' %}
     </template>
 </div>

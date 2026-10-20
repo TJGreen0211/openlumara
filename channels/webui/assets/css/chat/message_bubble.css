@@ -180,7 +180,8 @@
             border: none;
             box-shadow: none;
             backdrop-filter: none;
-            padding: 4px 0;
+            /* a little breathing room so text doesn't run to the column edge */
+            padding: 4px 14px;
             color: var(--text-primary);
             min-width: 80px;
             /* always span the (width-capped) chat column instead of fit-content:

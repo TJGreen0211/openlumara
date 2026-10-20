@@ -132,8 +132,21 @@
                         x-data="{
                             active: false,
                             renaming: false,
-                            renameValue: ''
+                            renameValue: '',
+                            menuOpen: false,
+                            startRename() {
+                                this.menuOpen = false;
+                                this.renaming = true;
+                                this.renameValue = chat.title;
+                                // the input lives in its own x-if scope, so $refs can't see it from here
+                                this.$nextTick(() => {
+                                    const input = document.querySelector(`#chat-${chat.id} .rename-input`);
+                                    input?.focus();
+                                    input?.select();
+                                });
+                            }
                         }"
+                        @click.outside="menuOpen = false"
                         :id="`chat-${chat.id}`"
                         class="item"
                         :class="{
@@ -168,18 +181,35 @@
                                             {% include 'svg/mic.svg' %}
                                         </span>
                                     </template>
+                                    <!-- pointer devices: rename/delete fade in on hover or keyboard focus -->
                                     <div class="item-actions" @click.stop>
-                                        <button class="action-btn" @click="renaming = true; renameValue = chat.title; $nextTick(() => { $refs.renameInput.focus(); $refs.renameInput.select(); })" title="Rename">
+                                        <button class="action-btn" @click="startRename()" title="Rename" aria-label="Rename chat">
                                             {% include 'svg/edit.svg' %}
                                         </button>
-                                        <button class="action-btn delete" @click="$store.chat.deleteChat(chat.id)" title="Delete">
+                                        <button class="action-btn delete" @click="$store.chat.deleteChat(chat.id)" title="Delete" aria-label="Delete chat">
                                             {% include 'svg/trash.svg' %}
                                         </button>
                                     </div>
+                                    <!-- touch devices have no hover: one menu button opens labelled actions -->
+                                    <button class="action-btn item-menu-btn" @click.stop="menuOpen = !menuOpen" :aria-expanded="menuOpen" aria-label="Chat actions">
+                                        {% include 'svg/kebab.svg' %}
+                                    </button>
                                 </div>
                             </template>
 
                             <span class="date" x-show="!renaming" x-text="formatDate(chat.updated) || 'No date known'"></span>
+                            <template x-if="menuOpen && !renaming">
+                                <div class="item-menu" @click.stop>
+                                    <button @click="startRename()">
+                                        {% include 'svg/edit.svg' %}
+                                        <span>Rename</span>
+                                    </button>
+                                    <button class="delete" @click="menuOpen = false; $store.chat.deleteChat(chat.id)">
+                                        {% include 'svg/trash.svg' %}
+                                        <span>Delete</span>
+                                    </button>
+                                </div>
+                            </template>
                             <template x-if="renaming">
                                 <div class="rename-container">
                                     <input 

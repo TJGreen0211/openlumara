@@ -1,0 +1,48 @@
+<!-- a run of reasoning + tool calls, collapsed into one summary row (see
+     groupTurnSteps in js/processors/turn_steps.js). a live group opens itself
+     when expandReasoning is on and collapses the moment the answer starts;
+     finished groups (including all history) start collapsed -->
+<div class="steps-group"
+     :class="{'collapsed': collapsed, 'is-live': live}"
+     x-data="{
+        collapsed: true,
+        get live() { return seg.live },
+        get summary() { return stepsSummary(seg.items) }
+     }"
+     x-init="collapsed = !(live && $store.ui.expandReasoning); $watch('live', (now) => { if (!now) collapsed = true })">
+    <button type="button" class="steps-header" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
+        <span class="steps-icon" aria-hidden="true">
+            <template x-if="live">
+                <span class="steps-spinner"></span>
+            </template>
+            <template x-if="!live">
+                {% include 'svg/checkmark.svg' %}
+            </template>
+        </span>
+        <span class="steps-label" x-text="live ? stepsActivity(seg.items, $store.stream.state) + '…' : summary.label"></span>
+        <span class="steps-tools" x-show="summary.tools" x-text="summary.tools"></span>
+        <svg class="steps-toggle" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+    </button>
+
+    <div class="steps-body" x-show="!collapsed" x-cloak>
+        <template x-for="(item, itemIndex) in seg.items" :key="itemIndex">
+            <div class="step" :class="'step-' + item.kind" x-data="{ get message() { return item.message } }">
+                <template x-if="item.kind === 'reasoning'">
+                    <div class="step-thought"
+                         :class="{'is-thinking': $store.stream.state === 'thinking' && message === $store.stream.turn.messages?.at(-1)}">
+                        <div class="step-title">
+                            {% include 'svg/thought_bubble.svg' %}
+                            <span>Thoughts</span>
+                        </div>
+                        <div class="step-thought-text" x-text="message.reasoning_content" x-auto-scroll></div>
+                    </div>
+                </template>
+                <template x-if="item.kind === 'tools'">
+                    {% include 'chat/toolcalls.html' %}
+                </template>
+            </div>
+        </template>
+    </div>
+</div>

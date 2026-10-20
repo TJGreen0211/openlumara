@@ -67,7 +67,8 @@
             <template x-if="turn.role === 'assistant'">
                 <div class="message-wrapper assistant">
                     <div class="message assistant">
-                        <template x-for="(message, messageIndex) in turn.messages" :key="messageIndex">
+                        <!-- reasoning/tool runs are grouped into one collapsible "steps" row -->
+                        <template x-for="(seg, segIndex) in groupTurnSteps(turn.messages)" :key="segIndex">
                             {% include 'chat/turns/assistant_history.html' %}
                         </template>
 
@@ -84,7 +85,7 @@
     <template x-if="$store.stream.turn.messages">
         <div class="message-wrapper assistant">
             <div class="message assistant">
-                <template x-for="(message, messageIndex) in $store.stream.turn.messages" :key="messageIndex">
+                <template x-for="(seg, segIndex) in groupTurnSteps($store.stream.turn.messages, true)" :key="segIndex">
                     {% include 'chat/turns/assistant_stream.html' %}
                 </template>
 

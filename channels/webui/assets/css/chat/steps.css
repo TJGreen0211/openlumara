@@ -1,0 +1,177 @@
+/* =============================================================================
+ *  Steps Group
+ *  a run of reasoning + tool calls shown as one quiet summary row, so the
+ *  answer stays the most prominent thing in the turn (see chat/steps.html)
+ *  ============================================================================= */
+
+.steps-group {
+    width: 100%;
+    min-width: 0;
+
+    .steps-header {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 100%;
+        min-height: 36px;
+        padding: 6px 10px;
+        margin-left: -10px;
+        box-sizing: border-box;
+        background: transparent;
+        border: none;
+        border-radius: var(--radius-sm);
+        color: var(--text-muted);
+        font: inherit;
+        font-size: 0.875rem;
+        text-align: left;
+        cursor: pointer;
+        user-select: none;
+        transition: background-color 0.15s ease, color 0.15s ease;
+
+        &:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+
+        &:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 1px;
+        }
+    }
+
+    .steps-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+
+        svg {
+            width: 14px;
+            height: 14px;
+        }
+    }
+
+    .steps-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--border-color);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: processingSpin 0.8s linear infinite;
+    }
+
+    .steps-label {
+        font-weight: 500;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* tool names trail the label and give way first when space runs out */
+    .steps-tools {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        opacity: 0.8;
+
+        &::before {
+            content: '·';
+            margin-right: 8px;
+        }
+    }
+
+    .steps-toggle {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        transform: rotate(180deg);
+        transition: transform 0.2s ease;
+    }
+
+    &.collapsed .steps-toggle {
+        transform: none;
+    }
+
+    &.is-live .steps-label {
+        background: linear-gradient(90deg, var(--text-muted) 0%, var(--accent) 50%, var(--text-muted) 100%);
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: textShimmer 3s linear infinite;
+    }
+
+    /* expanded: the steps hang off a thin timeline under the header */
+    .steps-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 4px 0 6px 7px;
+        padding-left: 16px;
+        border-left: 2px solid var(--border-color);
+        min-width: 0;
+    }
+
+    .step {
+        min-width: 0;
+    }
+
+    .step-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+
+        svg {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+        }
+    }
+
+    .step-thought.is-thinking .step-title svg {
+        animation: thoughtIconBounce 1.2s ease-in-out infinite;
+    }
+
+    .step-thought-text {
+        max-height: 240px;
+        overflow-y: auto;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    /* tool cards already sit inside the group, so drop their extra depth */
+    .tool-call-card {
+        box-shadow: none;
+    }
+}
+
+/* touch: a taller header is easier to hit, and the timeline indent costs
+   too much width on a phone */
+@media (hover: none) {
+    .steps-group .steps-header {
+        min-height: 40px;
+    }
+}
+
+@media (max-width: 768px) {
+    /* the reply's side padding is smaller here; don't let the hover pill clip */
+    .steps-group .steps-header {
+        margin-left: -6px;
+    }
+
+    .steps-group .steps-body {
+        margin-left: 4px;
+        padding-left: 10px;
+    }
+}

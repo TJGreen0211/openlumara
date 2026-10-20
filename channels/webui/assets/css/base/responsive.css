@@ -54,6 +54,11 @@
         max-width: 95% !important;
     }
 
+    /* #messages already has a gutter here, so replies only need a hair more */
+    .message-wrapper .message.assistant {
+        padding-inline: 6px;
+    }
+
     /* Sidebar: fixed overlay on mobile */
     #sidebar {
         position: fixed;
