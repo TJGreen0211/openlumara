@@ -27,7 +27,15 @@ const NOTIFY_STORE = {
             };
         }
 
-        await this.requestPermission();
+        // the permission prompt is deliberately not shown here: prompting on page
+        // load is jarring and browsers penalize it. chat.send() asks on the
+        // user's first message instead (see maybeRequestPermission)
+    },
+
+    maybeRequestPermission() {
+        // ask once, from a user gesture, and only if the user hasn't decided yet
+        if (!("Notification" in window) || this.permission !== "default") return;
+        this.requestPermission();
     },
 
     async requestPermission() {

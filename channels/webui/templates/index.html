@@ -73,11 +73,19 @@
             we use alpine stores for data access across the app,
             as putting every possible thing in one massive data object was no fun
         -->
+        <!--
+            only reset the sidebar when crossing the mobile breakpoint: mobile
+            browsers fire resize when the on-screen keyboard or URL bar shows,
+            which would otherwise close the sidebar mid-typing
+        -->
         <div id="main" x-data="{}" @resize.window="
             $store.ui.windowWidth = window.innerWidth;
+            const wasMobile = $store.ui.isMobile;
             $store.ui.isMobile = window.innerWidth <= 768;
 
-            $store.ui.showSidebar = !$store.ui.isMobile;
+            if ($store.ui.isMobile !== wasMobile) {
+                $store.ui.showSidebar = !$store.ui.isMobile;
+            }
         ">
             <section id="main-wrapper">
                 {% if config.get("enable_sidebar") %}

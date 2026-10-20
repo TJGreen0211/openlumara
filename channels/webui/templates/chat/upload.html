@@ -24,4 +24,11 @@
             </template>
         </div>
     </template>
+
+    <!-- media attachments also land in the open site's media folder (opt-out) -->
+    <label class="upload-site-target"
+        x-show="$store.artifact.current && $store.upload.files.some(f => /^(image|video)\//.test(f.type))" x-cloak>
+        <input type="checkbox" x-model="$store.artifact.saveAttachments">
+        <span>Also add images to <strong x-text="$store.artifact.siteLabel($store.artifact.current)"></strong>/media so the AI can use them in the site</span>
+    </label>
 </div>

@@ -10,6 +10,7 @@ REAL core/functions.py sandbox_path so path-safety is tested for real.
 
 Run:  venv\\Scripts\\python tests\\test_html_preview.py
 """
+import contextvars
 import importlib.util
 import os
 import shutil
@@ -61,6 +62,7 @@ _core_mod = types.ModuleType("core")
 _core_mod.debug = False
 _core_mod.log = lambda category, msg: None
 _core_mod.get_path = lambda p: os.path.abspath(p)
+_core_mod.current_user = contextvars.ContextVar("current_user", default=None)
 sys.modules["core"] = _core_mod  # must exist before core/functions.py's `import core`
 
 _spec = importlib.util.spec_from_file_location(
@@ -176,36 +178,65 @@ class ArtifactRouteTest(unittest.IsolatedAsyncioTestCase):
         with open(os.path.join(site_dir, "styles.css"), "w", encoding="utf-8") as f:
             f.write("body { background: #fff; }")
 
+    def _token(self, client, folder="site", sandbox=None):
+        resp = client.get("/api/artifact-token", params={"sandbox": sandbox or self.sandbox_name, "folder": folder})
+        return resp.json()["data"]["token"]
+
     def test_503_when_coder_module_absent(self):
         self._write_site()
-        resp = self.client.get(f"/api/artifact/{self.sandbox_name}/site/index.html")
+        token = self._token(self.client)
+        resp = self.client.get(f"/api/artifact/{token}/{self.sandbox_name}/site/index.html")
         self.assertEqual(resp.status_code, 503)
 
     async def test_route_with_coder_present(self):
         self._write_site()
         app = await webui_mod.create_fastapi(_FakeChannel(self.tmp, {"coder": _make_coder(self.tmp)}))
         client = TestClient(app)
+        token = self._token(client)
+        base = f"/api/artifact/{token}/{self.sandbox_name}"
 
         # html entry point
-        resp = client.get(f"/api/artifact/{self.sandbox_name}/site/index.html")
+        resp = client.get(f"{base}/site/index.html")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.headers["content-type"])
         self.assertIn("no-store", resp.headers["cache-control"])
         self.assertIn("hat shop", resp.text)
 
         # relative asset (multi-file support)
-        resp = client.get(f"/api/artifact/{self.sandbox_name}/site/styles.css")
+        resp = client.get(f"{base}/site/styles.css")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/css", resp.headers["content-type"])
         self.assertIn("no-store", resp.headers["cache-control"])
 
         # missing file -> 404
-        resp = client.get(f"/api/artifact/{self.sandbox_name}/site/missing.html")
+        resp = client.get(f"{base}/site/missing.html")
         self.assertEqual(resp.status_code, 404)
 
         # traversal attempt -> 404 (core.sandbox_path rejects '..')
-        resp = client.get(f"/api/artifact/{self.sandbox_name}/%2e%2e/%2e%2e/test")
+        resp = client.get(f"{base}/%2e%2e/%2e%2e/test")
         self.assertEqual(resp.status_code, 404)
+
+    async def test_token_is_scoped_to_its_site(self):
+        self._write_site()
+        with open(os.path.join(self.tmp, "secret.txt"), "w", encoding="utf-8") as f:
+            f.write("other site")
+        app = await webui_mod.create_fastapi(_FakeChannel(self.tmp, {"coder": _make_coder(self.tmp)}))
+        client = TestClient(app)
+        token = self._token(client)
+
+        # outside the token's site folder, or a different sandbox -> 404
+        self.assertEqual(client.get(f"/api/artifact/{token}/{self.sandbox_name}/secret.txt").status_code, 404)
+        self.assertEqual(client.get(f"/api/artifact/{token}/{self.sandbox_name}/site/../secret.txt").status_code, 404)
+        self.assertEqual(client.get(f"/api/artifact/{token}/other/site/index.html").status_code, 404)
+
+        # tampered or made-up token -> 404
+        tampered = f"{token[:-2]}xx"
+        self.assertEqual(client.get(f"/api/artifact/{tampered}/{self.sandbox_name}/site/index.html").status_code, 404)
+        self.assertEqual(client.get(f"/api/artifact/nope/{self.sandbox_name}/site/index.html").status_code, 404)
+
+        # a root-site token covers the whole sandbox
+        root = self._token(client, folder="")
+        self.assertEqual(client.get(f"/api/artifact/{root}/{self.sandbox_name}/secret.txt").status_code, 200)
 
 
 if __name__ == "__main__":

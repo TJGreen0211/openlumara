@@ -1,21 +1,133 @@
-<!-- live site preview: toolbar + iframe -->
+<!-- live site preview: toolbar + iframe / media manager -->
 <div class="preview-toolbar">
-    <span class="preview-title" x-text="$store.artifact.title"></span>
-    <span class="spacer"></span>
-    <button title="Refresh" @click="$store.artifact.refresh()">
-        {% include 'svg/reload.svg' %}
-    </button>
-    <button title="Open in a new tab" @click="$store.artifact.openInNewTab()">
-        {% include 'svg/external.svg' %}
-    </button>
-    <button title="Download this file" @click="$store.artifact.download()">
-        {% include 'svg/download.svg' %}
-    </button>
+    <!-- site picker: one entry per prototype in this chat -->
+    <template x-if="$store.artifact.sites.length > 1">
+        <select class="preview-select" title="Switch site"
+            :value="$store.artifact.activeKey"
+            @change="$store.artifact.selectSite($event.target.value)">
+            <template x-for="site in $store.artifact.sites" :key="$store.artifact._key(site)">
+                <option :value="$store.artifact._key(site)" x-text="$store.artifact.siteLabel(site)"
+                    :selected="$store.artifact._key(site) === $store.artifact.activeKey"></option>
+            </template>
+        </select>
+    </template>
+    <template x-if="$store.artifact.sites.length <= 1">
+        <span class="preview-title" x-text="$store.artifact.siteLabel($store.artifact.current)"></span>
+    </template>
+
+    <!-- page picker: only for multi-page sites -->
+    <template x-if="$store.artifact.pages.length > 1">
+        <select class="preview-select" title="Switch page"
+            :value="$store.artifact.currentPage"
+            @change="$store.artifact.selectPage($event.target.value)">
+            <template x-for="page in $store.artifact.pages" :key="page">
+                <option :value="page" x-text="$store.artifact.pageLabel(page)"
+                    :selected="page === $store.artifact.currentPage"></option>
+            </template>
+        </select>
+    </template>
+
+    <!-- tabs + actions wrap onto their own row as one group when the panel is narrow -->
+    <div class="preview-controls">
+    <div class="preview-tabs" role="tablist">
+        <button role="tab" :aria-selected="$store.artifact.tab === 'preview'"
+            :class="{'active': $store.artifact.tab === 'preview'}"
+            @click="$store.artifact.setTab('preview')">Preview</button>
+        <button role="tab" :aria-selected="$store.artifact.tab === 'media'"
+            :class="{'active': $store.artifact.tab === 'media'}"
+            @click="$store.artifact.setTab('media')">Media</button>
+    </div>
+
+    <template x-if="$store.artifact.tab === 'preview'">
+        <span class="preview-actions">
+            <button title="Refresh" @click="$store.artifact.refresh()">
+                {% include 'svg/reload.svg' %}
+            </button>
+            <button title="Open in a new tab" @click="$store.artifact.openInNewTab()">
+                {% include 'svg/external.svg' %}
+            </button>
+            <button title="Download this page" @click="$store.artifact.download()">
+                {% include 'svg/download.svg' %}
+            </button>
+        </span>
+    </template>
     <button title="Close preview" @click="$store.artifact.close()">
         {% include 'svg/cross.svg' %}
     </button>
+    </div>
 </div>
+
 <iframe id="preview-iframe"
+        x-show="$store.artifact.tab === 'preview'"
         :src="$store.artifact.entryUrl"
         :class="{'no-src': !$store.artifact.entryUrl}"
         title="Site preview"></iframe>
+
+<!-- media manager: the site's media/ folder -->
+<div class="preview-media" x-show="$store.artifact.tab === 'media'" x-cloak
+    x-data="{ dragging: false }"
+    :class="{'dragging': dragging}"
+    @dragover.prevent="dragging = true"
+    @dragleave.self="dragging = false"
+    @drop.prevent="dragging = false; $store.artifact.uploadMedia($event.dataTransfer.files)">
+
+    <div class="media-actions">
+        <button class="btn" :disabled="$store.artifact.mediaBusy" @click="$refs.mediaInput.click()">
+            {% include 'svg/add.svg' %} Upload
+        </button>
+        <input type="file" x-ref="mediaInput" hidden multiple accept="image/*,video/mp4,video/webm"
+            @change="$store.artifact.uploadMedia($event.target.files); $event.target.value = ''">
+
+        <form class="media-import" @submit.prevent="$store.artifact.importFromUrl()">
+            <input type="url" placeholder="Import from URL…" aria-label="Image or video URL"
+                x-model="$store.artifact.importUrl" :disabled="$store.artifact.mediaBusy">
+            <button class="btn" type="submit" :disabled="$store.artifact.mediaBusy || !$store.artifact.importUrl.trim()">Import</button>
+        </form>
+    </div>
+
+    <p class="media-hint">
+        Files live in <code x-text="($store.artifact.current?.folder ? $store.artifact.current.folder + '/' : '') + 'media/'"></code>.
+        Drop images here, then tell the AI where to use them. Placeholders can be replaced with a real photo directly.
+    </p>
+
+    <p class="media-error" x-show="$store.artifact.mediaError" x-text="$store.artifact.mediaError"></p>
+
+    <div class="media-grid">
+        <template x-for="item in $store.artifact.media" :key="item.name">
+            <figure class="media-item" :class="{'placeholder': item.placeholder}">
+                <template x-if="!item.video">
+                    <img :src="$store.artifact.mediaUrl(item)" :alt="item.name" loading="lazy">
+                </template>
+                <template x-if="item.video">
+                    <video :src="$store.artifact.mediaUrl(item)" muted preload="metadata"></video>
+                </template>
+
+                <figcaption :title="item.path">
+                    <span class="badge" x-show="item.placeholder">placeholder</span>
+                    <span class="name" x-text="item.name"></span>
+                </figcaption>
+
+                <div class="media-item-actions">
+                    <template x-if="item.placeholder">
+                        <label class="btn replace" title="Replace this placeholder with your own image">
+                            Replace
+                            <input type="file" hidden accept="image/*,video/mp4,video/webm"
+                                @change="$store.artifact.replacePlaceholder(item.name, $event.target.files[0]); $event.target.value = ''">
+                        </label>
+                    </template>
+                    <button title="Mention in chat" @click="$store.artifact.insertIntoChat(item)">
+                        {% include 'svg/chat.svg' %}
+                    </button>
+                    <button title="Delete" @click="$store.artifact.deleteMedia(item.name)">
+                        {% include 'svg/trash.svg' %}
+                    </button>
+                </div>
+            </figure>
+        </template>
+    </div>
+
+    <p class="media-empty"
+        x-show="!$store.artifact.mediaLoading && !$store.artifact.media.length && !$store.artifact.mediaError">
+        No media yet. Upload images, import one from a URL, or attach them in chat.
+    </p>
+</div>

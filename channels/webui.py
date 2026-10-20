@@ -24,6 +24,7 @@ import time
 # webui stuff
 import fastapi, fastapi.templating, fastapi.staticfiles
 import starlette, starlette.middleware.sessions
+import itsdangerous
 import uvicorn
 import base64
 import zoneinfo
@@ -561,6 +562,38 @@ def upload_size_error(files_data):
 
     return None
 
+async def save_attachments_to_site(coder, site, files_list):
+    """
+    copies a message's image/video attachments into the site that's open in the
+    preview panel, so the AI can reference them from the html (vision blocks
+    alone give it nothing to link to, and are stripped from older messages).
+    returns a note for the AI listing where they landed, or None.
+    """
+    if not coder or not isinstance(site, dict) or not files_list:
+        return None
+    sandbox = site.get("sandbox")
+    folder = site.get("folder") or ""
+    if not isinstance(sandbox, str) or not sandbox or not isinstance(folder, str):
+        return None
+
+    saved = []
+    for filename, data in files_list:
+        if not coder._sniff_media(data):
+            continue  # documents, audio etc. are only for the AI to read
+        try:
+            result = await coder._save_site_media(sandbox, folder, filename, data)
+        except Exception as e:
+            core.log("webui", f"could not save attachment '{filename}' to site: {core.detail_error(e)}")
+            continue
+        saved.append(f"- {filename} → {result['path']}")
+
+    if not saved:
+        return None
+
+    where = f"'{folder}'" if folder else "the sandbox root"
+    return (f"[The attached media was saved into the site in {where} (sandbox '{sandbox}'). "
+            f"Use these paths, relative to that folder:\n" + "\n".join(saved) + "]")
+
 def inject_indexes_into_messages(lst: list):
     """speaks for itself lol"""
     return [{**dickt, 'index': index} for index, dickt in enumerate(lst)]
@@ -601,6 +634,12 @@ async def create_fastapi(channel):
 
         # Skip auth for login page and assets
         if request.url.path in ["/login", "/logout"] or str(request.url.path).startswith("/assets/"):
+            return await call_next(request)
+
+        # previewed site files authenticate with a signed token in their url
+        # instead: the preview iframe has an opaque origin, so requests the
+        # page itself makes (images, css, links) never carry the session cookie
+        if str(request.url.path).startswith("/api/artifact/"):
             return await call_next(request)
 
         # Check session for API and other routes
@@ -1315,17 +1354,54 @@ async def create_fastapi(channel):
     # ----------------------------
     # Artifact (live site preview) API
     # ----------------------------
-    @app.get("/api/artifact/{sandbox}/{path:path}")
-    async def artifact_file(sandbox: str, path: str):
+    # site files are served under /api/artifact/{token}/..., where the token is
+    # signed and names the user + one site folder. the session cookie can't be
+    # used: the preview iframe has an opaque origin (see the CSP below), so the
+    # page's own requests for its images/css/pages are cross-site and the
+    # SameSite=Lax cookie is never sent. relative urls inside the site keep the
+    # token prefix for free. scoping it to the site means a hostile page that
+    # leaks its own url exposes nothing beyond itself.
+    artifact_signer = itsdangerous.URLSafeTimedSerializer(channel._get_session_secret(), salt="openlumara-artifact")
+
+    @app.get("/api/artifact-token")
+    async def artifact_token(request: fastapi.Request, sandbox: str, folder: str = ""):
+        """issues the url token for one site (session-authenticated like every other /api route)"""
+        username = request.session.get("username") if channel.config.get("require_login", False) else None
+        folder = folder.replace("\\", "/").strip("/")
+        return api_result({"token": artifact_signer.dumps({"u": username or "", "s": sandbox, "f": folder})})
+
+    @app.get("/api/artifact/{token}/{sandbox}/{path:path}")
+    async def artifact_file(token: str, sandbox: str, path: str):
         """serves a file from a coder sandbox so the in-app preview iframe can render it"""
+        not_found = fastapi.responses.JSONResponse({"detail": "not found"}, status_code=404)
         coder = channel.manager.modules.get("coder")
         if not coder:
             return fastapi.responses.JSONResponse({"detail": "coder module not available"}, status_code=503)
 
         try:
+            claims = artifact_signer.loads(token, max_age=channel.config.get("login_lifetime") * 86400)
+        except itsdangerous.BadData:
+            return not_found
+
+        parts = path.replace("\\", "/").split("/")
+        folder = claims.get("f", "")
+        if claims.get("s") != sandbox or ".." in parts or (folder and not path.startswith(f"{folder}/")):
+            return not_found
+
+        username = claims.get("u") or None
+        if channel.config.get("require_login", False):
+            # a deleted account's tokens die with it
+            if not username or not channel.user_manager.get_user(username):
+                return not_found
+
+        # this route skips the session middleware, so resolve the sandbox as the token's user
+        user_token = core.current_user.set(username)
+        try:
             full = await coder._get_sandbox_subpath(sandbox, path)   # already path-safe via core.sandbox_path
         except Exception:
-            return fastapi.responses.JSONResponse({"detail": "not found"}, status_code=404)
+            return not_found
+        finally:
+            core.current_user.reset(user_token)
 
         if not os.path.isfile(full):
             return fastapi.responses.JSONResponse({"detail": "not found"}, status_code=404)
@@ -1340,6 +1416,112 @@ async def create_fastapi(channel):
         # sites functional
         media.headers["Content-Security-Policy"] = "sandbox allow-scripts allow-modals"
         return media
+
+    # ----------------------------
+    # Site media API (the preview panel's media tab)
+    # sites are addressed by sandbox + the folder holding their entry html.
+    # everything resolves through the coder, so it's path-safe and per-user.
+    # ----------------------------
+    def _media_guard(request):
+        """returns (coder, error_response)"""
+        coder = channel.manager.modules.get("coder")
+        if not coder:
+            return None, api_result("coder module not available", success=False)
+        if request.method != "GET" and channel.config.get("require_login", False) and not _verify_csrf(request):
+            return None, api_result("CSRF token missing or invalid", success=False)
+        return coder, None
+
+    async def _read_upload(coder, upload):
+        """reads an UploadFile, stopping one byte past the size cap instead of buffering an unbounded body"""
+        max_bytes = (coder.config.get("max_media_size_mb") or 15) * 1024 * 1024
+        data = await upload.read(max_bytes + 1)
+        coder._check_media_size(data)
+        return data
+
+    @app.get("/api/site-media")
+    async def site_media_list(request: fastapi.Request, sandbox: str, folder: str = ""):
+        coder, error = _media_guard(request)
+        if error:
+            return error
+        try:
+            return api_result(await coder._list_site_media(sandbox, folder))
+        except Exception as e:
+            return api_result(str(e), success=False)
+
+    @app.post("/api/site-media/upload")
+    async def site_media_upload(request: fastapi.Request):
+        coder, error = _media_guard(request)
+        if error:
+            return error
+
+        form = await request.form()
+        sandbox = form.get("sandbox") or ""
+        folder = form.get("folder") or ""
+
+        saved, errors = [], []
+        try:
+            for upload in form.getlist("files"):
+                if not hasattr(upload, "read"):
+                    continue
+                try:
+                    data = await _read_upload(coder, upload)
+                    saved.append(await coder._save_site_media(sandbox, folder, upload.filename, data))
+                except Exception as e:
+                    errors.append(f"{upload.filename}: {e}")
+        finally:
+            await form.close()
+
+        if errors and not saved:
+            return api_result("\n".join(errors), success=False)
+        return api_result({"saved": saved, "errors": errors})
+
+    @app.post("/api/site-media/replace")
+    async def site_media_replace(request: fastapi.Request):
+        coder, error = _media_guard(request)
+        if error:
+            return error
+
+        form = await request.form()
+        try:
+            upload = form.get("file")
+            if not hasattr(upload, "read"):
+                return api_result("No file was uploaded", success=False)
+            data = await _read_upload(coder, upload)
+            result = await coder._replace_site_placeholder(
+                form.get("sandbox") or "", form.get("folder") or "", form.get("placeholder") or "",
+                upload.filename, data)
+        except Exception as e:
+            return api_result(str(e), success=False)
+        finally:
+            await form.close()
+        return api_result(result)
+
+    @app.post("/api/site-media/import")
+    async def site_media_import(request: fastapi.Request):
+        coder, error = _media_guard(request)
+        if error:
+            return error
+
+        body = await request.json()
+        try:
+            result = await coder._import_site_media(
+                body.get("sandbox") or "", body.get("folder") or "", body.get("url") or "")
+        except Exception as e:
+            return api_result(str(e), success=False)
+        return api_result(result)
+
+    @app.post("/api/site-media/delete")
+    async def site_media_delete(request: fastapi.Request):
+        coder, error = _media_guard(request)
+        if error:
+            return error
+
+        body = await request.json()
+        try:
+            await coder._delete_site_media(body.get("sandbox") or "", body.get("folder") or "", body.get("name") or "")
+        except Exception as e:
+            return api_result(str(e), success=False)
+        return api_result(success=True)
 
     # ----------------------------
     # System.. stuff
@@ -1621,7 +1803,16 @@ async def create_fastapi(channel):
                                 }, username=ws_username)
                                 chat_id = target_chat_id
 
-                            await ws_mgr.start_stream(channel, chat_id, message=text, files=files_list, ws_username=ws_username)
+                            # the client names the site open in the preview panel; its
+                            # media attachments get saved there. the note rides along in
+                            # metadata so it reaches the AI without showing in the bubble
+                            message = text
+                            attachment_note = await save_attachments_to_site(
+                                channel.manager.modules.get("coder"), data.get("site"), files_list)
+                            if attachment_note:
+                                message = {"content": text or "", "_metadata": {"attachment_note": attachment_note}}
+
+                            await ws_mgr.start_stream(channel, chat_id, message=message, files=files_list, ws_username=ws_username)
                         case "message_edit":
                             index = data.get("index")
                             if index is None or index < 0:

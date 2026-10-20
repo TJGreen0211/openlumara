@@ -133,6 +133,18 @@ CHAT_STORE = {
     },
 
     async newChat() {
+        // the open chat is already a blank one in this category: reuse it
+        // instead of piling up empty "New chat" entries
+        if (
+            this.selectedChat &&
+            this.turnHistory.length === 0 &&
+            this.chat.category === this.selectedCategory &&
+            !this.chat.metadata?.meeting_room
+        ) {
+            document.getElementById('user-input')?.focus();
+            return;
+        }
+
         await simpleApiPost('/api/chat/new', { category: this.selectedCategory });
 
         result = await simpleApiFetch('/api/chat/current');
@@ -169,6 +181,10 @@ CHAT_STORE = {
 
     async renameChat(chat_id, newTitle) {
         await simpleApiPost(`/api/chat/rename/${chat_id}`, {title: newTitle});
+        if (chat_id === this.selectedChat) {
+            // keep the titlebar in sync with the sidebar
+            this.chat.title = newTitle;
+        }
         await this.reloadChats();
     },
 
@@ -176,6 +192,15 @@ CHAT_STORE = {
         if (!confirm("Are you sure you want to delete this chat?")) { return }
 
         await simpleApiPost(`/api/chat/delete/${chat_id}`);
+
+        // deleting the open chat makes the backend switch to another one;
+        // follow it, or the view keeps showing the deleted chat while new
+        // messages go to the backend's new current chat
+        if (chat_id === this.selectedChat) {
+            await this.reloadChat();
+            this.currentTokenUsage = this.chat.token_usage;
+        }
+
         await this.reloadChats();
         await this.reloadCategories();
     },
@@ -273,6 +298,11 @@ CHAT_STORE = {
         }
 
         Alpine.store("stream").state = "message_sending";
+
+        // still inside the send click/keypress, so the browser allows the prompt.
+        // not awaited: the message shouldn't wait on the user answering it
+        Alpine.store('notifications').maybeRequestPermission();
+
         await this.clearInput();
 
         // handle any files the user may have attached
@@ -300,7 +330,10 @@ CHAT_STORE = {
         const success = await simpleSocketSend({
             type: "user_message",
             content: text,
-            files: files
+            files: files,
+            // image/video attachments also get saved into the site open in the
+            // preview panel, so the AI can use them in the html
+            site: files ? Alpine.store('artifact').attachTarget : null
         });
 
         if (!success) {

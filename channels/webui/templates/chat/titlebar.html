@@ -1,11 +1,32 @@
-<!-- stub -->
-<div class="chat-title-bar" id="chat-title-bar">
+<div class="chat-title-bar" id="chat-title-bar" x-data="{
+    renaming: false,
+    renameValue: '',
+    start() {
+        this.renameValue = $store.chat.chat.title || '';
+        this.renaming = true;
+        $nextTick(() => { $refs.titleInput.focus(); $refs.titleInput.select(); });
+    },
+    async save() {
+        if (!this.renaming) return;
+        this.renaming = false;
+        const title = this.renameValue.trim();
+        if (title && title !== $store.chat.chat.title) {
+            await $store.chat.renameChat($store.chat.selectedChat, title);
+        }
+    },
+    cancel() { this.renaming = false; }
+}">
     <div class="title">
         <div class="content">
-            <span class="text" id="chat-title-text" x-text="$store.chat.chat.title"></span>
-            <div id="tags" class="chat-title-tags"></div>
+            <span class="text" id="chat-title-text" x-show="!renaming" x-text="$store.chat.chat.title"></span>
+            <input class="rename-input" x-ref="titleInput" x-show="renaming" x-cloak
+                type="text" x-model="renameValue" aria-label="Chat title"
+                @keydown.enter="save()"
+                @keydown.escape="cancel()"
+                @blur="cancel()">
         </div>
-        <button class="rename" id="chat-title-rename" onclick="renameCurrentChat()" title="Rename chat">
+        <button class="rename" id="chat-title-rename" x-show="!renaming" @click="start()" title="Rename chat"
+            :disabled="!$store.chat.selectedChat">
             {% include 'svg/edit.svg' %}
         </button>
     </div>

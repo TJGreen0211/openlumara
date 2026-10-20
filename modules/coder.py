@@ -1,10 +1,15 @@
 import core
 import os
+import asyncio
+import html
+import ipaddress
+import urllib.parse
 import importlib
 import shutil
 import regex
 import glob
 import fnmatch
+import filetype
 try:
     import tree_sitter_language_pack as tslp
 except ImportError:
@@ -30,6 +35,16 @@ class Coder(core.module.Module):
         "sandbox_paths": {
             "default": ["~/coder"],
             "description": "Paths to folders you want the coder to have access to. You can use the `~` character to refer to your home folder, such as `/home/you` on linux, /Users/You on mac, `C:\\Users\\You` on windows"
+        },
+        "per_user_sandboxes": {
+            "default": True,
+            "description": "In multi-user WebUI mode, gives every user their own private folder inside each sandbox (`<sandbox>/users/<username>`), so users can't see or change each other's files and sites. Has no effect in single-user mode."
+        },
+        "max_media_size_mb": {
+            "default": 15,
+            "min": 1,
+            "max": 100,
+            "description": "Largest image or video (in MB) that can be added to a site's media folder, through uploads or URL imports."
         },
 
         "template_paths": {
@@ -84,6 +99,24 @@ class Coder(core.module.Module):
     regex_timeout = 3
     builtin_templates_path = "modules/coder/templates"
 
+    # every site keeps the user's images/videos in this folder, next to its entry html file
+    media_folder = "media"
+    # sniffed mime type -> file extension. anything else is refused, so a "photo"
+    # can't smuggle an executable or html page into a site
+    media_types = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/avif": "avif",
+        "image/x-icon": "ico",
+        "image/svg+xml": "svg",
+        "video/mp4": "mp4",
+        "video/webm": "webm",
+    }
+    # files that get their media references rewritten when a placeholder is replaced
+    site_text_extensions = (".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg")
+
     # -------------
     # events
     # -------------
@@ -92,7 +125,8 @@ class Coder(core.module.Module):
 
         # enable/disable tools based on selected modes
         if self.config.get("read-only"):
-            self.disabled_tools.extend(["file_create", "file_move", "file_delete", "file_edit", "folder_delete"])
+            self.disabled_tools.extend(["file_create", "file_move", "file_delete", "file_edit", "folder_delete",
+                                        "media_placeholder", "media_import_url"])
 
         if self.config.get("insert_sandbox_paths_into_system_prompt"):
             self.disabled_tools.append("list_sandboxes")
@@ -151,7 +185,20 @@ class Coder(core.module.Module):
             final_output.append(
                 "## Live Preview\nAfter building an HTML site the user should see, call open_preview with the entry "
                 "HTML file (e.g. index.html) so it renders in the WebUI's preview panel. The user will then ask for "
-                "changes in plain language - apply them with the file tools, then call open_preview again."
+                "changes in plain language - apply them with the file tools, then call open_preview again.\n"
+                "Give every separate site its own folder (e.g. `bakery/index.html`, `portfolio/index.html`); pages of "
+                "the same site live in that folder.\n\n"
+                "## Site Media\n"
+                f"- A site keeps its images and videos in a `{self.media_folder}/` folder next to its entry HTML "
+                f"file. Reference them with relative paths (`{self.media_folder}/hero.jpg`, or "
+                f"`../{self.media_folder}/hero.jpg` from a page in a sub-folder). Never start the path with `/` - "
+                "that points at the WebUI, not the site.\n"
+                "- Files the user attaches are saved into that folder automatically; their message tells you the "
+                "paths.\n"
+                "- When the site needs an image the user hasn't provided, call media_placeholder and use the path it "
+                "returns. Style images with `object-fit: cover` so a real photo of another shape fits later. Never "
+                "hotlink stock photos or external placeholder services.\n"
+                "- When the user gives you an image or video URL, call media_import_url and use the path it returns."
             )
 
         if self.config.get("read-only"):
@@ -189,9 +236,24 @@ class Coder(core.module.Module):
 
         for path in paths:
             if os.path.basename(path.rstrip("/\\")) == requested_path.rstrip("/\\"):
-                return os.path.expanduser(path).rstrip("/\\")
+                return self._user_scoped_path(os.path.expanduser(path).rstrip("/\\"))
 
         raise Exception("That sandbox does not exist")
+
+    def _user_scoped_path(self, sandbox_root: str):
+        """
+        in multi-user mode every user gets a private folder inside the sandbox,
+        so the AI (and the webui preview, which resolves through here too) only
+        ever sees the current user's files. sandbox names stay the same for
+        every user, so the AI's prompt and preview urls don't change.
+        """
+        user = core.current_user.get()
+        if not user or not self.config.get("per_user_sandboxes"):
+            return sandbox_root
+
+        scoped = core.sandbox_path(sandbox_root, os.path.join("users", user))
+        os.makedirs(scoped, exist_ok=True)
+        return scoped
 
     async def _get_sandbox_subpath(self, sandbox: str, requested_path: str):
         """
@@ -208,6 +270,219 @@ class Coder(core.module.Module):
             requested_path = norm_req[len(norm_box) + 1:]
         sandbox_path = await self._get_full_sandbox_path(sandbox)
         return core.sandbox_path(sandbox_path, requested_path)
+
+    # ----------------------------
+    # helper functions: site media
+    # ----------------------------
+    def _sniff_media(self, data: bytes):
+        """returns the file extension for supported image/video bytes, else None. never trusts the filename."""
+        if not data:
+            return None
+
+        kind = filetype.guess(data)
+        if kind:
+            return self.media_types.get(kind.mime)
+
+        # svg is text, so filetype can't detect it
+        head = data[:2048].decode("utf-8", errors="ignore").lstrip("﻿ \t\r\n")
+        if head.startswith("<svg") or (head.startswith("<?xml") and "<svg" in head):
+            return "svg"
+        return None
+
+    def _media_slug(self, name: str, fallback: str = "image"):
+        """turns a user/url supplied filename (without extension) into a safe, url-friendly one"""
+        slug = regex.sub(r"[^a-z0-9_-]+", "-", (name or "").lower()).strip("-_")
+        return slug[:60] or fallback
+
+    def _unique_media_name(self, folder: str, base: str, ext: str):
+        name = f"{base}.{ext}"
+        n = 2
+        while os.path.exists(os.path.join(folder, name)):
+            name = f"{base}-{n}.{ext}"
+            n += 1
+        return name
+
+    async def _site_media_dir(self, sandbox: str, site_folder: str):
+        """resolves (and path-checks) the media folder of the site whose entry html lives in site_folder"""
+        site_folder = (site_folder or "").replace("\\", "/").strip("/")
+        media_rel = f"{site_folder}/{self.media_folder}" if site_folder else self.media_folder
+        return await self._get_sandbox_subpath(sandbox, media_rel)
+
+    def _check_media_size(self, data: bytes):
+        max_mb = self.config.get("max_media_size_mb") or 15
+        if len(data) > max_mb * 1024 * 1024:
+            raise ValueError(f"File is larger than the {max_mb}MB media limit")
+
+    async def _save_site_media(self, sandbox: str, site_folder: str, filename: str, data: bytes):
+        """
+        saves an image/video into a site's media folder under a safe, unique name.
+        returns {"name", "path"} where path is relative to the site folder (what the html uses).
+        """
+        self._check_media_size(data)
+        ext = self._sniff_media(data)
+        if not ext:
+            raise ValueError(f"'{filename}' is not a supported image or video "
+                             f"({', '.join(sorted(set(self.media_types.values())))})")
+
+        media_dir = await self._site_media_dir(sandbox, site_folder)
+        os.makedirs(media_dir, exist_ok=True)
+
+        base = self._media_slug(os.path.splitext(os.path.basename(filename or ""))[0])
+        # 'x' mode: never overwrite, even if another upload races us for the same name
+        while True:
+            name = self._unique_media_name(media_dir, base, ext)
+            try:
+                with open(os.path.join(media_dir, name), "xb") as f:
+                    f.write(data)
+                break
+            except FileExistsError:
+                continue
+
+        return {"name": name, "path": f"{self.media_folder}/{name}"}
+
+    async def _list_site_media(self, sandbox: str, site_folder: str):
+        media_dir = await self._site_media_dir(sandbox, site_folder)
+        if not os.path.isdir(media_dir):
+            return []
+
+        items = []
+        for name in sorted(os.listdir(media_dir), key=str.lower):
+            full = os.path.join(media_dir, name)
+            if not os.path.isfile(full) or name.startswith("."):
+                continue
+            items.append({
+                "name": name,
+                "path": f"{self.media_folder}/{name}",
+                "size": os.path.getsize(full),
+                "placeholder": name.startswith("placeholder-") and name.endswith(".svg"),
+                "video": name.rsplit(".", 1)[-1].lower() in ("mp4", "webm"),
+            })
+        return items
+
+    async def _media_file_path(self, sandbox: str, site_folder: str, name: str):
+        """path of one existing file in a site's media folder. name must be a bare filename."""
+        if not name or name != os.path.basename(name.replace("\\", "/")) or name.startswith("."):
+            raise ValueError("Invalid media file name")
+        media_dir = await self._site_media_dir(sandbox, site_folder)
+        full = core.sandbox_path(media_dir, name)
+        if not os.path.isfile(full):
+            raise FileNotFoundError(f"{name} does not exist in this site's media folder")
+        return full
+
+    async def _delete_site_media(self, sandbox: str, site_folder: str, name: str):
+        os.remove(await self._media_file_path(sandbox, site_folder, name))
+
+    async def _replace_site_placeholder(self, sandbox: str, site_folder: str, placeholder: str,
+                                        filename: str, data: bytes):
+        """
+        swaps a placeholder for a real file: saves the new file, rewrites every
+        `media/<placeholder>` reference in the site's text files to point at it,
+        then deletes the placeholder. no AI round trip needed.
+        """
+        old_path = await self._media_file_path(sandbox, site_folder, placeholder)
+        saved = await self._save_site_media(sandbox, site_folder, filename, data)
+
+        site_root = os.path.dirname(os.path.dirname(old_path))
+        old_ref = f"{self.media_folder}/{placeholder}"
+        new_ref = saved["path"]
+        blacklist = set(self.config.get("folder_blacklist") or [])
+
+        updated = []
+        for root, folders, files in os.walk(site_root):
+            folders[:] = [d for d in folders
+                          if not d.startswith(".") and d not in blacklist and d != self.media_folder]
+            for file in files:
+                if not file.lower().endswith(self.site_text_extensions):
+                    continue
+                full = os.path.join(root, file)
+                try:
+                    if os.path.getsize(full) > 2 * 1024 * 1024:
+                        continue
+                    with open(full, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if old_ref not in content:
+                    continue
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(content.replace(old_ref, new_ref))
+                updated.append(os.path.relpath(full, site_root).replace(os.sep, "/"))
+
+        os.remove(old_path)
+        return {**saved, "files_updated": updated}
+
+    async def _assert_public_host(self, host: str, port: int):
+        """
+        refuses hosts that resolve to loopback/private/link-local/etc addresses, so
+        a (possibly prompt-injected) import can't be pointed at the user's lan or
+        cloud metadata endpoints. note: httpx resolves again when connecting, so a
+        dns-rebinding host could still slip through - this blocks the plain cases.
+        """
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, port)
+        except OSError:
+            raise ValueError(f"Could not resolve {host}")
+
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+            if getattr(ip, "ipv4_mapped", None):
+                ip = ip.ipv4_mapped
+            if not ip.is_global or ip.is_multicast:
+                raise ValueError("Importing from local or private network addresses is not allowed")
+
+    async def _download_media(self, url: str):
+        """downloads a url with ssrf checks on every redirect hop and a size cap. returns (bytes, filename)."""
+        import httpx
+
+        max_bytes = (self.config.get("max_media_size_mb") or 15) * 1024 * 1024
+
+        for _ in range(5):
+            parts = urllib.parse.urlsplit(url)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError("Only http:// and https:// URLs can be imported")
+            await self._assert_public_host(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+
+            async with httpx.AsyncClient(follow_redirects=False, timeout=20) as client:
+                async with client.stream("GET", url, headers={"User-Agent": "OpenLumara media import"}) as resp:
+                    if resp.is_redirect:
+                        url = urllib.parse.urljoin(url, resp.headers.get("location", ""))
+                        continue
+                    if resp.status_code >= 400:
+                        raise ValueError(f"The server answered with HTTP {resp.status_code}")
+
+                    length = resp.headers.get("content-length")
+                    if length and length.isdigit() and int(length) > max_bytes:
+                        raise ValueError(f"File is larger than the {max_bytes // 1048576}MB media limit")
+
+                    chunks = []
+                    total = 0
+                    async for chunk in resp.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise ValueError(f"File is larger than the {max_bytes // 1048576}MB media limit")
+                        chunks.append(chunk)
+
+                    filename = urllib.parse.unquote(os.path.basename(parts.path)) or "image"
+                    return b"".join(chunks), filename
+
+        raise ValueError("Too many redirects")
+
+    async def _import_site_media(self, sandbox: str, site_folder: str, url: str, filename: str = None):
+        data, url_filename = await self._download_media(url)
+        return await self._save_site_media(sandbox, site_folder, filename or url_filename, data)
+
+    def _placeholder_svg(self, label: str, width: int, height: int):
+        font_size = max(12, min(width, height) // 12)
+        text = html.escape(f"{label} · {width}×{height}")
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}" preserveAspectRatio="xMidYMid slice">'
+            f'<rect width="100%" height="100%" fill="#e5e7eb"/>'
+            f'<path d="M0 0L{width} {height}M{width} 0L0 {height}" stroke="#cbd5e1" stroke-width="2"/>'
+            f'<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" '
+            f'font-family="system-ui, sans-serif" font-size="{font_size}" fill="#64748b">{text}</text>'
+            f'</svg>'
+        )
 
     # -----------------------------
     # helper functions: treesitter
@@ -721,6 +996,38 @@ class Coder(core.module.Module):
         if not os.path.isfile(target_path):
             return self.result("That file does not exist yet. Create it first, then call open_preview.", success=False)
         return self.result({"preview": {"sandbox": sandbox, "path": path}})
+
+    async def media_placeholder(self, sandbox: str, site_folder: str, name: str, width: int = 1200,
+                                height: int = 800, label: str = None):
+        """Creates a placeholder image (SVG) in the site's media folder for an image the user hasn't provided
+        yet, e.g. name 'hero' or 'team-1'. site_folder is the folder holding the site's entry HTML file,
+        relative to the sandbox ('' for the sandbox root). Use the returned path (relative to site_folder)
+        in the HTML/CSS. The user can later swap it for a real photo from the preview panel."""
+        width = max(16, min(int(width), 4000))
+        height = max(16, min(int(height), 4000))
+        slug = self._media_slug(name, fallback="image")
+        filename = f"placeholder-{slug}.svg"
+
+        try:
+            media_dir = await self._site_media_dir(sandbox, site_folder)
+            os.makedirs(media_dir, exist_ok=True)
+            with open(core.sandbox_path(media_dir, filename), "w", encoding="utf-8") as f:
+                f.write(self._placeholder_svg(label or slug.replace("-", " ").title(), width, height))
+        except Exception as e:
+            return self.result(str(e), success=False)
+
+        return self.result({"path": f"{self.media_folder}/{filename}"})
+
+    async def media_import_url(self, sandbox: str, site_folder: str, url: str, filename: str = None):
+        """Downloads an image or video from a public http(s) URL into the site's media folder, so the site
+        doesn't hotlink it. site_folder is the folder holding the site's entry HTML file, relative to the
+        sandbox ('' for the sandbox root). Optional filename (without extension) names the saved file.
+        Use the returned path (relative to site_folder) in the HTML/CSS."""
+        try:
+            saved = await self._import_site_media(sandbox, site_folder, url, filename)
+        except Exception as e:
+            return self.result(str(e), success=False)
+        return self.result({"path": saved["path"]})
 
     # ---------------------
     # user-facing commands

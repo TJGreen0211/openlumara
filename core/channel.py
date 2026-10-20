@@ -343,7 +343,7 @@ class Channel:
 
         if content_blocks:
             message_dict["content"] = content_blocks
-            message_dict["_metadata"] = {"filenames": filenames}
+            message_dict["_metadata"] = {**(metadata or {}), "filenames": filenames}
             return message_dict
 
         return {"role": "user", "content": message}

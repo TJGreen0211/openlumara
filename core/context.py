@@ -173,6 +173,18 @@ class Context:
                     if content and isinstance(content, str):
                         message["content"] += f"\n\n{metadata['injection']}"
 
+            # hidden note about where a message's attachments were saved (e.g. into
+            # a site's media folder). it only ever exists on messages with files,
+            # whose content is a block list - build a new list so the stored
+            # message isn't mutated
+            if metadata.get("attachment_note") and message.get("role") == "user":
+                content = message.get("content")
+                note = metadata["attachment_note"]
+                if isinstance(content, list):
+                    message["content"] = content + [{"type": "text", "text": note}]
+                elif isinstance(content, str):
+                    message["content"] = f"{content}\n\n{note}" if content else note
+
         # remove any non-standard (metadata) fields from the messages
         # so that we can cleanly send it to the API
         # we cant just remove only the _metadata field because old chat history used to use metadata fields

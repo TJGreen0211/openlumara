@@ -228,31 +228,18 @@ async function handleWebSocketMessage(data) {
                 await chat.reloadCategories();
             }
 
-            // track live-preview artifacts as the AI touches HTML files. tool
-            // calls stream BEFORE the server executes them, so file writes from
-            // this turn aren't on disk yet: file tools only *record* the
-            // artifact, and stream_complete opens the panel once the writes
-            // have landed. open_preview opens it immediately, since the file
-            // already exists by the time the model calls it
+            // track live-preview sites as the AI touches HTML files. tool calls
+            // stream BEFORE the server executes them, so file writes from this
+            // turn aren't on disk yet: file tools only *record* the site, and
+            // stream_complete opens the panel once the writes have landed.
+            // open_preview opens it immediately, since the file already exists
+            // by the time the model calls it. the store only accepts a call once
+            // its arguments are complete JSON
             const seg = stream.turn.messages[stream.turn.messages.length - 1];
             if (seg && seg.type === 'tool_calls' && Array.isArray(seg.tool_calls)) {
-                for (const tc of seg.tool_calls) {
-                    const name = tc.function?.name;
-                    // tools are namespaced as {module}_{method} (e.g. coder_file_create,
-                    // coder_open_preview), so match the trailing method name, not the bare name
-                    if (!name || !/(?:^|_)(file_create|file_edit|open_preview)$/.test(name)) continue;
-
-                    let args = {};
-                    try { args = partialJsonParse(tc.function?.arguments ?? '{}') || {}; } catch { continue; }
-
-                    if (!args.sandbox || !args.path) continue;
-
-                    if (/(?:^|_)open_preview$/.test(name)) {
-                        Alpine.store('artifact').onOpenPreview(args.sandbox, args.path);
-                    } else {
-                        Alpine.store('artifact').onFileTouched(args.sandbox, args.path);
-                    }
-                }
+                seg.tool_calls.forEach((tc, i) => {
+                    Alpine.store('artifact').recordToolCall(tc, tc.id || `${stream.turn.messages.length}:${i}`);
+                });
             }
 
             break;

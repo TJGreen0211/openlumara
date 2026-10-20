@@ -45,6 +45,19 @@
         overflow: hidden;
     }
 
+    .rename-input {
+        width: min(600px, 70vw);
+        padding: 4px 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        font-weight: 600;
+        text-align: center;
+        outline: none;
+    }
+
     .rename {
         padding: 6px;
         background: transparent;

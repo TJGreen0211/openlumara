@@ -171,6 +171,12 @@
         }
 
         &.user, &.assistant {
+            /* fit-content would shrink the bubble to the textarea's intrinsic width
+               while editing, so let it fill up to its max-width instead */
+            &:has(.editing) {
+                width: 100%;
+            }
+
             .editing {
                 display: flex;
                 flex-direction: column;
