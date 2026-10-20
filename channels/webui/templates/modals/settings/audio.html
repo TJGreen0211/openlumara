@@ -7,6 +7,17 @@
 
         <hr>
 
+        <!-- Master Mute -->
+        <div class="item">
+            <div class="toggle-row">
+                <label class="label">Mute All Sounds</label>
+                <button type="button" :class="['toggle', $store.audio.muted ? 'toggle-on' : 'toggle-off']"
+                        @click="$store.audio.setMuted(!$store.audio.muted)">
+                </button>
+            </div>
+            <p class="description">When on, no audio notifications are played.</p>
+        </div>
+
         <!-- Volume -->
         <div class="item">
             <div class="row">

@@ -9,6 +9,7 @@ SOUND_IDS.forEach(id => {
 
 AUDIO_STORE = {
     // Master controls
+    muted: AudioManager.isMuted(),
     volume: parseFloat(localStorage.getItem('sfxVolume') || '1.0'),
     tokenVolume: parseFloat(localStorage.getItem('sfxTokenVolume') || '0.6'),
     tokenFreq: parseInt(localStorage.getItem('sfxTokenFreq') || '9000'),
@@ -32,6 +33,11 @@ AUDIO_STORE = {
 
         // Sync with AudioManager
         AudioManager.setVolume(this.volume);
+    },
+
+    setMuted(muted) {
+        this.muted = muted;
+        AudioManager.setMuted(muted);
     },
 
     setVolume(val) {

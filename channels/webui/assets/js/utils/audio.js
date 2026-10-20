@@ -107,6 +107,22 @@ const AudioManager = {
         return this.audioContext;
     },
 
+    // Master mute: sounds are muted unless the user explicitly unmutes them
+    isMuted: function() {
+        try {
+            return localStorage.getItem('sfxMuted') !== 'false';
+        } catch (e) {
+            return true;
+        }
+    },
+
+    setMuted: function(muted) {
+        try {
+            localStorage.setItem('sfxMuted', String(muted));
+        } catch (e) {}
+        if (muted) this.stopProcessingSound();
+    },
+
     // Set volume (0.0 to 1.0)
     setVolume: function(vol) {
         this.volume = vol;
@@ -204,6 +220,8 @@ const AudioManager = {
 
     // Play the sound asynchronously to avoid UI blocking
     play: function(id) {
+        if (this.isMuted()) return;
+
         // ── Check Storage or Fallback to Built-in Defaults ──
         let isEnabled = true;
         try {
@@ -430,7 +448,7 @@ const AudioManager = {
     },
 
     playProcessingSound: function() {
-        if (localStorage.getItem(`processingSoundEnabled`) !== 'true') {
+        if (this.isMuted() || localStorage.getItem(`processingSoundEnabled`) !== 'true') {
             return;
         }
 
