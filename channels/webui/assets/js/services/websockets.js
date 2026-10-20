@@ -2,19 +2,25 @@ let isWsConnected = false;
 let wsReconnecting = false;
 let responseSoundPlayed = false;
 
+// exponential backoff for reconnects: a down server used to be hammered with
+// a fresh connection attempt every second forever
+let wsReconnectDelay = 1000;
+const WS_RECONNECT_MAX_DELAY = 30000;
+
 // intended to be used to queue up messages for sending to the backend in case the
 // websocket isn't connected. it's a stub for now
 let sendQueue = [];
 
 async function connectWebSocket() {
+    // a new connection attempt starts: re-arm the onclose/onerror guards
+    wsReconnecting = false;
+
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const token = window.apiToken || '';
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
 
     const pathname = `${window.location.pathname || '/'}`;
     const pathBase = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
     const wsPath = `${pathBase === '' ? '' : pathBase}/ws`;
-    const wsUrl = `${wsProtocol}//${window.location.host}${wsPath}${tokenParam}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}${wsPath}`;
 
     try {
         wsSocket = new WebSocket(wsUrl);
@@ -31,11 +37,16 @@ async function connectWebSocket() {
         Alpine.store('ui').connectionState = 'connected';
         isWsConnected = true;
         wsReconnecting = false;
+        wsReconnectDelay = 1000;
 
         // a send that failed against a dead socket can leave the stream state
         // wedged in message_sending; a fresh connection always starts idle
         // (the backend cancels this user's stream task on disconnect, so
         // there is no live stream to clobber here)
+        // clear() also drops stream.turn/userMsg: a mid-stream drop would
+        // otherwise leave a partial turn that the next turn_stream would
+        // append to, or that would render as an orphaned bubble
+        await Alpine.store('stream').clear();
         Alpine.store('stream').state = 'idle';
 
         await Alpine.store("chat").reloadChat();
@@ -50,7 +61,14 @@ async function connectWebSocket() {
         }
     };
 
+    const thisSocket = wsSocket;
+
     wsSocket.onclose = async (event) => {
+        // a stale socket closing after a newer one was created must not
+        // clobber the live reference or schedule a parallel connection
+        if (thisSocket !== wsSocket) {
+            return;
+        }
         if (!wsReconnecting) {
             console.log('WebSocket disconnected:', event.code, event.reason);
             wsSocket = null;
@@ -73,10 +91,25 @@ async function connectWebSocket() {
 }
 
 async function scheduleWsReconnect() {
-    console.log(`attempting to reconnect to websocket..`);
+    // guard against onclose/onerror of the same socket stacking attempts;
+    // cleared at the start of the next connectWebSocket()
+    if (wsReconnecting) {
+        return;
+    }
+    // a live connection already exists (an older socket's onclose must not
+    // spawn a second one alongside it)
+    if (window.socket && (window.socket.readyState === WebSocket.OPEN || window.socket.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    wsReconnecting = true;
+
+    const delay = wsReconnectDelay;
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_DELAY);
+
+    console.log(`attempting to reconnect to websocket in ${delay}ms..`);
     setTimeout(function () {
         connectWebSocket();
-    }, 1000);
+    }, delay);
 }
 
 async function handleWebSocketMessage(data) {

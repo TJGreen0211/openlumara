@@ -16,6 +16,11 @@ CHAT_STORE = {
     draggedChatId: null,
     draggedChatCategory: null,
     dragHoverCategory: null,
+    categoryCounts: {},
+
+    // "moved to X · undo" toast shown after a chat is dropped on a category
+    moveToast: null,
+    _moveToastTimer: null,
 
     turnHistory: [],
     editingMessageIndex: null,
@@ -141,6 +146,7 @@ CHAT_STORE = {
         this.turnHistory = result.turn_history;
 
         await this.reloadChats();
+        await this.reloadCategories();
         await this.reloadChat();
     },
 
@@ -171,6 +177,7 @@ CHAT_STORE = {
 
         await simpleApiPost(`/api/chat/delete/${chat_id}`);
         await this.reloadChats();
+        await this.reloadCategories();
     },
 
     async moveChatToCategory(chatId, targetCategory) {
@@ -186,6 +193,38 @@ CHAT_STORE = {
 
         await this.reloadChats();
         await this.reloadCategories();
+    },
+
+    async dropChatOnCategory(category) {
+        const chatId = this.draggedChatId;
+        const fromCategory = this.draggedChatCategory;
+        this.draggedChatId = null;
+        this.draggedChatCategory = null;
+        this.dragHoverCategory = null;
+
+        if (!chatId || category === fromCategory) return;
+        if (Alpine.store('stream').state !== 'idle') return;
+
+        await this.moveChatToCategory(chatId, category);
+        this.showMoveToast(chatId, fromCategory, category);
+    },
+
+    showMoveToast(chatId, fromCategory, toCategory) {
+        clearTimeout(this._moveToastTimer);
+        this.moveToast = { chatId, fromCategory, toCategory };
+        this._moveToastTimer = setTimeout(() => { this.moveToast = null; }, 5000);
+    },
+
+    async undoMove() {
+        const toast = this.moveToast;
+        if (!toast) return;
+        clearTimeout(this._moveToastTimer);
+        this.moveToast = null;
+        await this.moveChatToCategory(toast.chatId, toast.fromCategory);
+    },
+
+    categoryLabel(category) {
+        return category === 'general' ? 'General' : category;
     },
 
     async reloadChat() {
@@ -210,6 +249,7 @@ CHAT_STORE = {
 
     async reloadCategories() {
         this.categories = await simpleApiFetch('/api/chats/categories');
+        this.categoryCounts = (await simpleApiFetch('/api/chats/category_counts')) || {};
     },
 
     async selectCategory(category) {
@@ -329,12 +369,15 @@ CHAT_STORE = {
     async copyMessage(turnIndex) {
       const turn = this.turnHistory[turnIndex];
       const msg = turn?.messages?.[turn.messages?.length - 1]; // last message in the turn
-      if (!msg) return;
-      navigator.clipboard.writeText(msg.content)
+      if (!msg) return false;
+      // return the promise so the caller's success checkmark only shows when
+      // the clipboard write actually succeeded
+      return navigator.clipboard.writeText(msg.content)
         .then(() => {
             return true;
         })
         .catch(err => {
+            console.error('clipboard write failed:', err);
             return false;
         });
     },

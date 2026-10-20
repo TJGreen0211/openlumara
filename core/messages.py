@@ -1,6 +1,7 @@
 import core
 import os
 import asyncio
+import copy
 
 class Messages:
     def __init__(self, channel, chat):
@@ -19,6 +20,10 @@ class Messages:
         # into a single disk write instead of one full rewrite per message
         self._save_task = None
         self.SAVE_DEBOUNCE_SECONDS = 0.15
+        # serializes the actual disk write: history can hold several MB of
+        # base64 attachments, so the dump+write+fsync runs in a worker thread
+        # (see save()); the lock keeps concurrent saves of this file ordered
+        self._save_lock = asyncio.Lock()
 
     def _schedule_save(self):
         if self._save_task and not self._save_task.done():
@@ -42,7 +47,16 @@ class Messages:
                 pass
 
         await self.chat.update_timestamp()
-        return self.data.save()
+        # the history file can hold several MB of base64 attachments; run the
+        # synchronous json dump + atomic write + fsync in a worker thread so
+        # a big chat never blocks the event loop mid agentic-loop
+        async with self._save_lock:
+            # snapshot on the loop: appends and in-place stream edits keep
+            # happening while the thread dumps, so the thread must not walk the
+            # live list. deepcopy shares the (immutable) strings, so big base64
+            # attachments cost nothing extra - only the containers are copied
+            snapshot = copy.deepcopy(list(self.data))
+            return await asyncio.to_thread(self.data.save, snapshot)
 
     async def get(self, index = None):
         """get message history of current chat"""

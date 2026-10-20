@@ -62,7 +62,13 @@
         </template>
 
         <template x-for="category in $store.chat.categories" :key="category">
-            <ul :class="{'item': true, 'active': category == $store.chat.selectedCategory, 'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory, 'drop-target': $store.chat.dragHoverCategory === category && category !== $store.chat.draggedChatCategory}"
+            <ul :class="{
+                    'item': true,
+                    'active': category == $store.chat.selectedCategory,
+                    'disabled': $store.stream.state !== 'idle' && category !== $store.chat.selectedCategory,
+                    'drop-candidate': $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory,
+                    'drop-target': $store.chat.dragHoverCategory === category && category !== $store.chat.draggedChatCategory
+                }"
                 @click="
                     if ($store.stream.state !== 'idle') { return }
 
@@ -72,7 +78,8 @@
                     }
                 "
                 @dragover.stop.prevent="$store.chat.draggedChatId && category !== $store.chat.draggedChatCategory && ($store.chat.dragHoverCategory = category)"
-                @drop.prevent="if ($store.stream.state === 'idle' && $store.chat.draggedChatId && category !== $store.chat.draggedChatCategory) { $store.chat.moveChatToCategory($store.chat.draggedChatId, category); $store.chat.draggedChatId = null; $store.chat.draggedChatCategory = null; $store.chat.dragHoverCategory = null; }"
+                @dragleave="if (!$el.contains($event.relatedTarget) && $store.chat.dragHoverCategory === category) { $store.chat.dragHoverCategory = null }"
+                @drop.prevent="$store.chat.dropChatOnCategory(category)"
             >
                 <span class="icon">
                     <template x-if="category === 'general'">
@@ -82,7 +89,8 @@
                         {% include 'svg/chat.svg' %}
                     </template>
                 </span>
-                <span class="title" x-text="category === 'general' ? 'General' : category"></span>
+                <span class="title" x-text="$store.chat.categoryLabel(category)"></span>
+                <span class="count" x-show="$store.chat.categoryCounts[category]" x-text="$store.chat.categoryCounts[category]"></span>
             </ul>
         </template>
     </div>
@@ -91,7 +99,7 @@
         <div class="buttons">
             <!-- Logout button -->
             <button class="sidebar-btn" @click="if(confirm('Log out?')) window.location.href='/logout'">
-                {% include 'svg/download.svg' %}
+                {% include 'svg/logout.svg' %}
                 <span>Logout</span>
             </button>
         </div>
@@ -105,7 +113,7 @@
     <button class="header-btn" x-text="$store.chat.selectedCategory === 'general' ? 'General' : $store.chat.selectedCategory" x-show="$store.ui.isMobile" x-cloak @click="$store.ui.toggleMobileSidebarView()"></button>
 
     <div class="search">
-        <input name="search" type="text" placeholder="Search through your chats.." x-model="query">
+        <input name="search" type="text" placeholder="Search chats" x-model="query">
     </div>
 
     <div class="chats">
@@ -160,8 +168,18 @@
                                             {% include 'svg/mic.svg' %}
                                         </span>
                                     </template>
+                                    <div class="item-actions" @click.stop>
+                                        <button class="action-btn" @click="renaming = true; renameValue = chat.title; $nextTick(() => { $refs.renameInput.focus(); $refs.renameInput.select(); })" title="Rename">
+                                            {% include 'svg/edit.svg' %}
+                                        </button>
+                                        <button class="action-btn delete" @click="$store.chat.deleteChat(chat.id)" title="Delete">
+                                            {% include 'svg/trash.svg' %}
+                                        </button>
+                                    </div>
                                 </div>
                             </template>
+
+                            <span class="date" x-show="!renaming" x-text="formatDate(chat.updated) || 'No date known'"></span>
                             <template x-if="renaming">
                                 <div class="rename-container">
                                     <input 
@@ -182,24 +200,13 @@
                                 </div>
                             </template>
                             
-                            <div class="meta">
-                                <span class="date" x-text="formatDate(chat.updated) || 'No date known'"></span>
-                                
-                                <div class="item-actions" @click.stop>
-                                    <button class="action-btn" @click="renaming = true; renameValue = chat.title; $nextTick(() => { $refs.renameInput.focus(); $refs.renameInput.select(); })" title="Rename">
-                                        {% include 'svg/edit.svg' %}
-                                    </button>
-                                    <button class="action-btn delete" @click="$store.chat.deleteChat(chat.id)" title="Delete">
-                                        {% include 'svg/trash.svg' %}
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <ul class="tags">
-                                <template x-for="tag in (chat.tags ?? []).slice(0,3)" :key="tag">
-                                    <li x-text="tag" class="tag"></li>
-                                </template>
-                            </ul>
+                            <template x-if="chat.tags?.length">
+                                <ul class="tags">
+                                    <template x-for="tag in chat.tags.slice(0,3)" :key="tag">
+                                        <li x-text="tag" class="tag"></li>
+                                    </template>
+                                </ul>
+                            </template>
                         </div>
                     </div>
                 </template>

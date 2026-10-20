@@ -7,6 +7,16 @@ import json_repair
 
 CHUNK_SIZE = 1500
 
+
+def _config_int(value):
+    """parse an ID setting that may be unset (None) without raising, so a
+    freshly added bot without configured IDs ignores messages instead of
+    throwing on every single one"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 # we have to create a special class here so that we can override methods and make methods like on_message work
 class DiscordClient(discord.Client):
     def __init__(self, channel, **kwargs):
@@ -48,7 +58,7 @@ class DiscordClient(discord.Client):
             return
 
         # and dont spam channels that arent the target channel
-        if message.channel.id != int(self._chan.config.get("target_channel_id")):
+        if message.channel.id != _config_int(self._chan.config.get("target_channel_id")):
             return
 
         # if mentions are required, only reply if mentioned
@@ -69,7 +79,7 @@ class DiscordClient(discord.Client):
                 return
 
         # determine whether non-public commands may be ran by the user
-        authorized = (message.author.id == int(self._chan.config.get("authorized_user_id")))
+        authorized = (message.author.id == _config_int(self._chan.config.get("authorized_user_id")))
 
         content = message.content
 

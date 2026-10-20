@@ -848,6 +848,11 @@ def load(file_path=None):
         new_config = True
 
     raw_config = dict(config) if config else {}
+    # snapshot the on-disk state before syncing: sync_config shares nested
+    # dicts with raw_config and sync_module_settings prunes them in place, so
+    # raw_config itself is no longer trustworthy for the changed? comparison
+    # below
+    original_config = copy.deepcopy(raw_config)
 
     enabled_channels = raw_config.get("channels", {}).get("enabled", [])
     if not enabled_channels and new_config:
@@ -885,7 +890,11 @@ def load(file_path=None):
         target[item['section_key']]['disabled'] = state['disabled']
 
     config.load(target)
-    config.save()
+    # only rewrite the file when the sync actually changed something: saving
+    # rewrites the whole yaml via safe_dump and strips any comments the user
+    # wrote in their config, so an unchanged config must not be re-saved
+    if new_config or target != original_config:
+        config.save()
 
     if new_config:
         print(f"A new configuration file has been created at {config.path}.")

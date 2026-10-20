@@ -2,6 +2,7 @@ import core
 import ulid
 import datetime
 import os
+import asyncio
 
 class Chat:
     def __init__(self, channel, username=None):
@@ -32,6 +33,12 @@ class Chat:
         # _slot_restore_pending: id of the chat whose slot cache should be
         # restored the first time a user sends a message in it (None = nothing pending)
         self._slot_restore_pending = None
+
+        # index saves from set() are debounced: callers often change several
+        # keys in a row (chats.organize) or one per turn (token_usage), and each
+        # save is a full index rewrite + fsync
+        self._index_save_task = None
+        self.INDEX_SAVE_DEBOUNCE_SECONDS = 0.15
 
     async def autoload(self):
         """loads the last used chat if applicable, otherwise it creates a new chat. basically the class's async constructor"""
@@ -67,8 +74,7 @@ class Chat:
 
         # store current index into a simple file, for chat autoloading later
         os.makedirs(os.path.dirname(self.current_save_path), exist_ok=True)
-        with open(self.current_save_path, "w") as f:
-            f.write(str(index))
+        core.storage.atomic_write(self.current_save_path, str(index))
 
         # load this chat's Messages object
         self.messages = core.messages.Messages(self.channel, self)
@@ -456,7 +462,22 @@ class Chat:
 
         return self.current
 
+    def _schedule_index_save(self):
+        if self._index_save_task and not self._index_save_task.done():
+            return
+        self._index_save_task = asyncio.create_task(self._debounced_index_save())
+
+    async def _debounced_index_save(self):
+        await asyncio.sleep(self.INDEX_SAVE_DEBOUNCE_SECONDS)
+        self._index_save_task = None
+        self.data.save()
+
     async def save(self):
+        # this writes the whole index, so any pending debounced save is redundant
+        task, self._index_save_task = self._index_save_task, None
+        if task and not task.done():
+            task.cancel()
+
         if self.current is None:
             await self.new()
 
@@ -562,7 +583,7 @@ class Chat:
 
 
     def get(self, key = None, default = None, index = None):
-        if self.current is None and not index:
+        if self.current is None and index is None:
             raise Exception("No chat is currently loaded!")
 
         if index is None:
@@ -673,17 +694,50 @@ class Chat:
         return found_chats
 
     async def set(self, key, value, index = None):
-        if self.current is None and not index:
+        if self.current is None and index is None:
             raise Exception("No chat is currently loaded!")
 
         if index is None:
             index = self.current
 
         if key in self.data[index].keys():
+            if self.data[index][key] == value:
+                return True
             self.data[index][key] = value
+            # always persist: callers like chats.organize, /rename and the
+            # webui rename/category endpoints change chat state without any
+            # following message save, so an in-memory-only mutation was
+            # silently lost on restart. debounced so back-to-back sets coalesce
+            self._schedule_index_save()
             return True
 
         raise Exception(f"{key} is not a valid chat property")
+
+    def update_metadata(self, key, value, index = None):
+        """set a single metadata entry on a chat and persist the index.
+
+        mutating the dict returned by get("metadata") never saves, and
+        Chat.set() raises for keys not already present - legacy chats may
+        lack the metadata key entirely - so this is the save-correct way to
+        write chat metadata (same pattern as set_loaded_modules).
+        """
+        if self.current is None and index is None:
+            raise Exception("No chat is currently loaded!")
+
+        if index is None:
+            index = self.current
+
+        chat = self.data[index]
+        metadata = chat.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            chat["metadata"] = metadata
+
+        if metadata.get(key) == value:
+            return
+
+        metadata[key] = value
+        self.data.save()
 
     def get_all(self):
         """returns all chats in the storage, sorted by updated date (most recent first)"""

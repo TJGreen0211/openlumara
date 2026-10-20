@@ -31,6 +31,9 @@ document.addEventListener('alpine:init', async () => {
     Alpine.directive('auto-scroll', autoScroll);
     Alpine.directive('copy-code', copyCode);
 
+    // chat copies should be plain text (js/services/plain_copy.js)
+    registerPlainCopy();
+
     // restore the per-chat preview map *before* the websocket connects, so an
     // in-flight stream can't persist a new entry that init() would then
     // overwrite with the stale saved map

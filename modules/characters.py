@@ -96,12 +96,7 @@ class Characters(core.module.Module):
             else:
                 return "please provide a character name."
         elif name in ("reset", "default"):
-            chat = self.channel.context.chat
-            meta = chat.get("metadata")
-            if meta is None:
-                meta = {}
-                chat.data[chat.current]["metadata"] = meta
-            meta["character"] = ""
+            self.channel.context.chat.update_metadata("character", "")
             self.active = False
             return "character has been reset to default"
 
@@ -227,7 +222,7 @@ class Characters(core.module.Module):
                 "description": char.get("identity")
             }
 
-        self.channel.context.chat.get("metadata")["character"] = char_data.get("name")
+        self.channel.context.chat.update_metadata("character", char_data.get("name"))
         self.active = True
         user_name = self.user_profile.get("name", "User")
 
@@ -243,12 +238,7 @@ class Characters(core.module.Module):
     
     async def switch_to_default(self):
         """Switches you back to your default identity."""
-        chat = self.channel.context.chat
-        meta = chat.get("metadata")
-        if meta is None:
-            meta = {}
-            chat.data[chat.current]["metadata"] = meta
-        meta["character"] = ""
+        self.channel.context.chat.update_metadata("character", "")
 
         self.active = False
         return "success"

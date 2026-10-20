@@ -3,7 +3,7 @@
         <div>
             <div class="tool-calls-container" x-data="{ collapsed: false }">
                 <div class="tool-call-card">
-                    <div class="header" @click="collapsed = !collapsed">
+                    <div class="header" @click="collapsed = !collapsed" @keydown.enter.prevent="collapsed = !collapsed" @keydown.space.prevent="collapsed = !collapsed" role="button" tabindex="0" :aria-expanded="!collapsed" :aria-label="'Toggle ' + (tool.function?.name || 'tool call') + ' details'">
                         <svg :class="{'toggle': true, 'toggle-expanded': !collapsed}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"></polyline>
                         </svg>

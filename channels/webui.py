@@ -27,6 +27,7 @@ import starlette, starlette.middleware.sessions
 import uvicorn
 import base64
 import zoneinfo
+import urllib.parse
 
 # security libraries
 import secrets
@@ -242,6 +243,73 @@ class Webui(core.channel.Channel):
         except Exception:
             return False
         return role == "admin" and self.config.get("allow_admin_commands")
+
+    def websocket_origin_allowed(self, websocket):
+        """Reject cross-origin WebSocket handshakes.
+
+        browsers do not apply CORS to WebSockets, so without this check any
+        page the user visits could open ws://host:port/ws and drive the agent
+        (including /commands) as if it were the WebUI. browsers always send
+        Origin on WebSocket handshakes, so a missing Origin means a
+        non-browser client and is allowed; a present Origin must be
+        same-origin (Host / X-Forwarded-Host) or local.
+        """
+        origin = websocket.headers.get("origin")
+        if not origin:
+            return True
+        try:
+            origin_host = urllib.parse.urlsplit(origin).hostname
+        except ValueError:
+            return False
+        if not origin_host:
+            return False
+        origin_host = origin_host.lower()
+        if origin_host in ("localhost", "127.0.0.1", "::1"):
+            return True
+        allowed = set()
+        for header in ("host", "x-forwarded-host"):
+            value = websocket.headers.get(header)
+            if value:
+                host = urllib.parse.urlsplit(f"//{value}").hostname
+                if host:
+                    allowed.add(host.lower())
+        if self.host and self.host not in ("0.0.0.0", "::"):
+            allowed.add(self.host.lower())
+        return origin_host in allowed
+
+    def _get_session_secret(self):
+        """Server-wide session signing secret, generated on first run.
+
+        the previous code passed config.get("session_secret", "literal") to
+        SessionMiddleware, but ConfigManager.get treats a trailing non-empty
+        string as another key, not a default, so this returned None and
+        starlette signed sessions with str(None) == "None" - anyone could
+        forge an authenticated admin cookie. the secret now lives in the
+        global data dir (user="" bypasses the per-user contextvar, sessions
+        are server-wide), and deleting the file rotates it (logs everyone
+        out).
+        """
+        data_path = core.get_data_path(user="")
+        secret_file = os.path.join(data_path, "session_secret")
+        try:
+            with open(secret_file, "r", encoding="utf-8") as f:
+                secret = f.read().strip()
+            if secret:
+                return secret
+        except FileNotFoundError:
+            pass
+        secret = secrets.token_hex(32)
+        try:
+            # 0600: the signing key must not be readable by other local users,
+            # or they can forge authenticated admin session cookies. chmod
+            # also tightens a pre-existing file that was created world-readable
+            fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(secret)
+            os.chmod(secret_file, 0o600)
+        except OSError as e:
+            self.log("webui", f"Could not persist session secret, using an ephemeral one: {e}")
+        return secret
 
     async def _get_user_context(self, username):
         """Get or create Context for a user."""
@@ -560,7 +628,7 @@ async def create_fastapi(channel):
     session_lifetime_days = channel.config.get("login_lifetime")
     app.add_middleware(
         starlette.middleware.sessions.SessionMiddleware,
-        secret_key=channel.config.get("session_secret", "openlumara-default-session-secret-change-me"),
+        secret_key=channel._get_session_secret(),
         max_age=session_lifetime_days * 86400
     )
 
@@ -741,6 +809,16 @@ async def create_fastapi(channel):
         uctx, _ = await _get_uctx(request)
         return api_result(uctx.chat.get_categories(), True)
 
+    @app.get("/api/chats/category_counts")
+    async def get_chat_category_counts(request: fastapi.Request):
+        """Returns how many chats each category holds, as {category: count}"""
+        uctx, _ = await _get_uctx(request)
+        counts = {}
+        for chat in uctx.chat.get_all():
+            category = chat.get("category")
+            counts[category] = counts.get(category, 0) + 1
+        return api_result(counts, True)
+
     @app.post("/api/chats/search")
     async def search_chats(request: fastapi.Request):
         """Searches across all chats for messages matching a query"""
@@ -855,22 +933,12 @@ async def create_fastapi(channel):
             if index is None:
                 return api_result("Chat not found", success=False)
 
-            # legacy chats may lack the metadata key entirely, and Chat.set()
-            # raises for keys not already present, so mutate the stored dict
-            # directly (same pattern as Chat.set_loaded_modules)
-            chat = uctx.chat.data[index]
-            metadata = chat.get("metadata")
-            if not isinstance(metadata, dict):
-                metadata = {}
-                chat["metadata"] = metadata
-
-            metadata["meeting_room"] = enabled
-            uctx.chat.data.save()
+            uctx.chat.update_metadata("meeting_room", enabled, index=index)
 
             await channel.websocket_manager.broadcast({
                 "type": "chat_metadata_updated",
-                "id": chat.get("id"),
-                "metadata": metadata,
+                "id": uctx.chat.data[index].get("id"),
+                "metadata": uctx.chat.data[index].get("metadata"),
             }, username=username)
 
             return api_result(success=True)
@@ -1023,7 +1091,7 @@ async def create_fastapi(channel):
         data = await request.json()
 
         changed_modules = list(data.get("changed_modules", []))
-        data.pop("changed_modules")
+        data.pop("changed_modules", None)
 
         username = request.session.get("username")
 
@@ -1393,10 +1461,25 @@ async def create_fastapi(channel):
     # ------------------
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: fastapi.WebSocket):
-        # WebSocket auth check
+        # cross-origin guard: must run before accept(), browsers do not apply
+        # CORS to WebSockets, so this is the only thing standing between a
+        # hostile page and driving the agent over ws://localhost:3000/ws
+        if not channel.websocket_origin_allowed(websocket):
+            origin = websocket.headers.get("origin", "<missing>")
+            channel.log(channel.name, f"Rejected WebSocket handshake from origin {origin}")
+            await websocket.close(code=4003, reason="Cross-origin WebSocket rejected")
+            return
+
+        # WebSocket auth check: trust only the signed session contents.
+        # SessionMiddleware leaves scope["session"] empty for a missing, forged
+        # or expired cookie, so the mere presence of a "session" cookie proves
+        # nothing (any client could send session=x and land on the global context)
+        ws_username = None
         if channel.config.get("require_login", False):
-            session_cookie = websocket.cookies.get("session")
-            if not session_cookie:
+            session = websocket.scope.get("session") or {}
+            if session.get("authenticated"):
+                ws_username = session.get("username")
+            if not ws_username:
                 # check if rate limited
                 client_ip = websocket.client.host if websocket.client else "unknown"
                 now = time.time()
@@ -1414,9 +1497,6 @@ async def create_fastapi(channel):
                 return
 
         ws_mgr = channel.websocket_manager
-        ws_username = None
-        if channel.config.get("require_login", False):
-            ws_username = websocket.scope.get("session", {}).get("username")
 
         await ws_mgr.connect(websocket, username=ws_username)
 

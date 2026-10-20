@@ -1,76 +1,76 @@
-#token-usage-bar {
-  .container {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--bg-primary);
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    box-sizing: border-box;
-  }
+/* send/stop slot: the button's border doubles as the context usage meter */
+#send-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
 
-  .bg {
+/* progress border drawn over the button's own border, which acts as the track.
+   starts at the top-left corner and runs clockwise; amber from 75%, red from 90% */
+#token-usage-bar {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+
+  svg {
     width: 100%;
-    height: 1px;
-    background: var(--border-color);
-    overflow: hidden;
+    height: 100%;
+    overflow: visible;
   }
 
   .fill {
-    height: 100%;
-    width: 0%;
-    background: var(--accent) !important;
-    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    position: relative;
-    overflow: hidden;
-
-    &::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-      transform: translateX(-100%);
-      animation: shimmer 2s infinite;
-      opacity: 0;
-      transition: opacity 0.3s ease;
-    }
+    x: 1px;
+    y: 1px;
+    width: calc(100% - 2px);
+    height: calc(100% - 2px);
+    rx: var(--radius-lg);
+    fill: none;
+    stroke: var(--text-secondary);
+    stroke-width: 2;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
   }
 
-  .text {
-    display: flex;
-    justify-content: right;
-    position: relative;
-    height: 0px;
+  &.caution .fill {
+    stroke: #f59e0b;
+  }
+
+  &.danger .fill {
+    stroke: var(--error, #ef4444);
+  }
+
+  &.busy svg {
+    animation: tokenRingPulse 1.6s ease-in-out infinite;
+  }
+
+  /* exact numbers when hovering the button */
+  .tip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    padding: 5px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    text-align: right;              
-    margin-right: 15px;             
-    bottom: 0.5rem;                
-    z-index: 1;                     
-    transition: color 0.2s ease;    
-  }
-
-  &.active {
-    .fill {
-      background-color: var(--accent);
-    }
-  }
-
-  &.warning {
-    .fill {
-      background: linear-gradient(90deg, #f59e0b, #ef4444);
-    }
-    .text {
-      color: var(--error);
-    }
-  }
-
-  &.shimmer-active {
-    .fill::after {
-      opacity: 1;
-    }
+    opacity: 0;
+    transform: translateY(2px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    z-index: 10;
   }
 }
 
+#send-wrap:hover #token-usage-bar .tip,
+#send-wrap:focus-within #token-usage-bar .tip {
+  opacity: 1;
+  transform: none;
+}
 
+@keyframes tokenRingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

@@ -1,0 +1,17 @@
+[      40ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:3000/login:0
+[    9116ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:35
+[    9116ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=vb4ce7c3c7e9fad3d:233
+[    9117ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:124
+[    9119ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=vb4ce7c3c7e9fad3d:25
+[   10481ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vb4ce7c3c7e9fad3d:40
+[   10483ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vb4ce7c3c7e9fad3d:40
+[   10519ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:35
+[   10519ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=vb4ce7c3c7e9fad3d:233
+[   10523ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:124
+[   10527ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=vb4ce7c3c7e9fad3d:25
+[   34398ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vb4ce7c3c7e9fad3d:40
+[   34398ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vb4ce7c3c7e9fad3d:40
+[   34420ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:35
+[   34421ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=vb4ce7c3c7e9fad3d:233
+[   34423ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vb4ce7c3c7e9fad3d:124
+[   34426ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=vb4ce7c3c7e9fad3d:25

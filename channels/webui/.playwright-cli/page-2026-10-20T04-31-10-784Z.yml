@@ -1,0 +1,27 @@
+- generic [ref=f6e3]:
+  - generic [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - button "New category" [ref=f6e7] [cursor=pointer]
+      - button "Logout" [ref=f6e11] [cursor=pointer]
+    - generic [ref=f6e16]:
+      - textbox "Search chats" [ref=f6e18]
+      - generic [ref=f6e19]: loading more..
+      - button "New Chat" [ref=f6e22] [cursor=pointer]
+  - generic [ref=f6e25]:
+    - generic [ref=f6e26]:
+      - generic [ref=f6e27]:
+        - heading "TJ GPT" [level=1] [ref=f6e28]
+        - generic "Connected to backend" [ref=f6e29]
+      - generic [ref=f6e30]:
+        - button "Record a meeting" [ref=f6e31] [cursor=pointer]
+        - button "More" [ref=f6e36] [cursor=pointer]
+    - generic [ref=f6e42]:
+      - generic [ref=f6e43]:
+        - button "Upload file or paste images (Ctrl+V)" [ref=f6e44] [cursor=pointer]
+        - textbox "Message input" [active] [ref=f6e48]:
+          - /placeholder: Message TJ GPT…
+        - button "Voice input" [ref=f6e49] [cursor=pointer]
+      - generic [ref=f6e53]:
+        - button "Send message" [ref=f6e54] [cursor=pointer]: Send
+        - meter "Context usage":
+          - generic: Context size unknown

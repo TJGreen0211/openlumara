@@ -1,4 +1,4 @@
-<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed, 'is-reasoning-active': message.type === 'reasoning'}" x-data="{collapsed: !$store.ui.expandReasoning}" @click="collapsed = !collapsed">
+<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed, 'is-reasoning-active': message.type === 'reasoning'}" x-data="{collapsed: !$store.ui.expandReasoning}" @click="collapsed = !collapsed" @keydown.enter.prevent="collapsed = !collapsed" @keydown.space.prevent="collapsed = !collapsed" role="button" tabindex="0" :aria-expanded="!collapsed" aria-label="Toggle reasoning">
     <div class="header">
         {% include 'svg/thought_bubble.svg' %}
         <span class="text">

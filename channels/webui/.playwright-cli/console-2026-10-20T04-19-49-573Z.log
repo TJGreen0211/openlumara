@@ -1,0 +1,13 @@
+[      86ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:3000/login:0
+[   11111ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:35
+[   11112ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=v00ee4ffb1b722b4f:233
+[   11115ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:124
+[   11133ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=v00ee4ffb1b722b4f:25
+[   11237ms] [LOG] {type: log, category: api, message: The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:124
+[   11239ms] [LOG] {type: log, category: API, message: Successfully connected to AI} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:124
+[   12256ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v00ee4ffb1b722b4f:40
+[   12257ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v00ee4ffb1b722b4f:40
+[   12318ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:35
+[   12319ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=v00ee4ffb1b722b4f:233
+[   12320ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v00ee4ffb1b722b4f:124
+[   12562ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=v00ee4ffb1b722b4f:25

@@ -8,6 +8,10 @@
     position: relative;
 
     border: 1px solid var(--border-sidebar);
+
+    /* readable line length: messages and the composer share one centered column */
+    --chat-column-max: 880px;
+
     #messages {
         /* the area where message bubbles show up.. duh */
         display: flex;
@@ -22,6 +26,9 @@
         width: var(--chat-content-width, 100%);
         margin: 0 auto;
         min-height: 0;
+        box-sizing: border-box;
+        /* keeps the scrollbar at the window edge while centering the content */
+        padding-inline: max(20px, calc((100% - var(--chat-column-max)) / 2));
 
         .message-wrapper {
             /* message bubble alignment */

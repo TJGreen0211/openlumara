@@ -36,7 +36,12 @@
     -->
 
     <!-- historical turns -->
-    <template x-for="(turn, turnIndex) in $store.chat.turnHistory" :key="turnIndex">
+    <!-- keyed by first_message_index (the turn's identity, also used by the
+         delete/regenerate actions) so a mid-history delete does not rebind a
+         reused DOM node's per-turn state (collapse toggles) to the wrong
+         turn; turns pushed mid-stream lack the index and fall back to a
+         string key, which cannot collide with the numeric message indices -->
+    <template x-for="(turn, turnIndex) in $store.chat.turnHistory" :key="turn.first_message_index ?? 'pos' + turnIndex">
         <div class="fullwidth turn" :data-turn-index="turnIndex">
             <!-- user turn (always one message) -->
             <template x-if="turn.role === 'user' && !turn.messages[0]?._metadata?.signal">
@@ -110,10 +115,13 @@
 <!-- invisible upload form -->
 {% include 'chat/upload.html' %}
 
-<!-- token usage bar -->
-{% include 'chat/token_bar.html' %}
-
 <!-- input field -->
 <div id="input">
     {% include 'chat/input.html' %}
+</div>
+
+<!-- "moved to category · undo" toast after dropping a chat on a category -->
+<div id="move-toast" role="status" x-cloak x-show="$store.chat.moveToast" x-transition.opacity>
+    <span>Moved to <strong x-text="$store.chat.categoryLabel($store.chat.moveToast?.toCategory)"></strong></span>
+    <button @click="$store.chat.undoMove()" :disabled="$store.stream.state !== 'idle'">Undo</button>
 </div>

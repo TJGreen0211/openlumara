@@ -1,0 +1,10 @@
+- generic [ref=e3]:
+  - heading "TJ GPT" [level=1] [ref=e4]
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: Username
+      - textbox "Username" [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]: Password
+      - textbox "Password" [ref=e11]
+    - button "Sign In" [ref=e12] [cursor=pointer]

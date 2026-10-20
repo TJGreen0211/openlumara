@@ -64,6 +64,22 @@
             flex-shrink: 0;
         }
 
+        .title {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .count {
+            flex-shrink: 0;
+            margin-left: auto;
+            font-size: 0.72rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
         .name {
             flex: 1;
             white-space: nowrap;
@@ -122,7 +138,7 @@
         gap: var(--gap);
 
         .item {
-            padding: 12px 14px;
+            padding: 10px 12px;
             background: var(--bg-tertiary);
             border: 1px solid transparent;
             border-radius: var(--radius-sm);
@@ -134,9 +150,10 @@
                         
             display: flex;
             flex-direction: column;
-            gap: var(--gap);
-            width: 97%;
-            max-width: 97%;
+            gap: 4px;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
             overflow: hidden;
             max-height: 10rem;
             flex-shrink: 0;
@@ -157,7 +174,7 @@
                 min-width: 0;
                 display: flex;
                 flex-direction: column;
-                gap: var(--gap);
+                gap: 2px;
                 overflow: hidden;
                 flex: 1;
             }
@@ -169,8 +186,7 @@
                 overflow: hidden;
                 text-overflow: ellipsis;
                 font-weight: 500;
-                line-height: 1.3;
-                height: 24px;
+                line-height: 1.4;
             }
 
             .title-row {
@@ -178,6 +194,7 @@
                 align-items: center;
                 gap: 6px;
                 min-width: 0;
+                min-height: 24px;
 
                 .title {
                     flex: 1;
@@ -215,10 +232,10 @@
                 gap: var(--gap);
 
                 .tag {
-                    font-size: 0.8rem;
+                    font-size: 0.7rem;
                     border: 1px solid var(--border-color);
                     border-radius: var(--radius-sm);
-                    padding: 4px 4px;
+                    padding: 1px 5px;
                     max-height: 2rem;
                     background-color: var(--bg-secondary);
                     text-overflow: ellipsis;
@@ -226,24 +243,19 @@
                 }
             }
 
-            .meta {
+            .date {
                 font-size: 0.75rem;
                 color: var(--text-muted);
-                display: flex;
-                margin-top: auto;
-                justify-content: space-between;
-                align-items: center;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
 
-                .item-actions {
-                    display: flex;
-                    gap: 4px;
-                    opacity: 0;
-                    transition: opacity 0.2s ease;
-
-                    &:hover {
-                        opacity: 1;
-                    }
-                }
+            /* rename/delete sit at the end of the title row, shown on hover */
+            .item-actions {
+                display: none;
+                gap: 2px;
+                flex-shrink: 0;
 
                 .action-btn {
                     display: flex;
@@ -281,7 +293,6 @@
                 gap: 6px;
                 width: 100%;
                 box-sizing: border-box;
-                margin-top: var(--gap);
 
                 .rename-input {
                     flex: 1;
@@ -363,8 +374,9 @@
         .item:hover {
             background: var(--bg-secondary);
             border-color: var(--border-color);
-            transform: translateX(4px);
             opacity: 1;
+
+            .item-actions { display: flex; }
         }
     }
 
@@ -439,15 +451,24 @@
     }
 }
 
-/* Category drop target highlight during drag */
+/* while a chat is being dragged every other category is outlined as a valid
+   drop target; the one under the cursor gets the strong highlight */
+#category-list .item.drop-candidate {
+    outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: -1px;
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    color: var(--text-primary);
+}
+
 #category-list .item.drop-target {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
     background: rgba(var(--primary-rgb), 0.3);
-    border: 2px solid var(--accent);
-    border-radius: var(--radius-sm);
     color: var(--accent);
     font-weight: 600;
-    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent);
-    transform: scale(1.03);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+
+    .count { color: var(--accent); }
 }
 
 /* Draggable chat items */
@@ -575,6 +596,66 @@
         &:hover {
             background: transparent;
             color: var(--text-secondary);
+        }
+    }
+}
+
+/* "moved to category · undo" toast */
+#move-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 100px;  /* clear of the composer */
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 8px 8px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    z-index: 50;
+
+    strong {
+        font-weight: 600;
+    }
+
+    button {
+        padding: 4px 10px;
+        background: transparent;
+        border: none;
+        border-radius: var(--radius-sm);
+        color: var(--accent);
+        font-weight: 600;
+        cursor: pointer;
+
+        &:hover:not(:disabled) {
+            background: var(--bg-tertiary);
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    }
+}
+
+/* touch screens have no hover, so keep the chat actions visible */
+@media (hover: none) {
+    #chat-list .chats .item .item-actions {
+        display: flex;
+
+        /* bigger tap targets */
+        .action-btn {
+            width: 32px;
+            height: 32px;
+
+            svg {
+                width: 14px;
+                height: 14px;
+            }
         }
     }
 }

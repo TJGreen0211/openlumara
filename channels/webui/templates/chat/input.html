@@ -1,3 +1,5 @@
+<!-- the composer: one rounded box holding attach, the text field and mic -->
+<div class="composer">
 <button id="upload" @click="$refs['file-input'].click()" title="Upload file or paste images (Ctrl+V)" aria-label="Upload file or paste images (Ctrl+V)" :disabled="$store.stream.state != 'idle'">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
@@ -10,7 +12,7 @@
     id="user-input" 
     x-ref="user-input"
     x-model="$store.chat.user_input"
-    placeholder="Type a message.." 
+    placeholder="Message {{ config.get('title') or 'the assistant' }}…" 
     x-effect="
         if ($store.stream.state === 'idle') {
             $nextTick(() => $refs['user-input'].focus());
@@ -21,7 +23,7 @@
     aria-label="Message input"
     @paste="$store.upload.pasteImage($event)"
     @keydown.enter="
-        if (!$event.shiftKey && !$store.ui.isMobile) {
+        if (!$event.shiftKey && !$event.isComposing && $event.keyCode !== 229 && !$store.ui.isMobile) {
             $event.preventDefault();
             if (!$store.chat.user_input) { return; }
 
@@ -32,6 +34,7 @@
     @focus="$autosize($el)"
     @blur="$el.style.height = '48px'"
 ></textarea>
+</div>
 
 <button id="voice-record"
     aria-label="Voice input"
@@ -65,13 +68,15 @@
 </button>
 </div>
 
+<!-- send/stop share one slot; the context usage is drawn as that slot's border -->
+<div id="send-wrap">
 <button id="send" aria-label="Send message"
     @click="
         $event.preventDefault();
         if (!$store.chat.user_input) { return; }
 
         await $store.chat.send($store.chat.user_input);
-        $el.style.height = '48px';
+        $refs['user-input'].style.height = '48px';
     "
     x-show="$store.stream.state === 'idle'"
 >Send</button>
@@ -106,6 +111,9 @@ await simpleSocketSend({
     </span>
     -->
 </button>
+
+{% include 'chat/token_bar.html' %}
+</div>
 
 <!-- meeting mode: while a meeting is live this replaces the #voice-live slot with a
      recording control bar; after it stops the completion card takes the same slot.

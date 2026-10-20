@@ -1,27 +1,34 @@
+<!-- context usage drawn as a progress border around the send/stop button (#send-wrap) -->
 <div id="token-usage-bar" x-data="{
+    get max() {
+        return $store.system.data?.max_context || 0;
+    },
     get percentage() {
-        const max = $store.system.data?.max_context;
-        if (!max) return 0;
-        return ($store.chat.currentTokenUsage / max) * 100;
+        if (!this.max) return 0;
+        return Math.min(($store.chat.currentTokenUsage / this.max) * 100, 100);
+    },
+    get label() {
+        if (!this.max) return 'Context size unknown';
+        return `${$store.chat.currentTokenUsage.toLocaleString()} / ${this.max.toLocaleString()} tokens (${this.percentage.toFixed(1)}%)`;
     }
-}">
-    <!-- only show the text once max_context has been loaded from the API -->
-    <template x-if="$store.system.data.max_context">
-        <span class="text" 
-              x-text="`Tokens: ${$store.chat.currentTokenUsage.toLocaleString()} / ${$store.system.data.max_context.toLocaleString()}`">
-        </span>
-    </template>
-
-    <div id="token-usage-container" class="container">
-        <div class="bg">
-            <div class="fill"
-                 :class="{
-                    'active': percentage >= 70,
-                    'warning': percentage >= 75,
-                    'shimmer-active': $store.stream.state !== 'idle'
-                 }"
-                 :style="`width: ${Math.min(percentage, 100)}%;`">
-            </div>
-        </div>
-    </div>
+}"
+    :class="{
+        'caution': percentage >= 75,
+        'danger': percentage >= 90,
+        'busy': $store.stream.state !== 'idle'
+    }"
+    role="meter"
+    aria-label="Context usage"
+    :aria-valuenow="Math.round(percentage)"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    :aria-valuetext="label"
+>
+    <!-- pathLength=100 lets the dash offset be the percentage directly -->
+    <svg aria-hidden="true">
+        <rect class="fill" pathLength="100"
+            stroke-dasharray="100"
+            :stroke-dashoffset="100 - percentage"></rect>
+    </svg>
+    <span class="tip" x-text="label"></span>
 </div>

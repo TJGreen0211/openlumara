@@ -2,7 +2,8 @@
     <button
         x-data="{ copied: false }"
         @click="
-            $store.chat.copyMessage(turnIndex).then(() => {
+            $store.chat.copyMessage(turnIndex).then((ok) => {
+                if (!ok) return;
                 copied = true;
                 setTimeout(() => copied = false, 2000);
             })

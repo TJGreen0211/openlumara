@@ -327,7 +327,6 @@ class SimpleWebui(core.channel.Channel):
         # Instance-level state (thread-safe enough for this use case)
         self._messages = []
         self._processing = False
-        self._pending_user_input = None
         self._lock = threading.Lock()
 
         @self.app.route("/", methods=["GET", "POST"])
@@ -348,14 +347,15 @@ class SimpleWebui(core.channel.Channel):
                     if self.config.get("enable_logging"):
                         self.log(self.name, f"USER: {user_input}")
 
-                    self._pending_user_input = user_input
                     self._processing = True
 
-                # Start AI call in background thread
-                def handle_ai_call():
+                # capture the input in the thread's own argument: shared
+                # instance state could be overwritten by a second request
+                # before this worker reads it
+                def handle_ai_call(user_input):
                     try:
                         # Call AI synchronously (helper bridges async->sync)
-                        response_dict = self._sync_send(self._pending_user_input)
+                        response_dict = self._sync_send(user_input)
 
                         if response_dict:
                             response_content = response_dict.get("content", "")
@@ -370,7 +370,7 @@ class SimpleWebui(core.channel.Channel):
                         with self._lock:
                             self._processing = False
 
-                thread = threading.Thread(target=handle_ai_call, daemon=True)
+                thread = threading.Thread(target=handle_ai_call, args=(user_input,), daemon=True)
                 thread.start()
 
                 # Return immediately with processing state

@@ -1,0 +1,17 @@
+[      76ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:3000/login:0
+[   22763ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v85ba6ea0b51ed3ee:40
+[   22764ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v85ba6ea0b51ed3ee:40
+[   22865ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:35
+[   22866ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=v85ba6ea0b51ed3ee:233
+[   22892ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   22901ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=v85ba6ea0b51ed3ee:25
+[   24560ms] [LOG] {type: log, category: api, message: The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   24561ms] [LOG] {type: log, category: API, message: Successfully connected to AI} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   24987ms] [LOG] {type: log, category: api, message: The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   24990ms] [LOG] {type: log, category: API, message: Successfully connected to AI} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   44140ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v85ba6ea0b51ed3ee:40
+[   44141ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=v85ba6ea0b51ed3ee:40
+[   44200ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:35
+[   44201ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=v85ba6ea0b51ed3ee:233
+[   44207ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=v85ba6ea0b51ed3ee:124
+[   44213ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=v85ba6ea0b51ed3ee:25

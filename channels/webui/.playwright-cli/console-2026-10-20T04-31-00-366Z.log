@@ -1,0 +1,15 @@
+[      79ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:3000/login:0
+[   10031ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vc264b417c01e7487:40
+[   10032ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vc264b417c01e7487:40
+[   10293ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:35
+[   10295ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=vc264b417c01e7487:233
+[   10299ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:124
+[   11091ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=vc264b417c01e7487:25
+[   25856ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vc264b417c01e7487:40
+[   25858ms] [WARNING] Notification permission was denied. @ http://127.0.0.1:3000/assets/js/stores/notify.js?v=vc264b417c01e7487:40
+[   26011ms] [LOG] WebSocket connected @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:35
+[   26014ms] [LOG] tried to reload the chat, but no chat is loaded! @ http://127.0.0.1:3000/assets/js/stores/chat.js?v=vc264b417c01e7487:233
+[   26680ms] [LOG] {type: ready} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:124
+[   26850ms] [LOG] {} @ http://127.0.0.1:3000/assets/js/services/api.js?v=vc264b417c01e7487:25
+[   26998ms] [LOG] {type: log, category: api, message: The AI server has no /slots endpoint. Per-chat slot cache is disabled (llama.cpp only)} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:124
+[   27005ms] [LOG] {type: log, category: API, message: Successfully connected to AI} @ http://127.0.0.1:3000/assets/js/services/websockets.js?v=vc264b417c01e7487:124

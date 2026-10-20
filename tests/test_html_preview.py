@@ -110,6 +110,9 @@ class _FakeChannel:
     def log(self, *args, **kwargs):
         pass
 
+    def _get_session_secret(self):
+        return "test-session-secret"
+
 
 def _make_coder(tmp_dir):
     coder = coder_mod.Coder()

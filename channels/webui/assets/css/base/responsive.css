@@ -126,8 +126,8 @@
         gap: 8px;
     }
 
+    /* 16px stops iOS from zooming into the field on focus */
     #input #user-input {
-        padding: 12px 44px 12px 14px;
         font-size: 16px;
     }
 
@@ -135,11 +135,6 @@
         height: 44px;
         padding: 0 16px;
         font-size: 0.85rem;
-    }
-
-    #input #upload {
-        width: 44px;
-        height: 44px;
     }
 
     /* Prevent horizontal overflow */
@@ -163,13 +158,6 @@
         right: 0;
     }
 
-    /* Ensure stop button SVGs render correctly on mobile */
-    #stop svg {
-        width: 20px !important;
-        height: 20px !important;
-        stroke: var(--error, #f87171) !important;
-        fill: none !important;
-    }
 }
 
 /* === EXTRA SMALL (< 400px) === */
@@ -196,6 +184,11 @@
 @media (min-width: 1025px) {
     .message {
         max-width: var(--message-max-width, 75%) !important;
+    }
+
+    /* replies fill the (already width-capped) centered column */
+    .message.assistant {
+        max-width: 100% !important;
     }
 }
 

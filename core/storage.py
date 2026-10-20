@@ -28,6 +28,32 @@ def storage_file_path(name: str, storage_type: str, base: str) -> str:
     path = core.sandbox_path(base, name)
     return f"{path}.{ext}" if ext else path
 
+def atomic_write(path: str, content, binary: bool = False):
+    """write content to path atomically via a sibling temp file + os.replace.
+
+    opening the real file with "w" truncates it first, so a crash, kill or
+    full disk mid-write leaves a truncated config.yml / chat index / history
+    behind. writing a sibling temp file, fsyncing it, and os.replace()ing it
+    over the real path is atomic on windows and posix (same directory), so
+    readers always see either the old file or the new one, never a partial
+    one. raises on failure, leaving the original file untouched.
+    """
+    tmp_path = f"{path}.tmp"
+    write_mode = "wb" if binary else "w"
+    encoding = None if binary else "utf-8"
+    try:
+        with open(tmp_path, write_mode, encoding=encoding) as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
 class StorageList(list):
     """subclassed list that handles storage of data. supports a variety of storage formats."""
     def __init__(self, name: str, type: str, manager=None, path=None, autoload=True, compact_json=False, *args):
@@ -80,11 +106,7 @@ class StorageList(list):
 
     def _write(self, content):
         try:
-            write_mode = "wb" if self.binary else "w"
-            encoding = "utf-8" if not self.binary else None
-
-            with open(self.path, write_mode, encoding=encoding) as f:
-                f.write(content)
+            atomic_write(self.path, content, binary=self.binary)
         except Exception as e:
             core.log("error", f"error writing {self.name}: {e}")
             return False
@@ -123,28 +145,34 @@ class StorageList(list):
         except OSError:
             pass
 
-    def save(self):
-        """save content to file"""
+    def save(self, snapshot=None):
+        """save content to file.
+
+        snapshot: optional list to write instead of the live contents, for
+        callers that save from a worker thread while the event loop keeps
+        mutating this list (see Messages.save)
+        """
         self._resolve_path()
         if TEMPORARY:
             return True
 
+        content = self if snapshot is None else snapshot
         match self.type:
             case "json":
                 if self.compact_json:
                     # chat history is rewritten on every message save, so keep its
                     # serialization compact and non-escaped (the pretty + ASCII-escaped
                     # default made it ~2x bigger and slower to dump/write)
-                    self._write(json.dumps(self, ensure_ascii=False))
+                    self._write(json.dumps(content, ensure_ascii=False))
                 else:
-                    self._write(json.dumps(self, indent=2))
+                    self._write(json.dumps(content, indent=2))
             case "yaml":
-                self._write(yaml.safe_dump(self, default_flow_style=False, sort_keys=False, allow_unicode=True))
+                self._write(yaml.safe_dump(content, default_flow_style=False, sort_keys=False, allow_unicode=True))
             case "msgpack":
-                self._write(msgpack.packb(self))
+                self._write(msgpack.packb(content))
             case "text":
-                if len(self) > 0:
-                    self._write("\n".join(self))
+                if len(content) > 0:
+                    self._write("\n".join(content))
 
         # update mtime after saving so we know our cache is fresh
         self._update_mtime()
@@ -161,24 +189,39 @@ class StorageList(list):
         if not self._file_changed():
             return self
 
-        self.clear()
-
+        # read and parse into a temporary before touching memory: clearing
+        # first meant a failed or corrupt read left the object empty, and
+        # since get() reloads on every access the next save() would wipe the
+        # file with empty content
         data = self._read()
-        if not data:
+        if data is False:
+            core.log("error", f"error reading {self.name}, keeping in-memory copy")
             return None
 
-        match self.type:
-            case "json":
-                self.extend(json.loads(data))
-            case "yaml":
-                self.extend(yaml.safe_load(data))
-            case "msgpack":
-                self.extend(msgpack.unpackb(data))
-            case "text":
-                self.extend(data.split("\n"))
+        try:
+            match self.type:
+                case "json":
+                    parsed = json.loads(data)
+                case "yaml":
+                    parsed = yaml.safe_load(data)
+                case "msgpack":
+                    parsed = msgpack.unpackb(data)
+                case "text":
+                    parsed = data.split("\n") if data else []
+        except Exception as e:
+            core.log("error", f"error parsing {self.name}, keeping in-memory copy: {e}")
+            return None
+
+        if parsed is None:
+            # an empty yaml document parses to None
+            parsed = []
+
+        self.clear()
+        self.extend(parsed)
 
         # update mtime after loading
         self._update_mtime()
+        return self
 
     def get(self, *args, **kwargs):
         if not TEMPORARY:
@@ -246,10 +289,7 @@ class StorageDict(dict):
 
     def _write(self, content):
         try:
-            write_mode = "wb" if self.binary else "w"
-            encoding = "utf-8" if not self.binary else None
-            with open(self.path, write_mode, encoding=encoding) as f:
-                f.write(content)
+            atomic_write(self.path, content, binary=self.binary)
         except Exception as e:
             core.log("error", f"error writing {self.name}: {e}")
             return False
@@ -372,8 +412,7 @@ class StorageDict(dict):
                     if not os.path.exists(file_dir):
                         os.makedirs(file_dir, exist_ok=True)
 
-                    with open(name, "w", encoding="utf-8") as f:
-                        f.write(content)
+                    atomic_write(name, content)
 
                 # Raise an error if any keys were skipped due to validation failure
                 if failed_keys:
@@ -421,44 +460,57 @@ class StorageDict(dict):
         if self.type not in ["markdown"] and not self._file_changed():
             return True
 
-        self.clear()
-
+        # read and parse into a temporary before touching memory: clearing
+        # first meant a failed or corrupt read left the object empty, and
+        # since get() reloads on every access the next save() would wipe the
+        # file with empty content
         if self.type not in ["markdown"]:
             data = self._read()
-            if not data:
+            if data is False:
+                core.log("error", f"error reading {self.name}, keeping in-memory copy")
                 return None
 
-        match self.type:
-            case "json":
-                self.update(json.loads(data))
-            case "yaml":
-                self.update(yaml.safe_load(data))
-            case "markdown":
-                # recursive file structure
-                flat_dict = {}
-                for root, dirs, files in os.walk(self.path):
-                    for filename in files:
-                        if filename.endswith(".md"):
-                            full_path = os.path.join(root, filename)
-                            rel_path = os.path.relpath(os.path.join(root, filename), self.path)
+        try:
+            match self.type:
+                case "json":
+                    parsed = json.loads(data)
+                case "yaml":
+                    parsed = yaml.safe_load(data)
+                case "markdown":
+                    # recursive file structure
+                    flat_dict = {}
+                    for root, dirs, files in os.walk(self.path):
+                        for filename in files:
+                            if filename.endswith(".md"):
+                                full_path = os.path.join(root, filename)
+                                rel_path = os.path.relpath(os.path.join(root, filename), self.path)
 
-                            # remove .md extension
-                            path_without_ext = rel_path[:-3]
+                                # remove .md extension
+                                path_without_ext = rel_path[:-3]
 
-                            # normalize path to make it cross-platform
-                            normalized_path = os.path.normpath(path_without_ext)
-                            key = "/".join(normalized_path.split(os.sep))
+                                # normalize path to make it cross-platform
+                                normalized_path = os.path.normpath(path_without_ext)
+                                key = "/".join(normalized_path.split(os.sep))
 
-                            with open(full_path, "r", encoding="utf-8") as f:
-                                flat_dict[key] = str(f.read())
+                                with open(full_path, "r", encoding="utf-8") as f:
+                                    flat_dict[key] = str(f.read())
 
-                # convert flat path keys to nested dict structure
-                nested_dict = self._parse_nested_keys(flat_dict)
-                self.update(nested_dict)
-            case "msgpack":
-                self.update(msgpack.unpackb(data))
-            case "text":
-                self.update(data.split("\n"))
+                    # convert flat path keys to nested dict structure
+                    parsed = self._parse_nested_keys(flat_dict)
+                case "msgpack":
+                    parsed = msgpack.unpackb(data)
+                case "text":
+                    parsed = data.split("\n")
+        except Exception as e:
+            core.log("error", f"error parsing {self.name}, keeping in-memory copy: {e}")
+            return None
+
+        if parsed is None:
+            # an empty yaml document parses to None
+            parsed = {}
+
+        self.clear()
+        self.update(parsed)
 
         # update mtime after loading
         self._update_mtime()
@@ -538,8 +590,7 @@ class StorageText:
         if TEMPORARY:
             return self
 
-        with open(self.path, "w", encoding="utf-8") as f:
-            f.write(self._data)
+        atomic_write(self.path, self._data)
 
         # update mtime after saving so we know our cache is fresh
         self._update_mtime()

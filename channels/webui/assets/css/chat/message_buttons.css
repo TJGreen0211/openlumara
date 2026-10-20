@@ -3,30 +3,28 @@
     justify-content: flex-end;
     width: 100%;
     margin-top: 4px;
-    border-top: 1px dashed var(--text-muted);
-    gap: var(--gap);
+    gap: 2px;
+    /* hidden until the message is hovered or focused (see below) */
+    opacity: 0;
+    transition: opacity 0.15s ease;
 
     button {
         width: 28px;
         height: 28px;
         padding: 0;
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border-color);
+        background: transparent;
+        border: none;
         border-radius: var(--radius-md);
-        color: var(--text-secondary);
+        color: var(--text-muted);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        opacity: 0.2;
-        transition: all 0.2s ease;
-        margin-top: 7px;
+        transition: all 0.15s ease;
 
         &:hover {
-            background: var(--bg-secondary);
+            background: var(--bg-tertiary);
             color: var(--text-primary);
-            border-color: var(--accent);
-            opacity: 1;
         }
 
         &:active {
@@ -34,7 +32,7 @@
         }
         
         &:disabled {
-            opacity: 0.2;
+            opacity: 0.35;
             cursor: not-allowed;
             pointer-events: none;
         }
@@ -63,5 +61,17 @@
         align-items: center;
         gap: 4px;
         opacity: 1 !important;
+    }
+}
+
+.message:hover .message-buttons,
+.message-buttons:focus-within {
+    opacity: 1;
+}
+
+/* no hover on touch screens, so keep the actions visible there */
+@media (hover: none) {
+    .message-buttons {
+        opacity: 1;
     }
 }

@@ -160,6 +160,8 @@
             border-bottom-left-radius: var(--radius-sm);
             color: var(--text-primary);
             min-width: 80px;
+            /* the column itself is width-capped, so replies can use all of it */
+            max-width: 100%;
 
             gap: var(--gap);
 

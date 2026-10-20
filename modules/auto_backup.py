@@ -9,6 +9,12 @@ class AutoBackup(core.module.Module):
     Automatically backs up the OpenLumara data folder at a set interval
     """
 
+    # data-root-relative files never written to a backup zip. session_secret
+    # is the webui's 0600 cookie signing key: zips use default permissions,
+    # so anyone holding one could forge admin sessions. restoring a backup
+    # without it just regenerates the key (logs everyone out)
+    EXCLUDED_FILES = {"session_secret"}
+
     # -------------------------
     #   CONFIGURATION
     # -------------------------
@@ -23,6 +29,11 @@ class AutoBackup(core.module.Module):
             "description": "The path where backup zip files will be stored.",
             "type": "string",
             "default": "data_backups"
+        },
+        "keep_backups": {
+            "description": "How many backup zips to keep; older ones are deleted after each backup. 0 keeps all.",
+            "type": "number",
+            "default": 10
         },
         "enable_notifications": {
             "description": "Whether to send a push notification after each backup.",
@@ -134,19 +145,24 @@ class AutoBackup(core.module.Module):
         os.makedirs(self.backup_path, exist_ok=True)
         zip_path = os.path.join(self.backup_path, zip_filename)
 
+        # backups stored inside the data folder are skipped during the walk
+        # (recursive bloat), which means they are never themselves backed up
+        backup_real = os.path.realpath(self.backup_path)
+        data_real = os.path.realpath(data_folder)
+        if backup_real == data_real or backup_real.startswith(data_real + os.sep):
+            self._log(self.name, "Warning: backup_path is inside the data folder, "
+                                 "so backup zips are not included in future backups")
+
         try:
-            # Create the zip backup (skip backup_path if inside data_folder to avoid recursive bloat)
-            backup_real = os.path.realpath(self.backup_path)
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(data_folder):
-                    if os.path.realpath(root).startswith(backup_real):
-                        continue
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, data_folder)
-                        zipf.write(file_path, arcname)
+            # zip creation walks + compresses the whole data folder, which can
+            # take a while on big installs: run it in a worker thread so the
+            # event loop keeps serving chats
+            file_size = await asyncio.to_thread(self._create_zip, data_folder, zip_path)
+
+            # rotation: drop the oldest backups beyond keep_backups
+            await asyncio.to_thread(self._prune_backups)
+
             # Get file size for notification
-            file_size = os.path.getsize(zip_path)
             size_mb = file_size / (1024 * 1024)
 
             self._log(self.name, f"Backup completed: {zip_filename} ({size_mb:.2f} MB)")
@@ -168,8 +184,59 @@ class AutoBackup(core.module.Module):
         except Exception as e:
             error_msg = f"Backup failed with error: {e}"
             self._log(self.name, error_msg)
-            if enable_notifications:
+            if enable_notifications and self.channel:
                 await self.channel.push(f"⚠️ Data Backup Failed\n{error_msg}")
+
+    def _create_zip(self, data_folder, zip_path):
+        """build the backup zip (synchronous, runs in a worker thread).
+
+        writes to a .tmp sibling and renames at the end so a crash mid-zip
+        never leaves a partial archive for rotation or status to pick up.
+        skips backup_path when it lives inside data_folder to avoid
+        recursive bloat. returns the final zip size in bytes.
+        """
+        tmp_path = zip_path + ".tmp"
+        backup_real = os.path.realpath(self.backup_path)
+        try:
+            with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(data_folder):
+                    real_root = os.path.realpath(root)
+                    if real_root == backup_real or real_root.startswith(backup_real + os.sep):
+                        continue
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, data_folder)
+                        if arcname in self.EXCLUDED_FILES:
+                            continue
+                        zipf.write(file_path, arcname)
+            os.replace(tmp_path, zip_path)
+        except BaseException:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+        return os.path.getsize(zip_path)
+
+    def _prune_backups(self):
+        """delete the oldest backups beyond keep_backups (0 = keep all)"""
+        keep = self.config.get("keep_backups")
+        if not keep or keep <= 0:
+            return
+        try:
+            backups = [
+                os.path.join(self.backup_path, f) for f in os.listdir(self.backup_path)
+                if f.startswith("openlumara_backup_") and f.endswith(".zip")
+            ]
+        except OSError:
+            return
+        backups.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for old in backups[int(keep):]:
+            try:
+                os.remove(old)
+                self._log(self.name, f"Pruned old backup: {os.path.basename(old)}")
+            except OSError as e:
+                self._log(self.name, f"Could not prune {os.path.basename(old)}: {e}")
 
     async def _calculate_wait_time(self, interval_seconds):
         """
