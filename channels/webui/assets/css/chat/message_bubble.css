@@ -148,19 +148,45 @@
 
         &.user {
             background: var(--bg-message-user);
-            border: 1px solid var(--border-user);
-            border-bottom-right-radius: var(--radius-sm);
+            border: none;
+            box-shadow: none;
+            /* rounded bubble with a tighter "tail" corner pointing at the sender */
+            border-radius: 18px;
+            border-bottom-right-radius: 6px;
+            padding: 10px 16px;
             color: var(--text-primary);
             word-break: break-word;
+            /* the action buttons hang below the bubble (see below) */
+            overflow: visible;
+            margin-bottom: 16px;
+
+            /* take the hover-only actions out of the flow so they don't leave an
+               empty strip inside the bubble; padding (not margin) keeps the hover
+               area continuous between the bubble and the buttons */
+            .message-buttons {
+                position: absolute;
+                top: 100%;
+                right: 0;
+                width: auto;
+                margin-top: 0;
+                padding-top: 2px;
+            }
         }
 
         &.assistant {
-            background: var(--bg-message-ai);
-            border: 1px solid var(--border-message);
-            border-bottom-left-radius: var(--radius-sm);
+            /* no bubble: replies sit directly on the page so the reasoning and
+               tool-call cards inside aren't boxes nested in a box */
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
+            padding: 4px 0;
             color: var(--text-primary);
             min-width: 80px;
-            /* the column itself is width-capped, so replies can use all of it */
+            /* always span the (width-capped) chat column instead of fit-content:
+               a shrink-to-fit reply made the full-width thoughts and tool-call
+               cards inside it grow and shrink as the turn streamed in */
+            width: 100%;
             max-width: 100%;
 
             gap: var(--gap);

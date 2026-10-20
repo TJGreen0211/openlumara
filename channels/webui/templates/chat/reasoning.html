@@ -1,4 +1,15 @@
-<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed, 'is-reasoning-active': message.type === 'reasoning'}" x-data="{collapsed: !$store.ui.expandReasoning}" @click="collapsed = !collapsed" @keydown.enter.prevent="collapsed = !collapsed" @keydown.space.prevent="collapsed = !collapsed" role="button" tabindex="0" :aria-expanded="!collapsed" aria-label="Toggle reasoning">
+<!-- `thinking` is only true for the segment currently streaming: the stream
+     keeps a finished reasoning segment's type as 'reasoning' and pushes a new
+     segment after it, so the type alone can't tell live from done. finished
+     thoughts (including all history) start collapsed and a live block
+     collapses itself the moment thinking ends -->
+<div :class="{'reasoning-wrapper': true, 'collapsed': collapsed, 'expanded': !collapsed, 'is-reasoning-active': thinking}"
+     x-data="{
+        collapsed: true,
+        get thinking() { return $store.stream.state === 'thinking' && message === $store.stream.turn.messages?.at(-1) }
+     }"
+     x-init="collapsed = !(thinking && $store.ui.expandReasoning); $watch('thinking', (now) => { if (!now) collapsed = true })"
+     @click="collapsed = !collapsed" @keydown.enter.prevent="collapsed = !collapsed" @keydown.space.prevent="collapsed = !collapsed" role="button" tabindex="0" :aria-expanded="!collapsed" aria-label="Toggle reasoning">
     <div class="header">
         {% include 'svg/thought_bubble.svg' %}
         <span class="text">
