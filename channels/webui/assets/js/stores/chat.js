@@ -645,7 +645,15 @@ CHAT_STORE = {
         const turn = this.turnHistory[turnIndex];
         const msg = turn?.messages?.[turn.messages?.length - 1]; // last message in the turn
         if (!msg) { return; }
-        
+
+        // older turns render as display:none wrappers until renderStart reaches
+        // them, and x-autosize measures nothing while hidden: render the turn
+        // first so the textarea mounts in a visible, measurable container
+        if (turnIndex < this.renderStart) {
+            this.renderStart = turnIndex;
+            await Alpine.nextTick();
+        }
+
         this.editingMessageIndex = msg.index;
         // multimodal messages store content as blocks; edit only the user's text block
         this.editContent = Array.isArray(msg.content)

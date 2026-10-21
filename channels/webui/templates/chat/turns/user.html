@@ -43,7 +43,7 @@
 
 <template x-if="$store.chat.editingMessageIndex === turn.first_message_index">
     <div class="flex fullwidth editing">
-        <textarea x-model="$store.chat.editContent" rows="3"></textarea>
+        <textarea x-model="$store.chat.editContent" rows="1" x-autosize></textarea>
         <div class="edit-actions">
             <button class="edit-add-file" title="Attach file" @click="$refs['edit-file-input'].click()">
                 {% include 'svg/paperclip.svg' %}

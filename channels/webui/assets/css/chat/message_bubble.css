@@ -211,17 +211,23 @@
                 flex-direction: column;
                 gap: var(--gap);
                 
+                /* mirror the composer's box shape, but grow to the full
+                   message height (x-autosize): unlike the composer there is
+                   no max-height here, so the edited text is never scrolled
+                   off inside the box */
                 textarea {
                     width: 100%;
-                    min-height: 60px;
-                    padding: 8px;
+                    min-height: 48px;
+                    padding: 12px 6px;
                     background: var(--bg-input);
                     color: var(--text-primary);
                     border: 1px solid var(--border-color);
-                    border-radius: var(--radius-sm);
-                    resize: vertical;
+                    border-radius: var(--radius-lg);
+                    resize: none;
                     font-family: inherit;
-                    font-size: inherit;
+                    font-size: var(--text-md);
+                    line-height: 1.5;
+                    box-sizing: border-box;
                 }
 
                 .edit-actions {
