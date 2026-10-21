@@ -3,6 +3,13 @@ marked.setOptions({
     gfm: true
 });
 
+// a code block without a language tag gets auto-detected, which tries every
+// registered language in turn. limit that guess to the common ones; blocks
+// tagged with any other bundled language still highlight normally
+hljs.configure({
+    languages: ['python', 'javascript', 'typescript', 'bash', 'json', 'xml', 'css', 'sql', 'yaml', 'cpp']
+});
+
 /*
  * initializes Alpine and registers all the necessary stuff
  */
@@ -39,10 +46,25 @@ document.addEventListener('alpine:init', async () => {
     // overwrite with the stale saved map
     Alpine.store('artifact').init();
 
-    await connectWebSocket();
+    // check if we're on a phone (the layout needs this before anything else)
+    await Alpine.store('ui').init();
 
-    // report the user's timezone (per-user) so the AI reflects it, not the server's
-    await reportDetectedTimezone();
+    // the chat is what the user is waiting for, so it's requested first and
+    // nothing waits on anything else: these used to run one after another,
+    // about a dozen round trips before the chat was even asked for
+    await Promise.allSettled([
+        // fetch current chat
+        Alpine.store('chat').load(),
+        connectWebSocket(),
+        // report the user's timezone (per-user) so the AI reflects it, not the server's
+        reportDetectedTimezone(),
+        // fetch any relevant system data (like system logs, max context, etc)
+        Alpine.store('system').loadData(),
+        // load settings for feature flags (voice_enabled, etc)
+        Alpine.store('settings').init(),
+        // initialize users store (sets isAdmin flag)
+        Alpine.store('users')?.init(),
+    ]);
 
     // register the service worker
     if ('serviceWorker' in navigator) {
@@ -51,21 +73,6 @@ document.addEventListener('alpine:init', async () => {
         // never keep serving stale precached CSS/JS after a deploy
         navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
     }
-
-    // check if we're on a phone
-    await Alpine.store('ui').init();
-
-    // fetch any relevant system data (like system logs, max context, etc)
-    await Alpine.store('system').loadData();
-
-    // load settings for feature flags (voice_enabled, etc)
-    await Alpine.store('settings').init();
-
-    // fetch current chat
-    await Alpine.store('chat').load();
-
-    // initialize users store (sets isAdmin flag)
-    try { await Alpine.store('users').init(); } catch(e) {}
 
     // do the initial scroll to bottom
     requestAnimationFrame(() => {

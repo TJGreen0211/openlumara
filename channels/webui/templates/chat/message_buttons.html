@@ -19,13 +19,21 @@
             {% include 'svg/copy.svg' %}
         </template>
     </button>
+    <!-- user messages: copy, edit, delete; assistant replies: copy, regenerate
+         (buttons_role is set by the including template) -->
+    {% if buttons_role == 'user' %}
     <button @click="$store.chat.startEdit(turnIndex)" title="Edit" :disabled="$store.stream.state != 'idle'">
         {% include 'svg/edit.svg' %}
     </button>
+    {% endif %}
+    {% if buttons_role == 'assistant' %}
     <button @click="$store.chat.regenerateMessage(turnIndex)" title="Regenerate" :disabled="$store.stream.state != 'idle'">
         {% include 'svg/regenerate.svg' %}
     </button>
+    {% endif %}
+    {% if buttons_role == 'user' %}
     <button @click="if (!confirm('Are you sure you want to delete this message?')) { return }; $store.chat.deleteMessage(turnIndex)" title="Delete" :disabled="$store.stream.state != 'idle'">
         {% include 'svg/trash.svg' %}
     </button>
+    {% endif %}
 </div>

@@ -256,6 +256,53 @@ body.token-bar-hidden #chat-window #input {
 }
 
 /* ==========================================================================
+ *  Scroll To Bottom Button
+ *
+ *  floats above the right edge of the input bar while the user is scrolled
+ *  up in the message view
+ *  ========================================================================== */
+
+#chat-window #scroll-to-bottom {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    right: 20px;
+    z-index: 7;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+
+    svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    &:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+    }
+
+    &:active {
+        transform: scale(0.94);
+    }
+}
+
+@media (max-width: 768px) {
+    #chat-window #scroll-to-bottom {
+        right: 8px;
+    }
+}
+
+/* ==========================================================================
  *  Native Dictation Hint (iphone / ipad)
  *
  *  the os keyboard mic types straight into the textarea, so on apple devices

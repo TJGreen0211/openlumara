@@ -117,6 +117,47 @@ UI_STORE = {
         });
     },
 
+    /*
+     * Used by the scroll-to-bottom button. Setting scrollTop alone doesn't
+     * stop an in-flight flick, so the view would drift back up after the
+     * jump. Two kinds of momentum need stopping:
+     *  - browser-driven flings (touch, iOS/macOS): overflow is turned off for
+     *    a few frames, long enough for the compositor to see it and drop it
+     *  - OS-driven inertia (Windows precision touchpads), which arrives as a
+     *    stream of synthetic wheel events: those are swallowed until the
+     *    stream pauses, so a fresh, deliberate scroll still works
+     */
+    jumpToBottom(containerId = 'messages') {
+        const el = document.getElementById(containerId);
+        if (!el) return;
+
+        const toBottom = () => {
+            el.scrollTop = el.scrollHeight;
+            this.shouldScroll = true;
+        };
+
+        el.style.overflowY = 'hidden';
+        toBottom();
+
+        let idleTimer = null;
+        const release = () => {
+            el.removeEventListener('wheel', swallow, { capture: true });
+        };
+        const swallow = (event) => {
+            event.preventDefault();
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(release, 150);
+        };
+        el.addEventListener('wheel', swallow, { capture: true, passive: false });
+        idleTimer = setTimeout(release, 150);
+
+        setTimeout(() => {
+            el.style.overflowY = '';
+            // content may have grown (streaming) while overflow was off
+            toBottom();
+        }, 100);
+    },
+
     async scrollToTurn(turnIndex) {
         if (turnIndex === null || turnIndex === undefined) return;
 

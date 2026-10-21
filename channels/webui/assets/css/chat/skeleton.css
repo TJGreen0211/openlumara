@@ -1,0 +1,79 @@
+/* placeholder bubbles while switching to a chat that isn't cached yet */
+.chat-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+
+    /* fade in after a beat, so a fast load never flashes it */
+    opacity: 0;
+    animation: skeletonAppear 0.2s ease-out 0.15s forwards;
+}
+
+.skeleton-bubble {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-message);
+    animation: skeletonPulse 1.4s ease-in-out infinite;
+
+    &.user {
+        align-self: flex-end;
+        width: min(320px, 60%);
+        height: 44px;
+        background: var(--bg-message-user);
+
+        &.short {
+            width: min(200px, 40%);
+        }
+    }
+
+    &.assistant {
+        align-self: flex-start;
+        width: min(560px, 85%);
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: var(--bg-message-ai);
+
+        span {
+            height: 10px;
+            border-radius: var(--radius-full);
+            background: var(--text-muted);
+            opacity: 0.25;
+        }
+
+        span:nth-child(2) {
+            width: 85%;
+        }
+
+        span:last-child:not(:first-child) {
+            width: 60%;
+        }
+    }
+}
+
+/* scrolls into view above the oldest rendered turn and triggers the next batch */
+.history-loader {
+    height: 1px;
+    flex-shrink: 0;
+}
+
+@keyframes skeletonAppear {
+    to { opacity: 1; }
+}
+
+@keyframes skeletonPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-skeleton {
+        animation: none;
+        opacity: 1;
+    }
+
+    .skeleton-bubble {
+        animation: none;
+    }
+}

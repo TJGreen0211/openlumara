@@ -78,6 +78,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // versioned assets (?v=<content hash>) can never go stale: a deploy changes
+  // the hash, which is a new url (and a new service worker that drops this
+  // cache). serve them cache-first so a page load doesn't wait on ~70 requests
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/assets/') && url.searchParams.has('v')) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
   // network-first: always fetch fresh so a deploy's new CSS/JS reaches the
   // client immediately (the old cache-first strategy kept serving the first
   // cached copy — pre-deploy UI — indefinitely, which is how phones got stuck

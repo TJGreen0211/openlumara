@@ -24,7 +24,7 @@ import time
 
 # webui stuff
 import fastapi, fastapi.templating, fastapi.staticfiles
-import starlette, starlette.middleware.sessions
+import starlette, starlette.middleware.sessions, starlette.middleware.gzip
 import itsdangerous
 import uvicorn
 import base64
@@ -636,6 +636,28 @@ def inject_indexes_into_chat(chat):
 
     return chat_copy
 
+class SelectiveGZipMiddleware:
+    """gzips the page, assets and API JSON (a long chat's history shrinks ~5-8x).
+
+    previewed site files and media are left alone: they're mostly images and
+    video that are already compressed, and gzipping a ranged (206) video
+    response breaks seeking"""
+
+    SKIP_PREFIXES = ("/api/artifact/", "/api/site-media", "/icon-", "/favicon")
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = starlette.middleware.gzip.GZipMiddleware(app, minimum_size=1000, compresslevel=6)
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] == "http"
+            and not scope["path"].startswith(self.SKIP_PREFIXES)
+            and not any(name == b"range" for name, _ in scope["headers"])
+        ):
+            return await self.gzip(scope, receive, send)
+        return await self.app(scope, receive, send)
+
 # -------------------
 # FastAPI creator (contains routes and so on)
 # -------------------
@@ -696,6 +718,22 @@ async def create_fastapi(channel):
         secret_key=channel._get_session_secret(),
         max_age=session_lifetime_days * 86400
     )
+
+    app.add_middleware(SelectiveGZipMiddleware)
+
+    @app.middleware("http")
+    async def asset_cache_headers(request: fastapi.Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/assets/"):
+            if request.query_params.get("v"):
+                # the templates link assets as ?v=<content hash of the webui>, so a
+                # versioned url never changes content: let the browser keep it
+                # instead of re-checking ~70 files on every page load
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                # unversioned (e.g. code themes swapped in at runtime): revalidate via etag
+                response.headers["Cache-Control"] = "no-cache"
+        return response
 
     # serve asset files (formerly /static) using fastAPI's mount()
     app.mount("/assets", fastapi.staticfiles.StaticFiles(directory=channel.assets_path), name="assets")
@@ -841,7 +879,12 @@ async def create_fastapi(channel):
             chat["turn_history"] = await channel.group_history(await uctx.chat.messages.get())
             return api_result(chat, success=True)
 
-        await channel.websocket_manager.broadcast({"type": "chat_switched", "id": chat_id}, username=username)
+        # origin lets the tab that asked for the switch ignore its own echo
+        await channel.websocket_manager.broadcast({
+            "type": "chat_switched",
+            "id": chat_id,
+            "origin": request.headers.get("x-client-id"),
+        }, username=username)
 
         chat = dict(uctx.chat.get())
         chat["turn_history"] = await channel.group_history(await uctx.chat.messages.get())

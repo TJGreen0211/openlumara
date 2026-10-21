@@ -30,6 +30,9 @@ let sendQueue = [];
 // into a bare failure, so after a few we check whether the session is still valid
 let wsFailedAttempts = 0;
 
+// whether a connection has opened before (a later open is a reconnect)
+let wsHasOpened = false;
+
 async function connectWebSocket() {
     // a new connection attempt starts: re-arm the onclose/onerror guards
     wsReconnecting = false;
@@ -83,7 +86,12 @@ async function connectWebSocket() {
         await Alpine.store('stream').clear();
         Alpine.store('stream').state = 'idle';
 
-        await Alpine.store("chat").reloadChat();
+        // the first connection opens alongside the initial chat load (init.js),
+        // so only a reconnect has missed anything worth refetching
+        if (wsHasOpened) {
+            await Alpine.store("chat").reloadChat();
+        }
+        wsHasOpened = true;
     };
 
     wsSocket.onmessage = async (event) => {
@@ -508,8 +516,8 @@ async function handleWebSocketMessage(data) {
         }
 
         case "sync":
-            // make sure we sync chat
-            chat.turnHistory = [];
+            // make sure we sync chat. reloadChat patches the history, so only
+            // the turns an edit/delete/regenerate touched re-render
             await stream.clear();
             await chat.reloadChat();
 
@@ -522,8 +530,10 @@ async function handleWebSocketMessage(data) {
             break;
 
         case "chat_switched":
-            // make sure we sync chat switches across instances
-            await chat.loadChat(data.id);
+            // make sure we sync chat switches across instances.
+            // this tab's own switch echoing back: it's already showing it
+            if (data.origin && data.origin === CLIENT_ID) { break; }
+            await chat.followSwitch(data.id);
             break;
 
         case "chat_metadata_updated":
@@ -556,15 +566,16 @@ async function handleWebSocketMessage(data) {
             // then clear the current turn
             await stream.clear();
 
-            // finalize the stream
+            // finalize the stream. the input unlocks right away instead of
+            // waiting on the sync below: a message sent meanwhile bumps the
+            // reload sequence, so this sync's (older) snapshot is dropped
+            stream.state = 'idle';
             AudioManager.play("completion");
             await ui.scrollToBottom();
 
-            // and finally, sync back up with the backend
-            await chat.reloadChat();
-            await chat.reloadChats();
-
-            stream.state = 'idle';
+            // and finally, sync back up with the backend. reloadChat patches
+            // the history in place, so only the finished turn re-renders
+            await Promise.all([chat.reloadChat(), chat.reloadChats()]);
 
             // the turn's file writes have landed, so open a preview that was
             // only recorded mid-stream and refresh one that's already open

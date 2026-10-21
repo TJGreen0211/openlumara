@@ -6,6 +6,7 @@
 
     <!-- Content block -->
     <template x-if="seg.kind === 'content'">
-        <div class="content" x-html="renderMarkdown(message.content)"></div>
+        <!-- not cached: every partial text of a stream would push real entries out -->
+        <div class="content" x-html="renderMarkdown(message.content, false)"></div>
     </template>
 </div>

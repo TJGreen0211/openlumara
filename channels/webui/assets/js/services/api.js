@@ -1,10 +1,13 @@
 /* 
  * --- useful functions for sending/receiving to/from the backend API and websockets
  */
-async function simpleApiFetch(url) {
+// identifies this tab, so it can tell its own chat switches apart from another tab's
+const CLIENT_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+async function simpleApiFetch(url, options = {}) {
     // fetches something from the API and returns the data extracted from the JSON response
     const raw_data = await(
-        await fetch(url)
+        await fetch(url, options)
     ).json()
 
     if (!raw_data.success) {

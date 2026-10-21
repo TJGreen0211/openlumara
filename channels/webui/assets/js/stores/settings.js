@@ -57,8 +57,8 @@ SETTINGS_STORE = {
 
     // --- Init & Load ---
     async init() {
+        // load() already checks the API connection
         await this.load();
-        await this.checkApiConnection();
     },
 
     async load() {
@@ -66,14 +66,20 @@ SETTINGS_STORE = {
         this.error = null;
 
         try {
+            // independent requests: fetch them together instead of one by one
+            const moduleInfo = simpleApiFetch('/api/settings/get_module_info').catch((infoErr) => {
+                console.warn('Failed to fetch module info:', infoErr);
+                return this.moduleInfoCache;
+            });
+            const systemPrompt = simpleApiFetch("/api/chat/prompt");
+            // awaited below; this only stops a failure from being reported as
+            // unhandled while the settings request is still in flight
+            systemPrompt.catch(() => {});
+            const apiCheck = this.checkApiConnection();
+
             const rawSettings = await simpleApiFetch('/api/settings/load');
             this.settings = rawSettings;
-            
-            try {
-                this.moduleInfoCache = await simpleApiFetch('/api/settings/get_module_info');
-            } catch (infoErr) {
-                console.warn('Failed to fetch module info:', infoErr);
-            }
+            this.moduleInfoCache = await moduleInfo;
 
             // expose the session role to the rest of the frontend
             window.userRole = this.userRole;
@@ -86,9 +92,9 @@ SETTINGS_STORE = {
 
             this.showUnsafe = this.settings.channels.settings.webui.show_unsafe_settings;
 
-            this.systemPrompt = await simpleApiFetch("/api/chat/prompt");
+            this.systemPrompt = await systemPrompt;
 
-            await this.checkApiConnection();
+            await apiCheck;
         } catch (err) {
             console.error('Failed to load settings:', err);
             this.error = err.message || 'Failed to load settings';

@@ -1,3 +1,14 @@
+// the last few chats as the server sent them, most recently shown last, so
+// switching back to one shows it instantly while the fresh copy loads.
+// kept outside the store so Alpine doesn't make it reactive
+const CHAT_CACHE = new Map();
+const CHAT_CACHE_SIZE = 8;
+
+// a long chat renders only its newest turns at first; older ones render in
+// batches when scrolled up to (each turn's markdown + highlighting is costly)
+const INITIAL_RENDERED_TURNS = 30;
+const OLDER_TURNS_BATCH = 20;
+
 CHAT_STORE = {
     /*
      * alpine.js store for chat state
@@ -23,6 +34,14 @@ CHAT_STORE = {
     _moveToastTimer: null,
 
     turnHistory: [],
+    // turns before this index stay unrendered until scrolled up to
+    renderStart: 0,
+    _historyPaging: false,
+    // a switch to a chat that isn't cached yet: shows the loading skeleton
+    chatLoading: false,
+    _switching: false,
+    _loadSeq: 0,
+    _chatsSeq: 0,
     editingMessageIndex: null,
     editContent: '',
     editAttached: [],
@@ -38,17 +57,15 @@ CHAT_STORE = {
         // called by Alpine.init
         // always land in the store-default category ('general'),
         // even if the backend's current chat belongs to a different category
-        await this.reloadChats();
-        await this.reloadCategories();
+
+        // the sidebar lists load alongside the chat; the chat shows as soon as it arrives
+        const lists = Promise.allSettled([this.reloadChats(), this.reloadCategories()]);
 
         const result = await simpleApiFetch(`/api/chat/current`);
         if (!result) { return }
 
-        this.chat = result;
-        this.selectedChat = result.id;
-        this.turnHistory = this._withoutActiveStream(result.turn_history);
-        this.currentTokenUsage = result.token_usage;
-        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
+        this._showChat(result);
+        await lists;
 
         // ensure the chat exists in the visible sidebar list before scrolling
         // (only possible when it belongs to the currently selected category)
@@ -66,26 +83,200 @@ CHAT_STORE = {
         // don't allow chat switching if a stream is ongoing
         if (Alpine.store("stream").state != 'idle') { return; }
 
-        const result = await simpleApiFetch(`/api/chat/load/${chatId}`);
-        if (!result) { return; }
+        // switch the view on the click and let the network catch up: a chat
+        // shown recently comes straight from memory, any other gets a loading
+        // skeleton. selecting it first also turns the chat_switched echo of
+        // this same load (which can beat the http response) into a no-op
+        // instead of a second full load
+        const seq = ++this._loadSeq;
+        // a reload still in flight for the previous chat must not land on this one
+        this._reloadSeq++;
+        this._switching = true;
+
+        const previous = {
+            chat: this.chat,
+            selectedChat: this.selectedChat,
+            selectedCategory: this.selectedCategory,
+            turnHistory: this.turnHistory,
+            renderStart: this.renderStart,
+            currentTokenUsage: this.currentTokenUsage,
+        };
+
+        const cached = CHAT_CACHE.get(chatId);
+        if (cached) {
+            this.selectedCategory = cached.category;
+            this._showChat(cached);
+        } else {
+            // the sidebar entry has the title and category, so the header is right immediately
+            const listed = this.visibleChats.find(c => c.id === chatId);
+            this.chat = listed ? { ...listed } : { id: chatId };
+            this.selectedChat = chatId;
+            if (listed) {
+                this.selectedCategory = listed.category;
+                this.currentTokenUsage = listed.token_usage;
+            }
+            this.turnHistory = [];
+            this.renderStart = 0;
+            this.chatLoading = true;
+        }
+
+        let result = null;
+        try {
+            // the backend tags its chat_switched broadcast with this, so this
+            // tab can ignore the echo of its own switch
+            result = await simpleApiFetch(`/api/chat/load/${chatId}`, { headers: { 'X-Client-Id': CLIENT_ID } });
+        } catch (e) {
+            console.error('failed to load chat:', e);
+        }
+
+        // the user already clicked another chat
+        if (seq !== this._loadSeq) { return; }
+        this.chatLoading = false;
+        this._switching = false;
+
+        if (!result) {
+            // the backend is still on the previous chat, so the view goes back to it
+            for (const [key, value] of Object.entries(previous)) {
+                this[key] = value;
+            }
+            return;
+        }
+
+        this.selectedCategory = result.category;
+        // for a cached chat this only patches the turns that changed
+        this._showChat(result);
+    },
+
+    async followSwitch(chatId) {
+        /*
+         * the backend already switched chats (another tab, a meeting
+         * transcript...): show its current chat without asking it to switch.
+         * going through loadChat here re-requested the switch, which
+         * broadcast it again, so a few rapid clicks bounced every tab
+         * between those chats forever
+         */
+        if (this.selectedChat === chatId) { return; }
+        if (Alpine.store("stream").state != 'idle') { return; }
+        // this tab's own switch is in flight and will land after this event
+        if (this._switching) { return; }
+
+        const seq = ++this._loadSeq;
+        this._reloadSeq++;
+        const result = await simpleApiFetch(`/api/chat/current`);
+        if (!result || seq !== this._loadSeq) { return; }
+
+        this.selectedCategory = result.category;
+        this._showChat(result);
+    },
+
+    _supersedeLoads() {
+        // the backend just switched chats on its own (new chat): a switch or
+        // reload still in flight is stale and must not land
+        this._loadSeq++;
+        this._reloadSeq++;
+        this._switching = false;
+        this.chatLoading = false;
+    },
+
+    _showChat(result) {
+        /*
+         * puts a chat payload from the server on screen. reloading the chat
+         * that's already showing keeps every turn that didn't change as the
+         * same object, so Alpine leaves its DOM (and rendered markdown) alone
+         * and only new or edited turns render
+         */
+        const sameChat = this.chat?.id === result.id && this.turnHistory.length > 0;
+        const turns = [...(this._withoutActiveStream(result.turn_history) || [])];
 
         this.chat = result;
-        this.selectedChat = chatId;
-        this.selectedCategory = result.category;
-        this.turnHistory = result.turn_history;
-        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
-
-        ui = Alpine.store('ui');
+        this.selectedChat = result.id;
         this.currentTokenUsage = result.token_usage;
 
-        // make sure it always shows the bottom of the chat
+        if (sameChat) {
+            this.turnHistory = this._mergeTurns(turns);
+            // a deleted turn can shrink the history below the rendered window
+            this.renderStart = Math.min(this.renderStart, Math.max(0, turns.length - INITIAL_RENDERED_TURNS));
+        } else {
+            this.turnHistory = turns;
+            this.renderStart = Math.max(0, turns.length - INITIAL_RENDERED_TURNS);
+            this._startHistoryPaging();
+        }
+
+        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
+
+        CHAT_CACHE.delete(result.id);
+        CHAT_CACHE.set(result.id, result);
+        if (CHAT_CACHE.size > CHAT_CACHE_SIZE) {
+            CHAT_CACHE.delete(CHAT_CACHE.keys().next().value);
+        }
+    },
+
+    _mergeTurns(incoming) {
+        // turns are identified by their first message index; a delete or edit
+        // shifts or changes them, which the content comparison catches
+        const current = new Map();
+        for (const turn of Alpine.raw(this.turnHistory)) {
+            if (turn.first_message_index != null) {
+                current.set(turn.first_message_index, turn);
+            }
+        }
+
+        return incoming.map((turn) => {
+            const existing = current.get(turn.first_message_index);
+            return existing && JSON.stringify(existing) === JSON.stringify(turn) ? existing : turn;
+        });
+    },
+
+    async _startHistoryPaging() {
+        // paging stays off until the new chat is scrolled to the bottom: right
+        // after it renders, the loader at the top is briefly in view
+        this._historyPaging = false;
+        const seq = this._loadSeq;
+
+        const ui = Alpine.store('ui');
         await ui.forceScrollToBottom();
+        await Alpine.nextTick();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (seq !== this._loadSeq) { return; }
+
+        this._historyPaging = true;
+
+        // a chat whose newest turns don't fill the screen never scrolls, so
+        // the loader would never come into view: fill the screen up front
+        // (a hidden container measures 0 tall and would render everything)
+        const el = document.getElementById('messages');
+        while (el && el.clientHeight > 0 && this.renderStart > 0 && el.scrollHeight <= el.clientHeight) {
+            await this.renderOlderTurns();
+        }
+    },
+
+    async renderOlderTurns() {
+        // called when the loader above the oldest rendered turn scrolls into view
+        if (!this._historyPaging || this.renderStart <= 0) { return; }
+
+        const el = document.getElementById('messages');
+        if (!el) { return; }
+
+        // keep the turns the user is looking at in place while older ones appear above them
+        const fromBottom = el.scrollHeight - el.scrollTop;
+        this.renderStart = Math.max(0, this.renderStart - OLDER_TURNS_BATCH);
+        await Alpine.nextTick();
+        // the user may have jumped to the bottom while these were rendering;
+        // restoring the old position would throw them back up
+        el.scrollTop = Alpine.store('ui').shouldScroll ? el.scrollHeight : el.scrollHeight - fromBottom;
     },
 
     async reloadChats() {
-        this.chatOffset = 0;
-        this.visibleChats = [];
-        await this._fetchChats();
+        // fetch before swapping, so the list never blanks out (which also made
+        // every sidebar item rebuild), and keep as many chats as were showing
+        // so a sidebar scrolled down doesn't jump back to the top
+        const seq = ++this._chatsSeq;
+        const result = await this._fetchChatsPage(0, Math.max(this.chatLimit, this.chatOffset));
+        if (!result || seq !== this._chatsSeq) { return; }
+
+        this.visibleChats = result.messages;
+        this.chatOffset = result.messages.length;
+        this.hasMoreChats = result.has_more;
 
         // ensure there are always more chats loaded than what fits in the current viewport
         await this.ensureMoreChats();
@@ -123,14 +314,19 @@ CHAT_STORE = {
     },
 
     async _fetchChats() {
-        const offset = this.chatOffset;
-        const catParam = this.selectedCategory ? `&category=${encodeURIComponent(this.selectedCategory)}` : '';
-        const result = await simpleApiFetch(`/api/chats?offset=${offset}&limit=${this.chatLimit}${catParam}`);
-        if (!result) { return; }
+        const seq = this._chatsSeq;
+        const result = await this._fetchChatsPage(this.chatOffset, this.chatLimit);
+        // a reload replaced the list meanwhile; this page would duplicate or misplace chats
+        if (!result || seq !== this._chatsSeq) { return; }
 
         this.visibleChats.push(...result.messages);
         this.chatOffset += result.messages.length;
         this.hasMoreChats = result.has_more;
+    },
+
+    async _fetchChatsPage(offset, limit) {
+        const catParam = this.selectedCategory ? `&category=${encodeURIComponent(this.selectedCategory)}` : '';
+        return await simpleApiFetch(`/api/chats?offset=${offset}&limit=${limit}${catParam}`);
     },
 
     async newChat() {
@@ -148,36 +344,28 @@ CHAT_STORE = {
 
         await simpleApiPost('/api/chat/new', { category: this.selectedCategory });
 
-        result = await simpleApiFetch('/api/chat/current');
+        this._supersedeLoads();
+        const result = await simpleApiFetch('/api/chat/current');
         if (!result) { return; }
 
-        this.chat = result;
-
-        this.selectedChat = result.id;
         this.selectedCategory = result.category;
-        this.currentTokenUsage = result.token_usage;
-        this.turnHistory = result.turn_history;
+        this._showChat(result);
 
-        await this.reloadChats();
-        await this.reloadCategories();
-        await this.reloadChat();
+        // the chat itself was just fetched, so only the sidebar needs a refresh
+        await Promise.all([this.reloadChats(), this.reloadCategories()]);
     },
 
     async newCategory(categoryName, metadata = null) {
         await simpleApiPost('/api/chat/new', { category: categoryName, metadata });
 
+        this._supersedeLoads();
         const result = await simpleApiFetch('/api/chat/current');
         if (!result) { return; }
 
-        this.chat = result;
-        this.selectedChat = result.id;
         this.selectedCategory = result.category;
-        this.currentTokenUsage = result.token_usage;
-        this.turnHistory = result.turn_history;
+        this._showChat(result);
 
-        await this.reloadCategories();
-        await this.reloadChats();
-        await this.reloadChat();
+        await Promise.all([this.reloadChats(), this.reloadCategories()]);
     },
 
     async renameChat(chat_id, newTitle) {
@@ -193,6 +381,7 @@ CHAT_STORE = {
         if (!confirm("Are you sure you want to delete this chat?")) { return }
 
         await simpleApiPost(`/api/chat/delete/${chat_id}`);
+        CHAT_CACHE.delete(chat_id);
 
         // deleting the open chat makes the backend switch to another one;
         // follow it, or the view keeps showing the deleted chat while new
@@ -264,15 +453,13 @@ CHAT_STORE = {
         // recently started one may write, or an older snapshot clobbers a newer one
         const seq = ++this._reloadSeq;
         const result = await simpleApiFetch(`/api/chat/current`);
-        if (!result || seq !== this._reloadSeq) { return }
+        // while a chat switch is in flight the backend may still be on the old
+        // chat; the switch fetches the new one fresh anyway
+        if (!result || seq !== this._reloadSeq || this._switching) { return }
 
-        this.chat = result;
-        this.selectedChat = result.id;
         // note: deliberately not touching selectedCategory here - a plain
         // data refresh must not change the category the user is looking at
-
-        this.turnHistory = this._withoutActiveStream(result.turn_history);
-        Alpine.store('artifact').restoreFromHistory(this.selectedChat, this.turnHistory);
+        this._showChat(result);
     },
 
     _withoutActiveStream(turns) {
@@ -284,8 +471,12 @@ CHAT_STORE = {
     },
 
     async reloadCategories() {
-        this.categories = await simpleApiFetch('/api/chats/categories');
-        this.categoryCounts = (await simpleApiFetch('/api/chats/category_counts')) || {};
+        const [categories, counts] = await Promise.all([
+            simpleApiFetch('/api/chats/categories'),
+            simpleApiFetch('/api/chats/category_counts'),
+        ]);
+        this.categories = categories;
+        this.categoryCounts = counts || {};
     },
 
     async selectCategory(category) {

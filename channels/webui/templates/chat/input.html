@@ -113,6 +113,20 @@ await simpleSocketSend({
 {% include 'chat/token_bar.html' %}
 </div>
 
+<!-- jump back down: shown while the user has scrolled up away from the newest
+     message (shouldScroll is kept in sync by the @scroll handler on #messages) -->
+<button id="scroll-to-bottom" x-cloak
+    x-show="!$store.ui.shouldScroll && !$store.chat.chatLoading"
+    x-transition.opacity
+    @click="$store.ui.jumpToBottom()"
+    title="Scroll to bottom" aria-label="Scroll to bottom">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <polyline points="19 12 12 19 5 12"/>
+    </svg>
+</button>
+
 <!-- meeting mode: while a meeting is live this replaces the #voice-live slot with a
      recording control bar; after it stops the completion card takes the same slot.
      both are absolutely positioned above the input bar exactly like #voice-live -->

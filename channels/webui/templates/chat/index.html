@@ -10,8 +10,12 @@
 {% endif %}
 
 <!-- the main message view -->
+<!-- not throttled: throttle drops the trailing event, so a momentum/bounce
+     scroll that settles at the bottom could leave shouldScroll stale (and the
+     scroll-to-bottom button showing). the check is cheap and Alpine only
+     re-renders when the value actually flips -->
 <div id="messages" x-ref="messages" x-cloak
-    @scroll.throttle="
+    @scroll.passive="
         const el = $el;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         $store.ui.shouldScroll = distFromBottom < $store.ui.scrollThreshold;
@@ -35,21 +39,38 @@
         just like what the webUI uses here!
     -->
 
+    <!-- loading skeleton while switching to a chat that isn't cached yet
+         (it fades in after a moment, so a fast load never flashes it) -->
+    <template x-if="$store.chat.chatLoading">
+        <div class="chat-skeleton" aria-busy="true" aria-label="Loading chat">
+            <div class="skeleton-bubble user"></div>
+            <div class="skeleton-bubble assistant"><span></span><span></span><span></span></div>
+            <div class="skeleton-bubble user short"></div>
+            <div class="skeleton-bubble assistant"><span></span><span></span></div>
+        </div>
+    </template>
+
+    <!-- older turns render when this scrolls into view (see chat.renderOlderTurns) -->
+    <div class="history-loader" x-show="$store.chat.renderStart > 0" x-intersect.margin.400px="$store.chat.renderOlderTurns()"></div>
+
     <!-- historical turns -->
+    <!-- turns before $store.chat.renderStart stay unrendered (hidden, empty
+         wrappers) until scrolled up to, so opening a long chat only renders
+         its newest turns -->
     <!-- keyed by first_message_index (the turn's identity, also used by the
          delete/regenerate actions) so a mid-history delete does not rebind a
          reused DOM node's per-turn state (collapse toggles) to the wrong
          turn; turns pushed mid-stream lack the index and fall back to a
          string key, which cannot collide with the numeric message indices -->
     <template x-for="(turn, turnIndex) in $store.chat.turnHistory" :key="turn.first_message_index ?? 'pos' + turnIndex">
-        <div class="fullwidth turn" :data-turn-index="turnIndex">
+        <div class="fullwidth turn" :data-turn-index="turnIndex" x-show="turnIndex >= $store.chat.renderStart">
             <!-- user turn (always one message) -->
-            <template x-if="turn.role === 'user' && !turn.messages[0]?._metadata?.signal">
+            <template x-if="turnIndex >= $store.chat.renderStart && turn.role === 'user' && !turn.messages[0]?._metadata?.signal">
                 <div class="message-wrapper user" x-data="{ get message() { return turn.messages[0] } }">
                     <div class="message user">
                         {% include 'chat/turns/user.html' %}
                         <div x-data="{ get targetIndex() { return turn.first_message_index } }" class="fullwidth">
-                            {% include 'chat/message_buttons.html' %}
+                            {% with buttons_role = 'user' %}{% include 'chat/message_buttons.html' %}{% endwith %}
                         </div>
                     </div>
                 </div>
@@ -57,14 +78,14 @@
 
             <!-- meeting boundary: a styled divider with no bubble and no message
                  buttons (regenerating from a divider would re-stream its text) -->
-            <template x-if="turn.role === 'user' && turn.messages[0]?._metadata?.signal === 'MEETING_CUTOFF'">
+            <template x-if="turnIndex >= $store.chat.renderStart && turn.role === 'user' && turn.messages[0]?._metadata?.signal === 'MEETING_CUTOFF'">
                 <div class="message-wrapper user" x-data="{ get message() { return turn.messages[0] } }">
                     {% include 'chat/turns/user.html' %}
                 </div>
             </template>
 
             <!-- assistant turn (multiple messages combined into one bubble) -->
-            <template x-if="turn.role === 'assistant'">
+            <template x-if="turnIndex >= $store.chat.renderStart && turn.role === 'assistant'">
                 <div class="message-wrapper assistant">
                     <div class="message assistant">
                         <!-- reasoning/tool runs are grouped into one collapsible "steps" row -->
@@ -73,7 +94,7 @@
                         </template>
 
                         <div x-data="{ get targetIndex() { return turn.last_message_index } }" class="fullwidth">
-                            {% include 'chat/message_buttons.html' %}
+                            {% with buttons_role = 'assistant' %}{% include 'chat/message_buttons.html' %}{% endwith %}
                         </div>
                     </div>
                 </div>
@@ -94,7 +115,7 @@
                 </template>
 
                 <div x-data="{ get targetIndex() { return $store.stream.turn.first_message_index }, turn: {} }" class="fullwidth">
-                    {% include 'chat/message_buttons.html' %}
+                    {% with buttons_role = 'assistant' %}{% include 'chat/message_buttons.html' %}{% endwith %}
                 </div>
             </div>
         </div>
