@@ -12,7 +12,8 @@ except ImportError:
     from importlib_metadata import version, PackageNotFoundError
 
 # modules that should have their prompts inserted even when tools are off
-nonagentic = ("characters", "writing_style", "time")
+# (memory: recalling what the AI knows about the user doesn't need tools)
+nonagentic = ("characters", "writing_style", "time", "memory")
 
 reported_missing = []
 reported_broken = []

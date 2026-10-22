@@ -11,6 +11,9 @@ class Messages:
         chat_id = self.chat.get("id")
         if not isinstance(chat_id, str):
             raise Exception("Could not load chat messages: Chat ID must be a string")
+        # which chat this history belongs to, fixed at load time (the chat's
+        # index in the chat list can shift when other chats are deleted)
+        self.chat_id = chat_id
 
         self.path = os.path.join(self.chat.path, "history", self.chat.get("id"))
         # compact_json: history is rewritten on every save, so skip indent + ascii escaping
@@ -19,6 +22,8 @@ class Messages:
         # saves are debounced: rapid adds (tool call chains, streams) coalesce
         # into a single disk write instead of one full rewrite per message
         self._save_task = None
+        # True while there are changes that haven't been written yet
+        self._dirty = False
         self.SAVE_DEBOUNCE_SECONDS = 0.15
         # serializes the actual disk write: history can hold several MB of
         # base64 attachments, so the dump+write+fsync runs in a worker thread
@@ -26,9 +31,35 @@ class Messages:
         self._save_lock = asyncio.Lock()
 
     def _schedule_save(self):
+        self._dirty = True
         if self._save_task and not self._save_task.done():
             return
         self._save_task = asyncio.create_task(self._debounced_save())
+
+    async def flush(self):
+        """write pending (debounced) changes now and wait for any write in flight,
+        so the file on disk is complete. used before switching away from a chat:
+        reopening it reads the file, and a save still pending at that moment would
+        make it load without its latest messages (and the next save would then
+        overwrite them). no-op when nothing is pending"""
+        if self._dirty:
+            await self.save()
+        async with self._save_lock:
+            pass
+
+    async def discard(self):
+        """drop pending (debounced) changes and wait for any write in flight. used
+        before deleting this chat's file, so a late save can't write it back"""
+        self._dirty = False
+        task, self._save_task = self._save_task, None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        async with self._save_lock:
+            pass
 
     async def _debounced_save(self):
         await asyncio.sleep(self.SAVE_DEBOUNCE_SECONDS)
@@ -55,6 +86,7 @@ class Messages:
             # happening while the thread dumps, so the thread must not walk the
             # live list. deepcopy shares the (immutable) strings, so big base64
             # attachments cost nothing extra - only the containers are copied
+            self._dirty = False
             snapshot = copy.deepcopy(list(self.data))
             return await asyncio.to_thread(self.data.save, snapshot)
 

@@ -89,8 +89,8 @@ class Commands:
     # delete these after they are shown to the user once
     GHOST = ("help", "new", "clear", "context", "prompt", "tools", "chats", "chat")
     # commands any user may run, regardless of role
-    # (identity only ever touches the caller's own per-user identity file)
-    PUBLIC_COMMANDS = ("new", "clear", "status", "stop", "identity")
+    # (identity and memory only ever touch the caller's own per-user data)
+    PUBLIC_COMMANDS = ("new", "clear", "status", "stop", "identity", "memory")
     
     # command definitions - maps command name to help text
     # use string for single command, dict for subcommands, "__SPACER__" for spacers

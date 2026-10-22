@@ -597,8 +597,10 @@ class Manager:
             if module_name in self.broken_modules:
                 continue
 
-            if active_character and module_name not in char_modules_exempt and characters_module:
+            character_safe = getattr(module, "character_safe", False)
+            if active_character and module_name not in char_modules_exempt and characters_module and not character_safe:
                 # if a character is currently active, display ONLY the character system prompt
+                # (plus modules that opted in with character_safe, eg. memory)
                 char_disable_agent_prompts = self.modules["characters"].config.get("disable_agent_prompts_when_character_active")
 
                 if char_disable_agent_prompts:
@@ -650,7 +652,8 @@ class Manager:
                 continue
 
             # if a character is active, use only the character module's endprompt
-            if active_character and module_name != "characters":
+            # (plus modules that opted in with character_safe, eg. memory)
+            if active_character and module_name != "characters" and not getattr(module, "character_safe", False):
                 continue
 
             if prevent_recursion and module_name == "token_threshold":

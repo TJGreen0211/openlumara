@@ -61,6 +61,11 @@ class Module:
     # list of python dependencies that need to be installed for the module to work
     dependencies = []
 
+    # while a character is active, only the characters module's prompts are used.
+    # set this to True to keep this module's prompts active too (eg. memory, so a
+    # character still knows the user). can also be a property backed by a setting
+    character_safe = False
+
     def __init__(self, manager, is_user_module=False, channel=None):
         self.manager = manager
         self.channel = channel # later set by the channel base class, _set_as_active_channel()
@@ -187,6 +192,14 @@ class Module:
 
     async def on_shutdown(self):
         """This method will run once the module is shut down along with the rest of the framework, or the module is reloaded (happens when e.g. module config settings were changed by the user)"""
+        pass
+
+    async def on_chat_switch(self, old_chat_id: str, new_chat_id: str, old_messages: list, old_metadata: dict):
+        """This method will run when the user leaves a conversation: switching to another chat, starting a new one, or clearing the current one (then old_chat_id == new_chat_id). old_messages is the history of the conversation that was left and old_metadata its chat metadata (eg. the active character); treat both as read-only. It does not run on startup, or when the user deletes the chat they're in. The chat switch waits for this hook, so do slow work (like calling the AI) in a background task."""
+        pass
+
+    async def on_before_user_delete(self, username: str):
+        """This method will run right before a user account and its data folder are deleted. Close any per-user files you hold open here (eg. database connections): on Windows an open file stops the folder from being deleted."""
         pass
 
     async def on_user_deleted(self, username: str):

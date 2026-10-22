@@ -52,8 +52,17 @@ class Chat:
     # ------------------
     async def _set_current(self, index: int):
         """load a chat and its messages by index"""
-        old_id = self.data[self.current]["id"] if self.current is not None and self.current < len(self.data) else None
+        # the outgoing chat is the one whose messages are loaded right now, not
+        # self.data[self.current]: after a delete shifts the indexes, that
+        # points at a different chat
+        old_messages = self.messages
+        old_id = old_messages.chat_id if old_messages is not None else None
         new_id = self.data[index]["id"]
+
+        # get the outgoing chat's latest messages onto disk before anything can
+        # reopen it (while self.current still points at it, for its timestamp)
+        if old_messages is not None:
+            await old_messages.flush()
 
         self.current = index
 
@@ -69,6 +78,22 @@ class Chat:
         if old_id != new_id:
             self.channel.tool_loader.reset_for_new_chat()
             self.channel.tool_loader.restore_chat_tools()
+
+            # no event on startup/autoload (nothing was left) or for a deleted chat (see delete())
+            if old_id is not None:
+                await self._run_chat_switch_hooks(old_id, new_id, list(old_messages.data))
+
+    async def _run_chat_switch_hooks(self, old_id, new_id, old_messages):
+        """let modules know the user left a conversation (see Module.on_chat_switch)"""
+        old_index = self._find_index(old_id)
+        old_metadata = dict(self.data[old_index].get("metadata") or {}) if old_index is not None else {}
+        for module_name, module in self.channel.manager.modules.items():
+            if not hasattr(module, "on_chat_switch"):
+                continue
+            try:
+                await module.on_chat_switch(old_id, new_id, old_messages, old_metadata)
+            except Exception as e:
+                self.channel.log("module error", f"{module_name}: in on_chat_switch(): {core.detail_error(e)}")
 
     def _find_index(self, id: str):
         """find index of the chat with that ID"""
@@ -248,6 +273,8 @@ class Chat:
         self.channel.tool_loader.reset_for_new_chat()
         self.set_loaded_modules([])
 
+        chat_id = self.messages.chat_id
+        old_messages = list(self.messages.data)
         await self.messages.clear()
 
         # Reset token_usage since we're clearing the chat
@@ -255,6 +282,11 @@ class Chat:
         await self.set("token_usage", 0)
 
         await self.save()
+
+        # clearing ends the conversation just like switching away does (people
+        # use /clear to start over), so modules get to see what was cleared
+        if old_messages:
+            await self._run_chat_switch_hooks(chat_id, chat_id, old_messages)
 
         # start a system prompt warmup so that the response is instant (if the user types slowly... lol)
         #await self.channel.manager.API.start_prompt_warmup(notify=core.debug)
@@ -267,6 +299,16 @@ class Chat:
         index = self._find_index(id)
         if index is None:
             return False
+
+        # settle the loaded chat's pending writes while the indexes are still valid:
+        # a late save of the deleted chat would write its file back after we remove
+        # it, and a save of any other chat stamps its timestamp by index
+        loaded = self.messages
+        if loaded is not None:
+            if loaded.chat_id.upper() == self.data[index].get("id", "").upper():
+                await loaded.discard()
+            else:
+                await loaded.flush()
 
         # remove the chat history file
         messages_path = core.get_data_path(os.path.join(
@@ -287,6 +329,10 @@ class Chat:
         # Adjust current index if needed
         if self.current is not None:
             if self.current == index:
+                # the user deleted this conversation: forget its loaded messages so the
+                # switch below doesn't hand them to on_chat_switch hooks (eg. memory
+                # must not mine a chat the user chose to delete)
+                self.messages = None
                 if self.data:
                     # that means we've deleted the current chat
                     await self._set_current(min(index, len(self.data) - 1))
@@ -304,6 +350,17 @@ class Chat:
         #     self.channel.log("core", f"failure while sending prompt warmup to API: {core.detail_error(e)}")
 
         return self.current
+
+    async def flush_pending_saves(self):
+        """write debounced changes now instead of in a moment. used before this
+        chat's data may be deleted (eg. its user account): nothing is left to
+        write into a folder that's gone, and if the deletion fails nothing was lost"""
+        task, self._index_save_task = self._index_save_task, None
+        if task and not task.done():
+            task.cancel()
+            self.data.save()
+        if self.messages is not None:
+            await self.messages.flush()
 
     def _schedule_index_save(self):
         if self._index_save_task and not self._index_save_task.done():

@@ -1405,14 +1405,33 @@ async def create_fastapi(channel):
         if current_user == username:
             return api_result("Cannot delete yourself", success=False)
 
+        # quiesce the user before their data folder goes: disconnect them so no
+        # new message can start mid-deletion, stop their stream, and write their
+        # chat's pending (debounced) saves now rather than into a missing folder
+        # later (written, not dropped: if the deletion fails, nothing is lost)
+        await channel.websocket_manager.close_where(username=username, code=4001, reason="User deleted")
+        await channel.websocket_manager.cancel_stream(username)
+        user_context = channel.user_contexts.get(username)
+        if user_context is not None:
+            await user_context.chat.flush_pending_saves()
+
+        # then let modules stop per-user background work and close per-user files
+        # (eg. memory's sqlite database): on windows an open file makes the
+        # folder deletion fail halfway, after the account itself is already gone
+        for module in channel.manager.modules.values():
+            try:
+                await module.on_before_user_delete(username)
+            except Exception as e:
+                channel.log("error", f"{module.name}: error in on_before_user_delete(): {core.detail_error(e)}")
+
+        # delete_user() is synchronous, so nothing can run between the hooks above and the deletion
         if not channel.user_manager.delete_user(username):
             return api_result("Failed to delete user", success=False)
 
-        # evict the cached per-user context and in-flight stream so that a user
-        # recreated with the same name can't inherit the deleted user's
-        # in-memory chat state (whose storage paths point at the deleted data dir)
+        # evict the cached per-user context so that a user recreated with the
+        # same name can't inherit the deleted user's in-memory chat state (whose
+        # storage paths point at the deleted data dir)
         channel.user_contexts.pop(username, None)
-        await channel.websocket_manager.cancel_stream(username)
 
         # drop each module's per-user in-memory state (per-user storage caches)
         for module in channel.manager.modules.values():
@@ -1420,6 +1439,7 @@ async def create_fastapi(channel):
                 await module.on_user_deleted(username)
             except Exception as e:
                 channel.log("error", f"{module.name}: error in on_user_deleted(): {core.detail_error(e)}")
+        # again: a client may have reconnected while the steps above were running
         await channel.websocket_manager.close_where(username=username, code=4001, reason="User deleted")
 
         return api_result(success=True)

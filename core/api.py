@@ -424,7 +424,7 @@ class APIClient():
     async def send(self, context: list, system_prompt=True, use_tools=True, tools=None, use_thinking=True, cancel_token=None, **kwargs):
         """send a message to the LLM. returns a string or APIError"""
 
-        self.cancel_request = False
+        self._clear_stale_cancel()
 
         # attempt auto-reconnect once
         connected = await self.attempt_connect()
@@ -457,7 +457,7 @@ class APIClient():
     async def send_stream(self, context: list, use_tools=True, tools=None, use_thinking=True, cancel_token=None, **kwargs):
         """send a message to the LLM. is an iterable async generator"""
 
-        self.cancel_request = False
+        self._clear_stale_cancel()
 
         # attempt auto-reconnect once
         connected = await self.attempt_connect()
@@ -517,6 +517,14 @@ class APIClient():
             yield {"type": "error", "content": f"While sending request to AI: {core.detail_error(e)}"}
         finally:
             self.is_streaming = False
+
+    def _clear_stale_cancel(self):
+        """forget a leftover stop request before a new request starts, but only when
+        no stream is running: while one is, a pending stop belongs to that stream.
+        clearing it unconditionally meant any concurrent request (another user's
+        message, a background memory extraction) silently swallowed a /stop"""
+        if not self.is_streaming:
+            self.cancel_request = False
 
     async def cancel(self):
         """cancel a request that's been sent to the AI"""
