@@ -1628,6 +1628,72 @@ async def create_fastapi(channel):
         return api_result(success=True)
 
     # ----------------------------
+    # Memories API (the settings modal's memories tab)
+    # always the logged-in user's own memories (the middleware sets current_user)
+    # ----------------------------
+    def _memory_guard(request):
+        """returns (memory module, error_response)"""
+        memory = channel.manager.modules.get("memory")
+        if not memory:
+            return None, api_result("memory module not available", success=False)
+        if request.method != "GET" and channel.config.get("require_login", False) and not _verify_csrf(request):
+            return None, api_result("CSRF token missing or invalid", success=False)
+        return memory, None
+
+    async def _memory_call(request, fn, *args, **kwargs):
+        memory, error = _memory_guard(request)
+        if error:
+            return error
+        try:
+            return api_result(await getattr(memory, fn)(*args, **kwargs))
+        except Exception as e:
+            return api_result(str(e), success=False)
+
+    @app.get("/api/memories")
+    async def memories_list(request: fastapi.Request):
+        """Lists the current user's memories"""
+        return await _memory_call(request, "_panel_list")
+
+    @app.get("/api/memories/search")
+    async def memories_search(request: fastapi.Request, q: str = ""):
+        """Ids of the current user's memories that match q by keyword or meaning"""
+        if not q.strip():
+            return api_result([])
+        return await _memory_call(request, "_panel_search", q.strip())
+
+    @app.post("/api/memories")
+    async def memories_add(request: fastapi.Request):
+        """Adds a memory"""
+        body = await request.json()
+        content = str(body.get("content") or "").strip()
+        if not content:
+            return api_result("A memory can't be empty", success=False)
+        return await _memory_call(request, "_panel_add", content, str(body.get("category") or "fact"))
+
+    @app.patch("/api/memories/{memory_id}")
+    async def memories_update(request: fastapi.Request, memory_id: str):
+        """Changes a memory's content, category and/or pinned state"""
+        body = await request.json()
+        content = body.get("content")
+        if content is not None and not str(content).strip():
+            return api_result("A memory can't be empty", success=False)
+        return await _memory_call(
+            request, "_panel_update", memory_id,
+            content=str(content).strip() if content is not None else None,
+            category=body.get("category"),
+            pinned=bool(body["pinned"]) if "pinned" in body else None)
+
+    @app.delete("/api/memories/{memory_id}")
+    async def memories_forget(request: fastapi.Request, memory_id: str):
+        """Forgets a memory (it can be restored)"""
+        return await _memory_call(request, "_panel_forget", memory_id)
+
+    @app.post("/api/memories/{memory_id}/restore")
+    async def memories_restore(request: fastapi.Request, memory_id: str):
+        """Brings back a forgotten memory"""
+        return await _memory_call(request, "_panel_restore", memory_id)
+
+    # ----------------------------
     # System.. stuff
     # ----------------------------
     # -- GET
@@ -1635,7 +1701,9 @@ async def create_fastapi(channel):
     async def get_data():
         """returns any relevant data for the webUI to use"""
         data = {
-            "max_context": core.config.get("api", "max_context")
+            "max_context": core.config.get("api", "max_context"),
+            # the settings modal only shows its memories tab when the module is loaded
+            "memory_available": "memory" in channel.manager.modules,
         }
 
         return api_result(data)

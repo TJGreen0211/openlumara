@@ -270,6 +270,11 @@ def format_memory(memory: dict) -> str:
     return f"[{memory['id']}] ({flags}) {memory['content']}"
 
 
+def _panel_item(memory: dict) -> dict:
+    """the fields the webui memories panel needs"""
+    return {key: memory[key] for key in ("id", "content", "category", "pinned", "updated_at")}
+
+
 class Memory(core.module.Module):
     """Gives your AI a long-term memory of you that carries across chats and sessions. It picks up facts and preferences from your conversations automatically, and you can also ask it to remember or forget things."""
 
@@ -867,6 +872,72 @@ class Memory(core.module.Module):
                     f"recall: {'on' if self.config.get('recall_relevant_memories') else 'off'}")
 
         return "unknown subcommand, see /help memory"
+
+    # ------------------
+    # webui memories panel (channels/webui.py calls these for the logged-in user)
+    # ------------------
+    async def _panel_list(self) -> dict:
+        store = self._store()
+        engine = core.embeddings.get()
+        memories = await self._run(store.list, limit=1000)
+        return {
+            "memories": [_panel_item(m) for m in memories],
+            "categories": list(core.memory_store.CATEGORIES),
+            # only worth showing while search is degraded; ready/idle say nothing
+            "model_note": self._model_unavailable_message() if engine.status in ("downloading", "loading", "failed")
+            else "",
+        }
+
+    async def _panel_search(self, query: str) -> list:
+        """ids of memories that match query by keyword or clearly by meaning. the panel
+        does its own substring filtering, so this only adds what that can't find"""
+        store = self._store()
+        fts_hits = await self._run(store.fts_search, query, 50)
+        keyword_ids = [m["id"] for m, _ in fts_hits]
+        try:
+            query_vector = (await core.embeddings.get().embed_queries([query]))[0]
+        except core.embeddings.EmbeddingsError:
+            return keyword_ids  # model still loading: keyword matches only
+        vec_hits = await self._run(store.vec_search, query_vector, RECALL_POOL)
+        similarities = {m["id"]: sim for m, sim in vec_hits}
+        if len(similarities) < RECALL_MIN_MEMORIES_FOR_GATE:
+            # too few memories to tell a real match from noise
+            return keyword_ids
+        fused = [m for m, _ in fuse_rankings(fts_hits, vec_hits[:50])]
+        return [m["id"] for m in relevance_gate(fused, set(keyword_ids), similarities)]
+
+    async def _panel_add(self, content: str, category: str = "fact") -> dict:
+        if category not in core.memory_store.CATEGORIES:
+            category = "fact"
+        memory, _ = await self._save_new(self._store(), content, category=category, source="user")
+        return _panel_item(memory)
+
+    async def _panel_update(self, memory_id: str, content=None, category=None, pinned=None) -> dict:
+        store = self._store()
+        memory = await self._run(store.get, memory_id)
+        if memory is None:
+            raise ValueError("No memory with that id")
+        if category is not None or pinned is not None:
+            memory = await self._run(store.update, memory_id, category=category, pinned=pinned)
+            self._changed()
+        if content is not None and content != memory["content"]:
+            memory = await self._update_content(store, memory_id, content)
+        return _panel_item(memory)
+
+    async def _panel_forget(self, memory_id: str) -> bool:
+        if not await self._run(self._store().soft_delete, memory_id):
+            raise ValueError("No memory with that id")
+        self._changed()
+        return True
+
+    async def _panel_restore(self, memory_id: str) -> dict:
+        store = self._store()
+        memory = await self._run(store.restore, memory_id)
+        if memory is None:
+            raise ValueError("That memory can't be brought back")
+        self._changed()
+        await self._embed_missing(store)
+        return _panel_item(memory)
 
     # ------------------
     # tools

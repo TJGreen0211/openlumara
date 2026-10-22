@@ -950,6 +950,85 @@ class ReviewFixTests(ModuleTestCase):
             self.assertNotIn("alice", state)
 
 
+class PanelTests(ModuleTestCase):
+    """the private methods behind the webui memories panel (/api/memories)"""
+
+    async def test_list_add_and_duplicates(self):
+        listed = await self.mod._panel_list()
+        self.assertEqual(listed["memories"], [])
+        self.assertEqual(listed["categories"], list(mem_mod.core.memory_store.CATEGORIES))
+        self.assertEqual(listed["model_note"], "")  # model ready: nothing to say
+
+        first = await self.mod._panel_add("The user likes jazz", "preference")
+        self.assertEqual(set(first), {"id", "content", "category", "pinned", "updated_at"})
+        self.assertEqual(first["category"], "preference")
+        self.assertEqual(self.store().get(first["id"])["source"], "user")
+        self.assertEqual(self.store().missing_embeddings(), [])
+        again = await self.mod._panel_add("the user likes jazz", "fact")
+        self.assertEqual(again["id"], first["id"])  # a repeat isn't saved twice
+        odd = await self.mod._panel_add("The user lives in Madrid", "gossip")
+        self.assertEqual(odd["category"], "fact")
+        self.assertEqual(len((await self.mod._panel_list())["memories"]), 2)
+
+    async def test_model_note_while_loading(self):
+        ENGINE.ready = False
+        self.assertIn("starting up", (await self.mod._panel_list())["model_note"])
+        ENGINE.error = "huggingface unreachable"
+        self.assertIn("couldn't be loaded", (await self.mod._panel_list())["model_note"])
+
+    async def test_update_content_category_and_pin(self):
+        m = await self.mod._panel_add("The user likes jazz", "preference")
+        rev = self.mod._revisions.get("alice", 0)
+        up = await self.mod._panel_update(m["id"], content="The user loves jazz", category="profile", pinned=True)
+        self.assertEqual((up["content"], up["category"], up["pinned"]), ("The user loves jazz", "profile", True))
+        self.assertGreater(self.mod._revisions["alice"], rev)  # cached recall is invalidated
+        self.assertEqual(self.store().missing_embeddings(), [])  # re-embedded
+        self.assertIn("loves jazz", await self.mod.on_system_prompt())
+        unpinned = await self.mod._panel_update(m["id"], pinned=False)
+        self.assertFalse(unpinned["pinned"])
+        with self.assertRaises(ValueError):
+            await self.mod._panel_update("NOPE", pinned=True)
+        with self.assertRaises(ValueError):
+            await self.mod._panel_update(m["id"], category="gossip")
+
+    async def test_forget_and_restore(self):
+        m = await self.mod._panel_add("The user likes jazz")
+        self.assertTrue(await self.mod._panel_forget(m["id"]))
+        self.assertEqual((await self.mod._panel_list())["memories"], [])
+        with self.assertRaises(ValueError):
+            await self.mod._panel_forget(m["id"])
+        restored = await self.mod._panel_restore(m["id"])
+        self.assertEqual(restored["id"], m["id"])
+        self.assertEqual(self.store().missing_embeddings(), [])  # searchable again
+        with self.assertRaises(ValueError):
+            await self.mod._panel_restore(m["id"])  # it isn't forgotten anymore
+
+    async def test_search_keyword_and_meaning(self):
+        rex = await self.mod._panel_add("The user has a golden retriever named Rex")
+        self.assertEqual(await self.mod._panel_search("retriever"), [rex["id"]])
+        meaning_only = mock.patch.object(self.store(), "fts_search", return_value=[])
+        with meaning_only:
+            # too few memories to trust a match by meaning alone
+            self.assertEqual(await self.mod._panel_search("golden retriever puppy"), [])
+        for content in FILLER:
+            await self.mod._panel_add(content)
+        with meaning_only:
+            # (the fake engine's hashed words can collide, so only the top match is certain)
+            self.assertEqual((await self.mod._panel_search("golden retriever puppy"))[:1], [rex["id"]])
+        ENGINE.ready = False
+        self.assertEqual(await self.mod._panel_search("retriever"), [rex["id"]])  # keywords still work
+        with meaning_only:
+            self.assertEqual(await self.mod._panel_search("golden retriever puppy"), [])
+
+    async def test_panel_is_per_user(self):
+        await self.mod._panel_add("The user likes jazz")
+        bob = core.current_user.set("bob")
+        try:
+            self.assertEqual((await self.mod._panel_list())["memories"], [])
+        finally:
+            core.current_user.reset(bob)
+
+
 class LifecycleTests(ModuleTestCase):
     async def test_before_user_delete_releases_the_database(self):
         self.store().add("The user likes jazz")

@@ -46,6 +46,13 @@ function buildSettingsStructure(originalData, moduleInfo = {}, isAdmin = true) {
         order: order++,
         isThemeCategory: true
     };
+    // only listed while the memory module is loaded (see SETTINGS_STORE.sortedCategories)
+    categories.memories = {
+        title: 'Memories',
+        description: 'Things the assistant has learned about you across chats',
+        order: 99,
+        isThemeCategory: true
+    };
     categories.system_prompt = {
         title: 'System Prompt',
         description: 'See the current system prompt',

@@ -26,6 +26,7 @@ document.addEventListener('alpine:init', async () => {
     Alpine.store('voice', VOICE_STORE);
     Alpine.store('meets', MEETS_STORE);
     Alpine.store('artifact', ARTIFACT_STORE);
+    Alpine.store('memories', MEMORIES_STORE);
     if (typeof USERS_STORE !== 'undefined') {
         Alpine.store('users', USERS_STORE);
     }

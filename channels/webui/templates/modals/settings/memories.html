@@ -1,0 +1,80 @@
+<template x-if="activeCategory === 'memories' && !activeModule && !activeChannel">
+    <div class="fullwidth memories-panel" x-init="$store.memories.load()">
+        <div class="memories-header">
+            <h3 class="section-title">Memories</h3>
+            <span class="memories-count" x-show="$store.memories.items.length"
+                  x-text="$store.memories.items.length + ' saved'"></span>
+        </div>
+        <p class="section-desc">Things the assistant has learned about you across chats. Only you can see these.</p>
+        <p class="memories-note" x-show="$store.memories.modelNote" x-text="$store.memories.modelNote"></p>
+
+        <div class="memories-toolbar">
+            <input type="text" class="input-field memories-search" placeholder="Search memories…"
+                   x-model="$store.memories.query" @input="$store.memories.onQuery()">
+        </div>
+        <form class="memories-toolbar" @submit.prevent="$store.memories.add()">
+            <input type="text" class="input-field" placeholder="Add something to remember…"
+                   x-model="$store.memories.newContent">
+            <button type="submit" class="btn-small" :disabled="!$store.memories.newContent.trim()">Add</button>
+        </form>
+
+        <div class="error-msg" x-show="$store.memories.error" x-text="$store.memories.error"></div>
+
+        <div class="memories-undo" x-show="$store.memories.forgotten" x-cloak>
+            <span>Forgotten</span>
+            <button type="button" @click="$store.memories.undo()">Undo</button>
+        </div>
+
+        <div x-show="$store.memories.loading" class="memories-empty">Loading…</div>
+        <div x-show="!$store.memories.loading && !$store.memories.visible.length" class="memories-empty"
+             x-text="$store.memories.query.trim() ? 'No memories match your search.' : 'Nothing is remembered about you yet.'"></div>
+
+        <ul class="memories-list">
+            <template x-for="memory in $store.memories.visible" :key="memory.id">
+                <li class="memory" :class="{ pinned: memory.pinned }">
+                    <button type="button" class="memory-pin" @click="$store.memories.togglePin(memory)"
+                            :title="memory.pinned ? 'Unpin' : 'Pin (always in view)'"
+                            :aria-label="memory.pinned ? 'Unpin' : 'Pin'">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                             :fill="memory.pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
+                            <path d="M12 17v5"></path>
+                            <path d="M9 10.76V6h6v4.76l2 2.24v2H7v-2z"></path>
+                            <path d="M8 3h8"></path>
+                        </svg>
+                    </button>
+
+                    <template x-if="$store.memories.editingId !== memory.id">
+                        <div class="memory-body" @click="$store.memories.startEdit(memory)" title="Click to edit">
+                            <span class="memory-content" x-text="memory.content"></span>
+                            <span class="memory-category" x-text="memory.category"></span>
+                        </div>
+                    </template>
+                    <template x-if="$store.memories.editingId === memory.id">
+                        <form class="memory-edit" @submit.prevent="$store.memories.saveEdit()"
+                              @keydown.escape.stop="$store.memories.cancelEdit()">
+                            <textarea class="input-field" rows="2" x-model="$store.memories.editContent"
+                                      x-init="$nextTick(() => $el.focus())"
+                                      @keydown.enter.prevent="$store.memories.saveEdit()"></textarea>
+                            <div class="memory-edit-actions">
+                                <select class="select-field" x-model="$store.memories.editCategory">
+                                    <template x-for="category in $store.memories.categories" :key="category">
+                                        <option :value="category" x-text="category"
+                                                :selected="category === $store.memories.editCategory"></option>
+                                    </template>
+                                </select>
+                                <button type="submit" class="btn-small">Save</button>
+                                <button type="button" class="btn-small btn-secondary"
+                                        @click="$store.memories.cancelEdit()">Cancel</button>
+                            </div>
+                        </form>
+                    </template>
+
+                    <button type="button" class="memory-forget" @click="$store.memories.forget(memory)"
+                            title="Forget" aria-label="Forget">
+                        {% include 'svg/cross.svg' %}
+                    </button>
+                </li>
+            </template>
+        </ul>
+    </div>
+</template>

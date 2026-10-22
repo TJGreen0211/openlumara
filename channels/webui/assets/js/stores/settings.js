@@ -41,7 +41,9 @@ SETTINGS_STORE = {
     },
 
     get sortedCategories() {
+        const memoryAvailable = Alpine.store('system').data?.memory_available;
         return Object.entries(this.categories)
+            .filter(([cat]) => cat !== 'memories' || memoryAvailable)
             .sort(([a, catA], [b, catB]) => (catA.order || 0) - (catB.order || 0));
     },
 

@@ -1,0 +1,207 @@
+.memories-panel {
+    animation: fade-in 0.2s ease;
+
+    .memories-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .memories-count {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+    }
+
+    .memories-note {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        margin: -12px 0 16px;
+    }
+
+    .memories-toolbar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+
+        .input-field {
+            flex: 1;
+            min-width: 0;
+        }
+    }
+
+    /* inputs, textarea and select use the modal's field styles (modals/fields.css) */
+    .btn-small {
+        padding: 6px 14px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        background: var(--button-bg);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.15s ease;
+
+        &:hover {
+            background: var(--button-hover);
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        &.btn-secondary {
+            background: transparent;
+            border-color: transparent;
+        }
+    }
+
+    .error-msg {
+        margin: 8px 0;
+        font-size: var(--text-sm);
+        color: var(--error);
+    }
+
+    .memories-undo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 8px 0;
+        padding: 8px 12px;
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+
+        button {
+            border: none;
+            background: none;
+            padding: 0;
+            color: var(--accent);
+            font: inherit;
+            cursor: pointer;
+        }
+    }
+
+    .memories-empty {
+        padding: 24px 0;
+        text-align: center;
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+    }
+
+    .memories-list {
+        list-style: none;
+        margin: 12px 0 0;
+        padding: 0;
+    }
+
+    .memory {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 4px;
+        border-bottom: 1px solid var(--border-color);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    .memory-pin,
+    .memory-forget {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: opacity 0.15s ease, color 0.15s ease;
+
+        &:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+    }
+
+    /* the pin of an unpinned memory and the forget button only show on hover */
+    .memory:not(.pinned) .memory-pin,
+    .memory-forget {
+        opacity: 0;
+    }
+
+    .memory:hover .memory-pin,
+    .memory:hover .memory-forget,
+    .memory-pin:focus-visible,
+    .memory-forget:focus-visible {
+        opacity: 1;
+    }
+
+    .memory.pinned .memory-pin {
+        color: var(--accent);
+    }
+
+    .memory-forget:hover {
+        color: var(--error);
+    }
+
+    .memory-body {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding-top: 3px;
+        cursor: text;
+    }
+
+    .memory-content {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        line-height: 1.45;
+    }
+
+    .memory-category {
+        flex: none;
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+    }
+
+    .memory-edit {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+
+        textarea {
+            resize: vertical;
+        }
+    }
+
+    .memory-edit-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+
+        .select-field {
+            width: auto;
+            margin-right: auto;
+        }
+    }
+}
+
+/* touch screens can't hover: keep the buttons visible */
+@media (hover: none) {
+    .memories-panel .memory .memory-pin,
+    .memories-panel .memory .memory-forget {
+        opacity: 1;
+    }
+}
