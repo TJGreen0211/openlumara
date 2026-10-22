@@ -868,12 +868,12 @@ class Memory(core.module.Module):
     # tools
     # ------------------
     async def remember(self, content: str, category: str = "fact", pinned: bool = False):
-        """Saves something to your long-term memory of the user, so you still know it in future chats. Use it when the user asks you to remember something, or tells you an important fact, preference or instruction.
+        """Saves something to your long-term memory of the user, so you still know it in future chats. Only use it when the user explicitly asks you to remember something. Everything else worth knowing about the user is saved automatically after the conversation, so don't call this for facts the user merely mentions.
 
         Args:
             content: one short, self-contained sentence about the user, in the third person, written in the language the user used (never translate: Spanish facts as "El usuario...", English ones as "The user...")
             category: one of profile, preference, fact, event, instruction
-            pinned: true to always keep this memory in view (only for the most important things)
+            pinned: true to always keep this memory in view (only when the user asks for it to always be remembered)
         """
         if category not in core.memory_store.CATEGORIES:
             category = "fact"
