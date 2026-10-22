@@ -66,7 +66,6 @@ class _FakeChat:
 
     def __init__(self):
         self._data = {"id": "TESTID1"}
-        self._slot_dirty = False
         self.update_count = 0
 
     def get(self, key):

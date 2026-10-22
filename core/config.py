@@ -19,6 +19,23 @@ _loaded_file_path = None
 
 SCHEMA_CACHE_FILE = ".module_cache.json"
 
+# core settings that were removed from core_settings_schema. sync_config only
+# adds missing keys, so without this the old values would linger in config
+# files and keep showing up (undescribed) in the webui settings
+RETIRED_KEYS = {
+    "api": ("slot_cache", "slot_id", "slot_save_path"),
+}
+
+def strip_retired_keys(config_dict):
+    """remove retired settings from a (global or per-user) config dict in place"""
+    if not isinstance(config_dict, dict):
+        return
+    for section, keys in RETIRED_KEYS.items():
+        section_dict = config_dict.get(section)
+        if isinstance(section_dict, dict):
+            for key in keys:
+                section_dict.pop(key, None)
+
 core_settings_schema = {
     "core": {
         "data_folder": {
@@ -67,18 +84,6 @@ core_settings_schema = {
             "type": "object",
             "default": {},
             "description": "Additional custom fields to send with API requests. You can put anything in here that your chosen API supports!"
-        },
-        "slot_cache": {
-            "default": True,
-            "description": "Save/restore llama.cpp slot KV caches per chat, so switching back to an older chat (or restarting the AI server) doesn't rerun the entire conversation history. Requires your AI server to be started with `--slot-save-path` (llama.cpp). This also pins all of openlumara's requests to a single server slot, which can reduce throughput if the server runs with multiple parallel slots (-np > 1) and you want other clients to use the rest. Cache files remember which model they were saved with - if the server's model changes, older caches are ignored and re-saved automatically. In multi-user setups (webui with login enabled), each user can stream concurrently but their requests all pin to the same slot if everyone shares this `slot_id` - give each user a distinct `slot_id` in their per-user config and start the server with enough parallel slots (-np) for true per-user concurrency."
-        },
-        "slot_id": {
-            "default": 0,
-            "description": "The llama.cpp slot id that openlumara pins all requests and slot cache operations to. Only relevant if `slot_cache` is enabled and your server runs with multiple parallel slots (-np > 1). In multi-user setups (webui with login enabled), set a distinct value per user (in their per-user settings) so concurrent users don't share a slot. Requires the server to run with at least that many parallel slots (-np > 1)."
-        },
-        "slot_save_path": {
-            "default": "",
-            "description": "The llama.cpp `--slot-save-path` directory, but only if the AI server is running on the same machine as openlumara. When set, openlumara will directly erase a chat's cache file when the chat is deleted (in some llama.cpp builds the server's own `erase` action keeps the file)."
         },
         "voice_enabled": {
             "default": True,
@@ -875,6 +880,7 @@ def load(file_path=None):
         target = copy.deepcopy(schema)
     else:
         target = sync_config(raw_config, schema)
+        strip_retired_keys(target)
 
     # Sync settings and reconcile lists
     for item in registry:
@@ -1031,6 +1037,8 @@ def load_user_config(username):
     try:
         with open(user_config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        # dropped from what we hand out; the next save_user_config() persists it
+        strip_retired_keys(data)
         mtime = os.path.getmtime(user_config_path)
         if not hasattr(load_user_config, '_cache'):
             load_user_config._cache = {}

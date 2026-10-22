@@ -24,16 +24,6 @@ class Chat:
         # current_save_path is per-user (core.current_user already set)
         self.current_save_path = core.get_data_path(os.path.join(self.path, "current"))
 
-        # slot cache (llama.cpp per-chat KV) state - all slot ops are
-        # fire-and-forget: nothing ever blocks a chat switch or a message on
-        # the AI server roundtrip
-        # _slot_dirty: the current chat's history changed since its last slot
-        # save/clear. only a dirty chat needs saving when we switch away
-        self._slot_dirty = False
-        # _slot_restore_pending: id of the chat whose slot cache should be
-        # restored the first time a user sends a message in it (None = nothing pending)
-        self._slot_restore_pending = None
-
         # index saves from set() are debounced: callers often change several
         # keys in a row (chats.organize) or one per turn (token_usage), and each
         # save is a full index rewrite + fsync
@@ -50,11 +40,6 @@ class Chat:
 
                 if target_index < len(self.data):
                     await self._set_current(target_index)
-
-                    # defer the slot restore until the first user message in
-                    # this chat so startup never blocks on the AI server
-                    self._slot_defer_restore(target_index)
-
                     return
             except Exception as e:
                 self.channel.log_error("couldn't autoresume chat", e)
@@ -92,108 +77,6 @@ class Chat:
                 return index
 
         return None
-
-    def _slot_save_outgoing(self, old_index, old_chat_id):
-        """fire-and-forget save of the outgoing chat's slot KV, and only if its
-        history actually changed since the last save (otherwise the slot/file
-        already hold the current state). the model stamp is recorded by a
-        future callback once the server confirms the save"""
-        dirty = self._slot_dirty
-        self._slot_dirty = False
-
-        if not dirty or old_index is None or not old_chat_id:
-            return
-
-        try:
-            future = self.channel.manager.API.save_chat_cache(old_chat_id)
-        except Exception as e:
-            self.channel.log_error("failed to queue chat slot save", e)
-            return
-
-        if future is None:
-            return
-
-        def _stamp_if_saved(f, index=old_index):
-            try:
-                if not f.cancelled() and f.result():
-                    self._stamp_slot_cache_model(index)
-            except Exception:
-                pass
-
-        future.add_done_callback(_stamp_if_saved)
-
-    def _slot_defer_restore(self, index):
-        """mark this chat for a slot restore the first time a user sends a
-        message in it. the restore itself is queued (non-blocking) at that moment"""
-        if index is None or index >= len(self.data):
-            self._slot_restore_pending = None
-            return
-
-        self._slot_restore_pending = self.data[index].get("id")
-
-    def maybe_restore_slot_cache(self):
-        """queue the deferred slot restore for the current chat (once, on the
-        first user message in it). strictly non-blocking: the op joins the
-        API's FIFO slot queue ahead of the completion request that follows,
-        so the first message can still benefit from the restored KV"""
-        if self._slot_restore_pending is None:
-            return
-
-        chat_id = self._slot_restore_pending
-        self._slot_restore_pending = None
-
-        # the user switched away again before sending - drop the restore
-        if self.current is None or self.current >= len(self.data) or self.data[self.current].get("id") != chat_id:
-            return
-
-        # only restore if the cache was saved under the model currently being
-        # served - a cache from a different model would load the wrong KV state
-        if self._slot_cache_valid_for_model(self.current):
-            try:
-                self.channel.manager.API.restore_chat_cache(chat_id)
-            except Exception as e:
-                self.channel.log_error("failed to queue chat slot restore", e)
-        else:
-            # stale cache from a previous model - drop the local file if we
-            # know where it lives, so it doesn't linger on disk forever
-            try:
-                self.channel.manager.API.remove_slot_cache_file(chat_id)
-            except Exception:
-                pass
-
-    def _stamp_slot_cache_model(self, index):
-        """record which model a chat's slot cache was saved under, so that a later
-        restore can detect that the served model has since changed. only call this
-        once the AI server has confirmed the save"""
-        if index is None or index >= len(self.data):
-            return
-
-        chat = self.data[index]
-        metadata = chat.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-            chat["metadata"] = metadata
-
-        metadata["slot_cache_model"] = core.config.get("model", "name")
-        self.data.save()
-
-    def _slot_cache_valid_for_model(self, index):
-        """returns True if the chat's slot cache (if it exists) was saved under the
-        model currently being served. llama.cpp's save files carry no model identity
-        of their own, so restoring a cache made with a different model would silently
-        load that model's KV state into the current one"""
-        if index is None or index >= len(self.data):
-            return False
-
-        chat = self.data[index]
-        metadata = chat.get("metadata")
-        fingerprint = metadata.get("slot_cache_model") if isinstance(metadata, dict) else None
-
-        # never stamped (eg. saved before this check existed) - don't trust it
-        if not fingerprint:
-            return False
-
-        return fingerprint == core.config.get("model", "name")
 
     def get_loaded_modules(self):
         """return the list of modules whose tools must be persisted in this chat"""
@@ -331,13 +214,6 @@ class Chat:
         if metadata is None:
             metadata = {}
 
-        # grab the outgoing chat's id + dirty state before it gets replaced
-        old_index = None
-        old_chat_id = None
-        if self.current is not None and self.current < len(self.data):
-            old_index = self.current
-            old_chat_id = self.data[old_index].get("id")
-
         new_id = str(ulid.ULID())[-8:] # so it turns out truncating the ULID from the front can lead to identical id's.. yikes
         self.data.append({
             "id":  new_id,
@@ -352,13 +228,6 @@ class Chat:
 
         index = len(self.data) - 1
         await self._set_current(index)
-
-        # slot cache, fire and forget: save the outgoing chat's KV only if its
-        # history changed since the last save, and defer the new chat's restore
-        # until its first user message. all slot ops run strictly FIFO in the
-        # API worker, so the switch itself never blocks on the AI server
-        self._slot_save_outgoing(old_index, old_chat_id)
-        self._slot_defer_restore(index)
 
         # initialize token usage count using estimated count from the context class
         await self.set("token_usage", await self.channel.context.get_total_tokens())
@@ -381,17 +250,6 @@ class Chat:
 
         await self.messages.clear()
 
-        # this chat's slot cache (and saved KV file) is now stale - wipe it
-        # (fire and forget). the slot may hold another chat's KV right now;
-        # erasing is safe because any chat's unsaved state is always saved
-        # when switching away from it, so nothing unrecoverable is discarded
-        try:
-            self.channel.manager.API.erase_chat_cache(self.data[self.current].get("id"))
-        except Exception as e:
-            self.channel.log_error("failed to erase chat slot cache", e)
-        self._slot_restore_pending = None
-        self._slot_dirty = False
-
         # Reset token_usage since we're clearing the chat
         # API token usage is only valid for the exact context that was sent
         await self.set("token_usage", 0)
@@ -410,8 +268,6 @@ class Chat:
         if index is None:
             return False
 
-        slot_chat_id = self.data[index].get("id")
-
         # remove the chat history file
         messages_path = core.get_data_path(os.path.join(
             "chats",
@@ -428,30 +284,17 @@ class Chat:
         self.data.pop(index)
         self.data.save()
 
-        # erase this chat's slot cache on the AI server (also removes the
-        # local cache file if api.slot_save_path is set)
-        try:
-            self.channel.manager.API.erase_chat_cache(slot_chat_id)
-        except Exception as e:
-            self.channel.log_error("failed to erase chat slot cache", e)
-
         # Adjust current index if needed
         if self.current is not None:
             if self.current == index:
                 if self.data:
-                    # that means we've deleted the current chat. its slot KV
-                    # was erased above (fire and forget), and whatever dirty
-                    # state it had is gone with it. defer the new current
-                    # chat's restore to its first user message
+                    # that means we've deleted the current chat
                     await self._set_current(min(index, len(self.data) - 1))
-                    self._slot_dirty = False
-                    self._slot_defer_restore(self.current)
                 else:
                     # we've ended up with blank data.. so autocreate a new one!
                     await self.autoload()
             elif self.current > index:
-                # Current was after deleted item, shift down. same chat is still
-                # current (only its index moved), so no slot actions involved
+                # Current was after deleted item, shift down
                 await self._set_current(self.current-1)
 
         # start a prompt warmup using this chat's data
@@ -493,22 +336,7 @@ class Chat:
             # silently allow it
             return False
 
-        # grab the outgoing chat's id + dirty state before switching
-        old_index = None
-        old_chat_id = None
-        if self.current is not None and self.current < len(self.data):
-            old_index = self.current
-            old_chat_id = self.data[old_index].get("id")
-
         await self._set_current(index)
-
-        # slot cache, fire and forget: save the outgoing chat's KV only if its
-        # history changed since the last save, and defer this chat's restore
-        # until its first user message. slot ops run strictly FIFO in the API
-        # worker, so a later restore can never land on the server before this
-        # save - and the switch itself never blocks on the server
-        self._slot_save_outgoing(old_index, old_chat_id)
-        self._slot_defer_restore(index)
 
         # start a prompt warmup using this chat's data
         # try:
