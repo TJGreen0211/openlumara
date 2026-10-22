@@ -112,6 +112,32 @@ class CreateZipTest(unittest.TestCase):
         self.assertNotIn("session_secret", names)
         self.assertIn("chats/session_secret", names)
 
+    def test_skips_coder_sandboxes(self):
+        # data/coder (global) and data/<username>/coder hold coder sandboxes
+        for path in (("coder", "coder", "index.html"), ("alice", "coder", "coder", "index.html"),
+                     ("alice", "chats", "coder", "keep.txt"), ("alice", "config.json")):
+            full = os.path.join(self.data, *path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as f:
+                f.write("x")
+
+        zip_path = os.path.join(self.backup, "openlumara_backup_x.zip")
+        self.module._create_zip(self.data, zip_path)
+        with zipfile.ZipFile(zip_path) as z:
+            names = [n.replace("\\", "/") for n in z.namelist()]
+        self.assertNotIn("coder/coder/index.html", names)
+        self.assertNotIn("alice/coder/coder/index.html", names)
+        self.assertIn("alice/config.json", names)
+        # deeper folders that happen to be called coder are kept
+        self.assertIn("alice/chats/coder/keep.txt", names)
+
+        # a per-user backup zips data/<username>, where coder is at the top
+        user_zip = os.path.join(self.backup, "openlumara_backup_y.zip")
+        self.module._create_zip(os.path.join(self.data, "alice"), user_zip, has_user_folders=False)
+        with zipfile.ZipFile(user_zip) as z:
+            names = [n.replace("\\", "/") for n in z.namelist()]
+        self.assertEqual(sorted(names), ["chats/coder/keep.txt", "config.json"])
+
     def test_skips_nested_backup_dir(self):
         # backup dir inside the data folder must not be zipped into the backup
         nested = os.path.join(self.data, "backups")

@@ -33,12 +33,12 @@ class Coder(core.module.Module):
 
         # paths
         "sandbox_paths": {
-            "default": ["~/coder"],
-            "description": "Paths to folders you want the coder to have access to. You can use the `~` character to refer to your home folder, such as `/home/you` on linux, /Users/You on mac, `C:\\Users\\You` on windows"
+            "default": ["coder"],
+            "description": "Folders you want the coder to have access to. A plain name (like `coder`) is a sandbox inside the data folder (`data/coder/<name>`, or `data/<username>/coder/<name>` per user). You can also give a full path to any folder on disk, and use the `~` character to refer to your home folder, such as `/home/you` on linux, /Users/You on mac, `C:\\Users\\You` on windows"
         },
         "per_user_sandboxes": {
             "default": True,
-            "description": "In multi-user WebUI mode, gives every user their own private folder inside each sandbox (`<sandbox>/users/<username>`), so users can't see or change each other's files and sites. Has no effect in single-user mode."
+            "description": "In multi-user WebUI mode, gives every user their own private sandboxes (in their own data folder, or `<sandbox>/users/<username>` for sandboxes given as a full path), so users can't see or change each other's files and sites. Has no effect in single-user mode."
         },
         "max_media_size_mb": {
             "default": 15,
@@ -99,6 +99,12 @@ class Coder(core.module.Module):
     regex_timeout = 3
     builtin_templates_path = "modules/coder/templates"
 
+    # sandboxes given as a relative path live in this folder inside the (per-user) data folder,
+    # eg. data/<username>/coder/<sandbox>, so they're deleted along with the user's account
+    data_folder = "coder"
+    # the old default sandbox location. it's moved into the data folder on first use
+    legacy_sandbox_path = "~/coder"
+
     # every site keeps the user's images/videos in this folder, next to its entry html file
     media_folder = "media"
     # sniffed mime type -> file extension. anything else is refused, so a "photo"
@@ -122,6 +128,8 @@ class Coder(core.module.Module):
     # -------------
     async def on_ready(self):
         self.disabled_tools = []
+
+        self._migrate_legacy_config()
 
         # enable/disable tools based on selected modes
         if self.config.get("read-only"):
@@ -223,7 +231,7 @@ class Coder(core.module.Module):
 
         # create them if they dont exist
         for path in paths:
-            os.makedirs(os.path.expanduser(path).rstrip("/\\"), exist_ok=True)
+            self._resolve_sandbox_root(path)
 
         paths = [path.rstrip("/\\") for path in paths]
         return [os.path.basename(path) for path in paths]
@@ -236,9 +244,95 @@ class Coder(core.module.Module):
 
         for path in paths:
             if os.path.basename(path.rstrip("/\\")) == requested_path.rstrip("/\\"):
-                return self._user_scoped_path(os.path.expanduser(path).rstrip("/\\"))
+                return self._resolve_sandbox_root(path)
 
         raise Exception("That sandbox does not exist")
+
+    def _resolve_sandbox_root(self, path: str):
+        """
+        turns a configured sandbox path into the folder the current user works in.
+        full paths are used as-is (scoped per user), plain names live in the
+        data folder: data/coder/<name>, or data/<username>/coder/<name> per user
+        """
+        path = self._replace_legacy_path(path)
+        path = os.path.expanduser(path).rstrip("/\\")
+        if os.path.isabs(path):
+            return self._user_scoped_path(path)
+
+        user = core.current_user.get() if self.config.get("per_user_sandboxes") else None
+        # user="" forces the global data folder even while a user is active
+        root = core.get_data_path(os.path.join(self.data_folder, path), user=user or "")
+        self._migrate_legacy_sandbox(path, user, root)
+        os.makedirs(root, exist_ok=True)
+        return root
+
+    def _replace_legacy_path(self, path: str):
+        """the old ~/coder default is the data folder sandbox of the same name now"""
+        if path.rstrip("/\\") == self.legacy_sandbox_path:
+            return os.path.basename(self.legacy_sandbox_path)
+        return path
+
+    def _migrate_legacy_config(self):
+        """
+        swaps the old ~/coder default for the data folder sandbox in the global config
+        and in every user's config.json (which can override module settings).
+        paths are also swapped as they're resolved, this keeps the settings ui honest
+        """
+        paths = self.config.get("sandbox_paths") or []
+        if any(self._replace_legacy_path(path) != path for path in paths):
+            self.config.set("sandbox_paths", [self._replace_legacy_path(path) for path in paths])
+
+        data_root = core.get_data_path(user="")
+        for username in os.listdir(data_root):
+            if not os.path.isfile(os.path.join(data_root, username, "config.json")):
+                continue
+            user_config = core.config.load_user_config(username)
+            settings = user_config.get("modules", {}).get("settings", {}).get(self.name, {})
+            paths = settings.get("sandbox_paths")
+            if isinstance(paths, list) and any(self._replace_legacy_path(path) != path for path in paths):
+                settings["sandbox_paths"] = [self._replace_legacy_path(path) for path in paths]
+                core.config.save_user_config(username, user_config)
+
+    def _migrate_legacy_sandbox(self, name: str, user: str, root: str):
+        """
+        moves files left in the old ~/coder sandbox into its data folder location.
+        each user's ~/coder/users/<username> folder moves on their first use, and the
+        top-level files (single-user mode) move into the global data folder.
+        anything that already exists at the new location is left where it is
+        """
+        if not hasattr(self, "_migrated_sandboxes"):
+            self._migrated_sandboxes = set()
+        if name != os.path.basename(self.legacy_sandbox_path) or (name, user) in self._migrated_sandboxes:
+            return
+        self._migrated_sandboxes.add((name, user))
+
+        legacy_root = os.path.expanduser(self.legacy_sandbox_path)
+        legacy_users = os.path.join(legacy_root, "users")
+        source = core.sandbox_path(legacy_users, user) if user else legacy_root
+        if not os.path.isdir(source):
+            return
+
+        os.makedirs(root, exist_ok=True)
+        for entry in os.listdir(source):
+            # other users' folders, they're migrated on their own first use
+            if not user and entry == "users":
+                continue
+
+            target = os.path.join(root, entry)
+            if os.path.exists(target):
+                core.log("coder", f"Not migrating {os.path.join(source, entry)}: {target} already exists")
+                continue
+            try:
+                shutil.move(os.path.join(source, entry), target)
+            except OSError as e:
+                core.log("coder", f"Could not migrate {os.path.join(source, entry)} to {target}: {e}")
+
+        # tidy up the legacy folders once they're empty
+        for folder in (source, legacy_users, legacy_root):
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass
 
     def _user_scoped_path(self, sandbox_root: str):
         """

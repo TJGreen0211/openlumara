@@ -14,6 +14,9 @@ class AutoBackup(core.module.Module):
     # so anyone holding one could forge admin sessions. restoring a backup
     # without it just regenerates the key (logs everyone out)
     EXCLUDED_FILES = {"session_secret"}
+    # folders skipped in the data root and in each user's folder. coder holds the
+    # coder module's sandboxes (code, sites and their media), which can get big
+    EXCLUDED_DIRS = {"coder"}
 
     # -------------------------
     #   CONFIGURATION
@@ -157,7 +160,7 @@ class AutoBackup(core.module.Module):
             # zip creation walks + compresses the whole data folder, which can
             # take a while on big installs: run it in a worker thread so the
             # event loop keeps serving chats
-            file_size = await asyncio.to_thread(self._create_zip, data_folder, zip_path)
+            file_size = await asyncio.to_thread(self._create_zip, data_folder, zip_path, not username)
 
             # rotation: drop the oldest backups beyond keep_backups
             await asyncio.to_thread(self._prune_backups)
@@ -187,13 +190,15 @@ class AutoBackup(core.module.Module):
             if enable_notifications and self.channel:
                 await self.channel.push(f"⚠️ Data Backup Failed\n{error_msg}")
 
-    def _create_zip(self, data_folder, zip_path):
+    def _create_zip(self, data_folder, zip_path, has_user_folders=True):
         """build the backup zip (synchronous, runs in a worker thread).
 
         writes to a .tmp sibling and renames at the end so a crash mid-zip
         never leaves a partial archive for rotation or status to pick up.
         skips backup_path when it lives inside data_folder to avoid
-        recursive bloat. returns the final zip size in bytes.
+        recursive bloat. EXCLUDED_DIRS are skipped at the top of data_folder,
+        and one level down too when it holds user folders (the global data
+        folder). returns the final zip size in bytes.
         """
         tmp_path = zip_path + ".tmp"
         backup_real = os.path.realpath(self.backup_path)
@@ -203,6 +208,10 @@ class AutoBackup(core.module.Module):
                     real_root = os.path.realpath(root)
                     if real_root == backup_real or real_root.startswith(backup_real + os.sep):
                         continue
+                    # data/<dir>, and data/<username>/<dir> in the global data folder
+                    rel_root = os.path.relpath(root, data_folder)
+                    if rel_root == "." or (has_user_folders and os.sep not in rel_root):
+                        dirs[:] = [d for d in dirs if d not in self.EXCLUDED_DIRS]
                     for file in files:
                         file_path = os.path.join(root, file)
                         arcname = os.path.relpath(file_path, data_folder)

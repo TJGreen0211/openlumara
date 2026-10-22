@@ -12,6 +12,7 @@ Run:  venv\\Scripts\\python tests\\test_site_media.py
 """
 import contextvars
 import importlib.util
+import json
 import os
 import shutil
 import sys
@@ -64,6 +65,38 @@ _core_mod.log = lambda category, msg: None
 _core_mod.detail_error = lambda e: str(e)
 _core_mod.get_path = lambda p: os.path.abspath(p)
 _core_mod.current_user = contextvars.ContextVar("current_user", default=None)
+_core_mod.data_root = tempfile.gettempdir()   # pointed at a temp dir by the data-folder tests
+
+
+def _get_data_path(subpath=None, user=None):
+    """mirrors core.get_data_path(): user=None reads the context, "" forces the global folder"""
+    if user is None:
+        user = _core_mod.current_user.get()
+    path = os.path.join(_core_mod.data_root, user) if user else _core_mod.data_root
+    os.makedirs(path, exist_ok=True)
+    return _core_mod.sandbox_path(path, subpath) if subpath else path
+
+
+_core_mod.get_data_path = _get_data_path
+
+
+def _load_user_config(username):
+    path = _get_data_path("config.json", user=username)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_user_config(username, config_dict):
+    with open(_get_data_path("config.json", user=username), "w", encoding="utf-8") as f:
+        json.dump(config_dict, f)
+
+
+_config_mod = types.ModuleType("core.config")
+_config_mod.load_user_config = _load_user_config
+_config_mod.save_user_config = _save_user_config
+_core_mod.config = _config_mod
 sys.modules["core"] = _core_mod
 
 _spec = importlib.util.spec_from_file_location(
@@ -149,6 +182,128 @@ class PerUserSandboxTest(_TmpSandbox):
         self._as("alice")
         await self.coder.file_create(self.sb, "index.html", "<p>hi</p>")
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "index.html")))
+
+
+class DataFolderSandboxTest(unittest.IsolatedAsyncioTestCase):
+    """sandboxes given as a plain name live in the (per-user) data folder"""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="openlumara_datasandbox_test_")
+        self.data = os.path.join(self.tmp, "data")
+        self.legacy = os.path.join(self.tmp, "home", "coder")
+        self._old_root = _core_mod.data_root
+        _core_mod.data_root = self.data
+        self.coder = _make_coder(self.tmp, sandbox_paths=["coder"])
+        self.coder.legacy_sandbox_path = self.legacy
+
+    def tearDown(self):
+        _core_mod.data_root = self._old_root
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _as(self, user):
+        token = _core_mod.current_user.set(user)
+        self.addCleanup(_core_mod.current_user.reset, token)
+
+    def _write(self, path, text="x"):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    async def test_per_user_folders_in_the_data_folder(self):
+        self._as("alice")
+        res = await self.coder.file_create("coder", "site/index.html", "<p>alice</p>")
+        self.assertTrue(res["success"], res)
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "alice", "coder", "coder", "site", "index.html")))
+
+        self._as("bob")
+        res = await self.coder.file_read("coder", "site/index.html")
+        self.assertFalse(res.get("success"), "bob must not see alice's file")
+        with self.assertRaises(Exception):
+            await self.coder._get_sandbox_subpath("coder", "../../../alice/coder/coder/site/index.html")
+
+    async def test_single_user_and_shared_mode_use_the_global_data_folder(self):
+        await self.coder.file_create("coder", "a.html", "<p>a</p>")
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "coder", "coder", "a.html")))
+
+        self.coder.config.set("per_user_sandboxes", False)
+        self._as("alice")
+        await self.coder.file_create("coder", "b.html", "<p>b</p>")
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "coder", "coder", "b.html")))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "alice", "coder")))
+
+    async def test_migrates_each_users_legacy_folder_on_first_use(self):
+        self._write(os.path.join(self.legacy, "users", "alice", "site", "index.html"), "alice")
+        self._write(os.path.join(self.legacy, "users", "bob", "index.html"), "bob")
+
+        self._as("alice")
+        await self.coder._get_full_sandbox_path("coder")
+        self.assertEqual(_read(os.path.join(self.data, "alice", "coder", "coder", "site", "index.html")), "alice")
+        self.assertFalse(os.path.exists(os.path.join(self.legacy, "users", "alice")))
+        # bob's files wait for bob
+        self.assertTrue(os.path.isfile(os.path.join(self.legacy, "users", "bob", "index.html")))
+
+        self._as("bob")
+        await self.coder._get_full_sandbox_path("coder")
+        self.assertEqual(_read(os.path.join(self.data, "bob", "coder", "coder", "index.html")), "bob")
+        # the emptied legacy folders are removed
+        self.assertFalse(os.path.exists(self.legacy))
+
+    async def test_migrates_single_user_files_but_not_other_users(self):
+        self._write(os.path.join(self.legacy, "index.html"), "root")
+        self._write(os.path.join(self.legacy, "users", "alice", "index.html"), "alice")
+
+        await self.coder._get_full_sandbox_path("coder")
+        self.assertEqual(_read(os.path.join(self.data, "coder", "coder", "index.html")), "root")
+        self.assertFalse(os.path.exists(os.path.join(self.data, "coder", "coder", "users")))
+        self.assertTrue(os.path.isfile(os.path.join(self.legacy, "users", "alice", "index.html")))
+
+    async def test_migration_never_overwrites(self):
+        self._write(os.path.join(self.legacy, "users", "alice", "index.html"), "old")
+        self._write(os.path.join(self.legacy, "users", "alice", "other.html"), "other")
+        self._write(os.path.join(self.data, "alice", "coder", "coder", "index.html"), "new")
+
+        self._as("alice")
+        await self.coder._get_full_sandbox_path("coder")
+        root = os.path.join(self.data, "alice", "coder", "coder")
+        self.assertEqual(_read(os.path.join(root, "index.html")), "new")
+        self.assertEqual(_read(os.path.join(root, "other.html")), "other")
+        self.assertEqual(_read(os.path.join(self.legacy, "users", "alice", "index.html")), "old")
+
+    async def test_absolute_sandboxes_are_not_migrated(self):
+        self._write(os.path.join(self.legacy, "users", "alice", "index.html"), "alice")
+        elsewhere = os.path.join(self.tmp, "projects", "coder")
+        self.coder.config.set("sandbox_paths", [elsewhere])
+
+        self._as("alice")
+        root = await self.coder._get_full_sandbox_path("coder")
+        self.assertEqual(root, os.path.join(elsewhere, "users", "alice"))
+        self.assertTrue(os.path.isfile(os.path.join(self.legacy, "users", "alice", "index.html")))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "alice", "coder")))
+
+    async def test_on_ready_replaces_the_old_default_path(self):
+        self.coder.name = "coder"
+        self.coder.legacy_sandbox_path = "~/coder"
+        self.coder.config.set("sandbox_paths", ["~/coder/", "/srv/projects"])
+        # a user's config.json can override module settings
+        _save_user_config("alice", {"api": {"url": "x"},
+                                    "modules": {"settings": {"coder": {"sandbox_paths": ["~/coder"]}}}})
+        _save_user_config("bob", {"api": {"url": "y"}})
+
+        await self.coder.on_ready()
+        self.assertEqual(self.coder.config.get("sandbox_paths"), ["coder", "/srv/projects"])
+        self.assertEqual(_load_user_config("alice"),
+                         {"api": {"url": "x"}, "modules": {"settings": {"coder": {"sandbox_paths": ["coder"]}}}})
+        self.assertEqual(_load_user_config("bob"), {"api": {"url": "y"}})
+
+    async def test_old_default_path_resolves_to_the_data_folder(self):
+        # eg. a per-user override that still says ~/coder: it's migrated, not used as-is
+        self._write(os.path.join(self.legacy, "users", "alice", "index.html"), "alice")
+        self.coder.legacy_sandbox_path = self.legacy
+        self.coder.config.set("sandbox_paths", [self.legacy])
+
+        self._as("alice")
+        root = await self.coder._get_full_sandbox_path("coder")
+        self.assertEqual(root, os.path.join(self.data, "alice", "coder", "coder"))
+        self.assertEqual(_read(os.path.join(root, "index.html")), "alice")
 
 
 class SiteMediaTest(_TmpSandbox):
