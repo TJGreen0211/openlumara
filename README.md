@@ -124,7 +124,6 @@ When login is enabled:
 - Each user can have their own API/model settings and per-module settings, saved to their per-user config. The API connection itself is shared instance-wide.
 - Admins manage global settings (channel/module toggles, core settings, restart/reconnect, logs and user management). Regular users only see and save their own settings.
 - Non-webui channels (cli, telegram, & co.) keep using the shared `data/` root - "users" is a webui concept.
-- If you use llama.cpp slot caching (`api.slot_cache`) with concurrent users, give each user a distinct `api.slot_id` and start the server with enough parallel slots (`-np`), or they will share a slot.
 
 ## ⛔⛔⛔ THIS IS A LOBSTER-FREE ZONE ⛔⛔⛔
 OpenLumara does not have an associated emoji. You can add it to it's identity if you want, but it doesn't force it on you. Also, cats have claws too, where is the love for the cats?
