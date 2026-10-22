@@ -706,7 +706,11 @@ class Memory(core.module.Module):
                 "memory_remember when the user explicitly asks you to remember something, memory_forget when they "
                 "ask you to forget something, and memory_search to look up something about them that you can't see."
             )
-        return "\n\n".join(sections) or None
+        sections.append(
+            "Only claim to remember things about the user that are in your memories or in this conversation. "
+            "Never invent past conversations or details the user hasn't told you."
+        )
+        return "\n\n".join(sections)
 
     async def _core_memories_of_current_user(self):
         return await self._core_memories(self._store())

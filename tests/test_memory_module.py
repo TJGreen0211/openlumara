@@ -782,7 +782,9 @@ class SystemPromptTests(ModuleTestCase):
         self.assertIn("memory_remember", await self.mod.on_system_prompt())
         MODEL_CONFIG["use_tools"] = False
         try:
-            self.assertIsNone(await self.mod.on_system_prompt())  # no memories, no tools: nothing to say
+            prompt = await self.mod.on_system_prompt()
+            self.assertNotIn("memory_remember", prompt)
+            self.assertIn("Never invent past conversations", prompt)  # always there, even with no memories
         finally:
             MODEL_CONFIG["use_tools"] = True
 
