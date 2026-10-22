@@ -1,5 +1,7 @@
 import core
 import inspect
+import types
+import typing
 import regex as re
 
 META_TOOL_NAMES = {"tools_load"}
@@ -9,6 +11,32 @@ _ARG_SECTION = "Args:"
 _END_SECTIONS = ("Returns:", "Raises:", "Note:", "Example:")
 _ALL_SECTIONS = (_ARG_SECTION,) + _END_SECTIONS
 _PARAM_RE = re.compile(r"(\w+)(?:\s*\([^)]*\))?\s*:\s*(.+)")
+
+
+def _schema_for_annotation(annotation):
+    """JSON schema for a tool parameter annotation.
+
+    Arrays and objects need explicit `items` / `additionalProperties`: tools are sent with
+    strict=True, and strict structured-output backends (e.g. vLLM/xgrammar) treat a missing
+    `items` as "no items allowed", so the model can only ever produce [] or {}.
+    """
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+
+    # Optional[X] / X | None -> X
+    if origin in (typing.Union, types.UnionType):
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            return _schema_for_annotation(non_none[0])
+        return {"type": "string"}
+
+    if annotation is list or origin is list:
+        item = _schema_for_annotation(args[0]) if args else {"type": "string"}
+        return {"type": "array", "items": item}
+    if annotation is dict or origin is dict:
+        return {"type": "object", "additionalProperties": True}
+
+    return {"type": _TYPE_MAP.get(annotation, "string")}
 
 
 class ToolLoader:
@@ -78,7 +106,7 @@ class ToolLoader:
         properties = {}
         required = []
         for name, param in inspect.signature(func).parameters.items():
-            prop = {"type": _TYPE_MAP.get(param.annotation, "string")}
+            prop = _schema_for_annotation(param.annotation)
             desc = param_descriptions.get(name)
             if desc:
                 prop["description"] = desc

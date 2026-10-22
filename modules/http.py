@@ -15,7 +15,6 @@ import ipaddress
 import base64
 import html as html_module
 import threading
-from datetime import datetime
 from urllib.parse import urlparse, unquote
 import urllib.request
 from collections import Counter
@@ -307,16 +306,19 @@ class ContentSanitizer:
     ]
 
     @classmethod
-    def sanitize(cls, content: str, mode: str = "neutralize", 
-                 detect_injection: bool = True) -> str:
+    def sanitize(cls, content: str, mode: str = "neutralize",
+                 detect_injection: bool = True, preserve_layout: bool = False) -> str:
         """
         Multi-layer content sanitization for prompt injection defense.
-        
+
         Args:
             content: The content to sanitize
             mode: "neutralize" (replace with [REDACTED PROMPT INJECTION ATTEMPT]) or "remove" (strip entirely)
             detect_injection: Whether to run injection detection
-        
+            preserve_layout: For text already extracted from markup (e.g. markdown). Keeps
+                indentation and paragraph breaks, and skips the HTML-markup layer, which
+                would otherwise mangle prose/code such as `done = "x"`.
+
         Returns:
             Sanitized content safe for inclusion in prompts
         """
@@ -345,8 +347,9 @@ class ContentSanitizer:
         content = cls.BASE64_PATTERN.sub('[BASE64_ENCODED_DATA]', content)
         
         # Layer 7: Remove HTML injection vectors
-        content = cls._sanitize_html_injection(content)
-        
+        if not preserve_layout:
+            content = cls._sanitize_html_injection(content)
+
         # Layer 8: Apply injection pattern filters
         content = cls._apply_injection_filters(content, mode)
         
@@ -357,8 +360,12 @@ class ContentSanitizer:
         content = cls._apply_paragraph_filter(content)
         
         # Layer 9: Normalize whitespace (clean up gaps from stripped content)
-        content = re.sub(r'[\r\n]+', '\n', content)
-        content = re.sub(r'[ \t]+', ' ', content)
+        if preserve_layout:
+            content = re.sub(r'\r\n?', '\n', content)
+            content = re.sub(r'[ \t]+(?=\n)', '', content)
+        else:
+            content = re.sub(r'[\r\n]+', '\n', content)
+            content = re.sub(r'[ \t]+', ' ', content)
         
         # Layer 10: Post-sanitization validation
         content = cls._post_validate(content)
@@ -504,7 +511,8 @@ class ContentSanitizer:
             imperatives += len(re.findall(pattern, content, re.IGNORECASE))
         
         words = content.split()
-        if len(words) > 0 and imperatives / len(words) > 0.15:
+        # short strings (titles, link texts) trivially exceed the ratio, e.g. "asyncio.run()"
+        if len(words) >= 20 and imperatives / len(words) > 0.15:
             # Content has excessive imperative density - filter it heavily
             # Remove all imperative patterns
             for pattern in imperative_verbs:
@@ -787,8 +795,17 @@ class Http(core.module.Module):
         "domain_blacklist": {
             "default": [],
             "description": "Forbid access to these domains"
+        },
+        "censor_public_ip": {
+            "default": True,
+            "description": "Look up this machine's public IP address once at startup (via api.ipify.org) and censor it from fetched content"
         }
     }
+
+    # public IP lookup is shared by every Http-based module and runs at most once per process
+    PUBLIC_IP_TIMEOUT = 5
+    _public_ips = ()
+    _public_ip_task = None
 
     async def on_ready(self):
         self.default_headers = {
@@ -800,13 +817,22 @@ class Http(core.module.Module):
         self._last_request_time = 0
         self._lock = threading.Lock()
 
-        # fetch & cache our public IP so we can censor it
-        try:
-            self.server_ipv4 = urllib.request.urlopen("https://api.ipify.org").read().decode()
-            self.server_ipv6 = urllib.request.urlopen("https://api64.ipify.org").read().decode()
-        except:
-            self.server_ipv4 = None
-            self.server_ipv6 = None
+        # fetch & cache our public IP in the background so we can censor it without blocking startup
+        if self.config.get("censor_public_ip") and Http._public_ip_task is None:
+            Http._public_ip_task = asyncio.create_task(asyncio.to_thread(Http._lookup_public_ips))
+
+    @staticmethod
+    def _lookup_public_ips():
+        def fetch(url):
+            try:
+                with urllib.request.urlopen(url, timeout=Http.PUBLIC_IP_TIMEOUT) as resp:
+                    return resp.read().decode().strip() or None
+            except Exception:
+                return None
+
+        Http._public_ips = tuple(
+            ip for ip in (fetch("https://api.ipify.org"), fetch("https://api64.ipify.org")) if ip
+        )
 
     # ==================== Untrusted-content wrapper ====================
     # Based on Digital Applied's 12-layer framework: untrusted fencing + provenance
@@ -816,7 +842,7 @@ class Http(core.module.Module):
         """Generate a cryptographically random delimiter that cannot be predicted."""
         return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
 
-    def _wrap_untrusted(self, content, source: str = "external_web") -> dict:
+    def _wrap_untrusted(self, content, source: str = "external_web", sanitize: bool = True) -> dict:
         """
         Wrap external content with multi-layer sanitization and strong boundaries.
         
@@ -827,26 +853,23 @@ class Http(core.module.Module):
         
         Content is labeled with provenance metadata so downstream layers
         can distinguish trusted vs untrusted content.
+
+        Pass sanitize=False when the caller has already sanitized the content,
+        so it isn't run through the sanitizer a second time.
         """
         delim = self._generate_delimiter()
 
         # Run injection detection BEFORE sanitization (for audit/logging)
         if isinstance(content, str):
-            detection = ContentSanitizer.sanitize_with_detection(content)
-            detected_patterns = detection['detection_result']['patterns_found']
-            risk_level = detection['risk_level']
-            
-            if detected_patterns:
-                self._log(f"Injection patterns detected: {detected_patterns} (risk: {risk_level})")
-            
-            sanitized_content = detection['sanitized_content']
-        else:
-            sanitized_content = content
-            detected_patterns = []
-            risk_level = 'low'
+            detection = PromptInjectionDetector.detect_injection(content)
+            if detection['patterns_found']:
+                self._log(
+                    f"Injection patterns detected: {detection['patterns_found']} "
+                    f"(risk: {detection['risk_level']})"
+                )
 
         # Use the new centralized structured sanitizer
-        sanitized_content = ContentSanitizer.sanitize_structured_data(content)
+        sanitized_content = ContentSanitizer.sanitize_structured_data(content) if sanitize else content
 
         return {
             "security_notice": self.INJECTION_NOTICE,
@@ -946,15 +969,47 @@ class Http(core.module.Module):
 
     def _censor_ip(self, text: str) -> str:
         """Replaces IPv4 and IPv6 addresses with [CENSORED_IP]."""
-        if not isinstance(text, str):
+        if not isinstance(text, str) or not self.config.get("censor_public_ip"):
             return text
-        if self.server_ipv4 is not None:
-            text = text.replace(self.server_ipv4, "[CENSORED_IP]")
-        if self.server_ipv6 is not None:
-            text = text.replace(self.server_ipv6, "[CENSORED_IP]")
+        for ip in Http._public_ips:
+            text = text.replace(ip, "[CENSORED_IP]")
         return text
 
     # ==================== SSRF Protection ====================
+
+    def _url_passes_policy(self, url: str) -> bool:
+        """
+        Lightweight check for *displaying* a link (search results, page links).
+
+        This intentionally does NOT perform DNS resolution or IP validation:
+        we are only listing these URLs, not connecting to them. The full
+        SSRF protection in _is_safe_url() (DNS + resolved-IP checks)
+        applies later, when one of these links is actually fetched.
+        """
+        if not url:
+            return False
+        try:
+            parsed = urlparse(url)
+            port = parsed.port
+        except Exception:
+            return False
+
+        if parsed.scheme.lower() not in self.ALLOWED_SCHEMES:
+            return False
+
+        if self.config.get("https_only") and parsed.scheme.lower() != "https":
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        # Block dangerous ports even at display time.
+        if port and port in self.DANGEROUS_PORTS:
+            return False
+
+        ok, _err = self._check_domain_policy(hostname)
+        return ok
 
     def _check_domain_policy(self, hostname: str):
         """
@@ -1194,8 +1249,7 @@ class Http(core.module.Module):
 
     def _log(self, message: str):
         """Log request for audit trail."""
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[HTTP LOG] {timestamp} - {message}")
+        self.log(self.name, message)
 
     # ==================== Request Execution ====================
 
@@ -1231,13 +1285,16 @@ class Http(core.module.Module):
 
         timeout = kwargs.get("timeout", self.REQUEST_TIMEOUT)
         include_content = kwargs.pop("include_content", False)
+        # raw_body: return the undecoded, unsanitized body bytes so the caller can
+        # parse first and sanitize the extracted text itself
+        raw_body = kwargs.pop("raw_body", False)
 
         # Build the kwargs we actually pass to requests; we control redirects,
         # streaming, verification and timeout ourselves.
         passthrough = {
             k: v for k, v in kwargs.items()
             if k not in ("headers", "allow_redirects", "stream",
-                         "verify", "timeout", "include_content")
+                         "verify", "timeout", "include_content", "raw_body")
         }
 
         def _execute():
@@ -1267,7 +1324,7 @@ class Http(core.module.Module):
                         current_url = requests.compat.urljoin(current_url, location)
                         continue
 
-                    return self._build_response(resp, include_content)
+                    return self._build_response(resp, include_content, raw_body)
 
                 self._log(f"Too many redirects starting from {url}")
                 return self.result(f"Too many redirects (maximum: {self.MAX_REDIRECTS})", False)
@@ -1303,36 +1360,50 @@ class Http(core.module.Module):
         # For now, we assume safe.
         return True
 
-    def _build_response(self, resp, include_content: bool):
+    def _read_body(self, resp, response: dict) -> bytearray:
+        """Stream the response body with a hard byte cap (does not trust Content-Length)."""
+        body = bytearray()
+        try:
+            for chunk in resp.iter_content(self.DOWNLOAD_CHUNK):
+                if not chunk:
+                    continue
+                body.extend(chunk)
+                if len(body) > self.MAX_CONTENT_SIZE:
+                    response["content_truncated"] = True
+                    break
+        except Exception as e:
+            response["content_error"] = str(e)
+        finally:
+            resp.close()
+        return body
+
+    def _build_response(self, resp, include_content: bool, raw_body: bool = False):
         """
         Build the response dict with enhanced security wrapping.
-        
+
         Implements OWASP LLM01:2025 content segregation:
         - External content is wrapped with provenance metadata
         - Structural markers (XML-style fences) isolate untrusted content
         - Detection results are included for downstream processing
+
+        With raw_body=True the capped body bytes are returned as "body" without
+        decoding or sanitization; the caller MUST sanitize whatever it extracts.
         """
         response = {
             "status": f"{resp.status_code} {resp.reason}",
+            "status_code": resp.status_code,
             "headers": dict(resp.headers),
             "cookies": dict(resp.cookies),
             "url": resp.url,
         }
 
+        if raw_body:
+            response["body"] = bytes(self._read_body(resp, response)[:self.MAX_CONTENT_SIZE])
+            self._log(f"Request completed: {resp.status_code} - {resp.url} ({len(response['body'])} bytes)")
+            return self.result(response)
+
         if include_content:
-            body = bytearray()
-            try:
-                for chunk in resp.iter_content(self.DOWNLOAD_CHUNK):
-                    if not chunk:
-                        continue
-                    body.extend(chunk)
-                    if len(body) > self.MAX_CONTENT_SIZE:
-                        response["content_truncated"] = True
-                        break
-            except Exception as e:
-                response["content_error"] = str(e)
-            finally:
-                resp.close()
+            body = self._read_body(resp, response)
 
             encoding = resp.encoding or "utf-8"
             raw_content = bytes(body[:self.MAX_CONTENT_SIZE]).decode(

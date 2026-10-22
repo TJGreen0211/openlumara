@@ -2,6 +2,7 @@ import core
 import asyncio
 import re
 from ddgs import DDGS
+from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 import modules.http
 from urllib.parse import urlparse
 
@@ -14,37 +15,19 @@ class WebSearch(modules.http.Http):
     dependencies = ["ddgs"]
 
     settings = {
+        **modules.http.Http.settings,
         # "allow_ai_to_search": {
         #     "default": False,
         #     "description": "Whether to allow the AI to search the web. When this is off, just use the /search command, which will insert the results into chat history so that your AI can read it."
         # },
         "max_results": {
             "default": 5,
-            "description": "The maximum number of results to return for search queries."
+            "min": 1,
+            "description": "The default and maximum number of results returned per search. The AI can ask for fewer, but never more."
         },
         "proxy": {
             "default": None,
             "description": "An optional proxy string (e.g., 'http://user:pass@host:port') for the HTTP client."
-        },
-        "block_uncommon_ports": {
-            "default": True,
-            "description": "Block dangerous ports, such as FTP, SSH, Telnet, SMTP, and so on"
-        },
-        "block_local_network_access": {
-            "default": True,
-            "description": "Block access to anything on your local network"
-        },
-        "https_only": {
-            "default": True,
-            "description": "Allow only secure encrypted HTTPS requests, and disallow HTTP"
-        },
-        "domain_whitelist": {
-            "default": [],
-            "description": "Allow access to only these domains (a domain is the first part of a URL, such as youtube.com in https://youtube.com/watch?v=dQw4w9WgXcQ)"
-        },
-        "domain_blacklist": {
-            "default": [],
-            "description": "Forbid access to these domains"
         }
     }
 
@@ -66,50 +49,51 @@ class WebSearch(modules.http.Http):
         except Exception:
             return "[invalid domain]"
 
-    def _url_passes_policy(self, url: str) -> bool:
-        """
-        Lightweight check for *displaying* a result link.
-
-        This intentionally does NOT perform DNS resolution or IP validation:
-        we are only listing these URLs, not connecting to them. The full
-        SSRF protection in Http._is_safe_url() (DNS + resolved-IP checks)
-        applies later, when WebReader actually fetches one of these links.
-        """
-        if not url:
-            return False
-        try:
-            parsed = urlparse(url)
-        except Exception:
-            return False
-
-        if parsed.scheme.lower() not in self.ALLOWED_SCHEMES:
-            return False
-
-        if self.config.get("https_only") and parsed.scheme.lower() != "https":
-            return False
-
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-
-        # Block dangerous ports even at display time.
-        if parsed.port and parsed.port in self.DANGEROUS_PORTS:
-            return False
-
-        ok, _err = self._check_domain_policy(hostname)
-        return ok
-
     def _clamp_max_results(self, max_results) -> int:
-        """Resolve and clamp the requested result count to a safe range."""
-        requested = max_results or self.config.get("max_results", 5)
+        """Resolve the requested result count; the max_results setting is both the default and the ceiling."""
         try:
-            requested = int(requested)
+            cap = max(1, int(self.config.get("max_results", 5)))
         except (TypeError, ValueError):
-            requested = 5
-        if requested < 1:
-            requested = 1
+            cap = 5
+        try:
+            requested = int(max_results or cap)
+        except (TypeError, ValueError):
+            requested = cap
 
-        return requested
+        return max(1, min(requested, cap))
+
+    def _apply_whitelist_to_query(self, query: str) -> str:
+        """
+        With a domain whitelist, most unrestricted results would be filtered out,
+        so restrict the search itself to the whitelisted sites.
+        """
+        whitelist = [d for d in self.config.get("domain_whitelist", []) if d]
+        if not whitelist or len(whitelist) > 5 or "site:" in query.lower():
+            return query
+        sites = " OR ".join(f"site:{d}" for d in whitelist)
+        return f"{query} ({sites})" if len(whitelist) > 1 else f"{query} {sites}"
+
+    def _describe_search_error(self, kind: str, e: Exception):
+        """Turn a ddgs failure into (message, success) the AI can act on."""
+        message = str(e).lower()
+        if isinstance(e, DDGSException) and "no results found" in message:
+            return (
+                "No results found. Try different or fewer keywords. If this keeps happening, the search "
+                "providers may be rate limiting requests: retry later or try a specific backend."
+            ), True
+        if isinstance(e, TimeoutException) or "timed out" in message or "timeout" in message:
+            return (
+                f"The {kind} search timed out. Retry, or try a specific backend "
+                f"(e.g. 'duckduckgo', 'google', 'yahoo')."
+            ), False
+        if isinstance(e, RatelimitException) or "ratelimit" in message or "429" in message:
+            return (
+                f"The search provider rate limited this {kind} search. Wait before retrying, "
+                f"or try a different backend (e.g. 'duckduckgo', 'google', 'yahoo')."
+            ), False
+        if isinstance(e, DDGSException):
+            return f"The {kind} search failed: {e}", False
+        return f"An unexpected error occurred during {kind} search.", False
 
     async def _search(self, kind: str, query: str, url_key: str, fields: tuple, **kwargs):
         """
@@ -134,8 +118,13 @@ class WebSearch(modules.http.Http):
 
         # Resolve and clamp max_results from kwargs
         max_res = self._clamp_max_results(kwargs.get("max_results"))
-        kwargs["max_results"] = max_res
-        
+        # over-fetch when a domain policy can filter results out, so we still fill max_res
+        has_domain_policy = bool(self.config.get("domain_whitelist") or self.config.get("domain_blacklist"))
+        kwargs["max_results"] = max_res * 2 if has_domain_policy else max_res
+
+        if kind in ("text", "news"):
+            query = self._apply_whitelist_to_query(query)
+
         proxy = self.config.get("proxy")
 
         def _run_search():
@@ -143,19 +132,18 @@ class WebSearch(modules.http.Http):
                 # Pass all kwargs to the DDGS method
                 raw_results = list(getattr(ddgs, kind)(query, **kwargs))
                 sanitized_results = []
-                
+                filtered = 0
+
                 for res in raw_results:
+                    if len(sanitized_results) >= max_res:
+                        break
+
                     url = res.get(url_key, "")
-                    
-                    # Check URL policy first
+
+                    # Drop results that fail the URL policy (logged, not shown to the AI)
                     if not self._url_passes_policy(url):
-                        redacted = {f: "[REDACTED]" for f in fields}
-                        redacted[url_key] = "[REDACTED]"
-                        redacted["note"] = (
-                            f"This result was rejected due to security policy "
-                            f"(domain: {self._get_domain(url)})."
-                        )
-                        sanitized_results.append(redacted)
+                        filtered += 1
+                        self._log(f"Search result dropped by security policy (domain: {self._get_domain(url)})")
                         continue
 
                     # Sanitize all text fields with enhanced pipeline
@@ -178,19 +166,21 @@ class WebSearch(modules.http.Http):
                     
                     sanitized_results.append(res)
 
-                return sanitized_results
+                return sanitized_results, filtered
 
         try:
-            results = await asyncio.to_thread(_run_search)
-            return self.result([
-                self._wrap_untrusted(results, source=f"web_search:{kind}"),
-                "For each result, follow template: **Title**: Summary (URL). At the end, provide a conclusive summary of all results."
-            ])
+            results, filtered = await asyncio.to_thread(_run_search)
         except Exception as e:
-            self._log(f"{kind} search failed: {e}")
-            return self.result(
-                f"An error occurred during {kind} search.", success=False
-            )
+            self._log(f"{kind} search failed: {type(e).__name__}: {e}")
+            message, success = self._describe_search_error(kind, e)
+            return self.result(message, success=success)
+
+        output = {"results": results}
+        if filtered:
+            output["note"] = f"{filtered} result(s) were hidden by the domain/security policy."
+        if not results:
+            output["note"] = " ".join(filter(None, ["No results to show.", output.get("note")]))
+        return self.result(self._wrap_untrusted(output, source=f"web_search:{kind}"))
 
     def _get_fields(self, kind: str):
         match kind:
@@ -230,7 +220,7 @@ class WebSearch(modules.http.Http):
     # AI Tools
     # ---------------------------------------------------------
 
-    async def text(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 10, page: int = 1, backend: str = "auto"):
+    async def text(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 0, page: int = 1, backend: str = "auto"):
         """
         Search the web for text results.
 
@@ -239,16 +229,16 @@ class WebSearch(modules.http.Http):
             region: The region to search in (e.g., 'us-en', 'uk-en', 'ru-ru'). Defaults to 'us-en'.
             safesearch: The safety level ('on', 'moderate', 'off'). Defaults to 'moderate'.
             timelimit: Time limit for results ('d' for day, 'w' for week, 'm' for month, 'y' for year). Defaults to None.
-            max_results: Maximum number of results to return. Defaults to 10.
+            max_results: Maximum number of results to return. 0 uses the configured default, which is also the upper limit.
             page: The page number of results to return. Defaults to 1.
-            backend: The search engine backend to use (e.g., 'bing', 'google', 'duckduckgo'). Defaults to 'auto'.
+            backend: The search engine backend to use (e.g., 'duckduckgo', 'google', 'brave', 'yahoo', 'mojeek'). Defaults to 'auto'.
         """
         return await self._search(
             "text", query, "href", ("title", "body"),
             region=region, safesearch=safesearch, timelimit=timelimit, max_results=max_results, page=page, backend=backend
         )
 
-    async def images(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 10, page: int = 1, backend: str = "auto", size: str | None = None, color: str | None = None, type_image: str | None = None, layout: str | None = None, license_image: str | None = None):
+    async def images(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 0, page: int = 1, backend: str = "auto", size: str | None = None, color: str | None = None, type_image: str | None = None, layout: str | None = None, license_image: str | None = None):
         """
         Search the web for image URLs.
 
@@ -257,7 +247,7 @@ class WebSearch(modules.http.Http):
             region: The region to search in (e.g., 'us-en', 'uk-en'). Defaults to 'us-en'.
             safesearch: The safety level ('on', 'moderate', 'off'). Defaults to 'moderate'.
             timelimit: Time limit for results ('d', 'w', 'm', 'y'). Defaults to None.
-            max_results: Maximum number of results to return. Defaults to 10.
+            max_results: Maximum number of results to return. 0 uses the configured default, which is also the upper limit.
             page: The page number of results to return. Defaults to 1.
             backend: The search engine backend to use. Defaults to 'auto'.
             size: Image size ('Small', 'Medium', 'Large', 'Wallpaper'). Defaults to None.
@@ -271,7 +261,7 @@ class WebSearch(modules.http.Http):
             region=region, safesearch=safesearch, timelimit=timelimit, max_results=max_results, page=page, backend=backend, size=size, color=color, type_image=type_image, layout=layout, license_image=license_image
         )
 
-    async def news(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 10, page: int = 1, backend: str = "auto"):
+    async def news(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 0, page: int = 1, backend: str = "auto"):
         """
         Search the web for recent news articles.
 
@@ -280,7 +270,7 @@ class WebSearch(modules.http.Http):
             region: The region to search in (e.g., 'us-en', 'uk-en'). Defaults to 'us-en'.
             safesearch: The safety level ('on', 'moderate', 'off'). Defaults to 'moderate'.
             timelimit: Time limit for results ('d', 'w', 'm'). Defaults to None.
-            max_results: Maximum number of results to return. Defaults to 10.
+            max_results: Maximum number of results to return. 0 uses the configured default, which is also the upper limit.
             page: The page number of results to return. Defaults to 1.
             backend: The search engine backend to use. Defaults to 'auto'.
         """
@@ -289,7 +279,7 @@ class WebSearch(modules.http.Http):
             region=region, safesearch=safesearch, timelimit=timelimit, max_results=max_results, page=page, backend=backend
         )
 
-    async def videos(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 10, page: int = 1, backend: str = "auto", resolution: str | None = None, duration: str | None = None, license_videos: str | None = None):
+    async def videos(self, query: str, region: str = "us-en", safesearch: str = "moderate", timelimit: str | None = None, max_results: int = 0, page: int = 1, backend: str = "auto", resolution: str | None = None, duration: str | None = None, license_videos: str | None = None):
         """
         Search the web for video results.
 
@@ -298,7 +288,7 @@ class WebSearch(modules.http.Http):
             region: The region to search in (e.g., 'us-en', 'uk-en'). Defaults to 'us-en'.
             safesearch: The safety level ('on', 'moderate', 'off'). Defaults to 'moderate'.
             timelimit: Time limit for results ('d', 'w', 'm'). Defaults to None.
-            max_results: Maximum number of results to return. Defaults to 10.
+            max_results: Maximum number of results to return. 0 uses the configured default, which is also the upper limit.
             page: The page number of results to return. Defaults to 1.
             backend: The search engine backend to use. Defaults to 'auto'.
             resolution: Video resolution ('high', 'standart'). Defaults to None.
@@ -310,13 +300,13 @@ class WebSearch(modules.http.Http):
             region=region, safesearch=safesearch, timelimit=timelimit, max_results=max_results, page=page, backend=backend, resolution=resolution, duration=duration, license_videos=license_videos
         )
 
-    async def books(self, query: str, max_results: int = 10, page: int = 1, backend: str = "auto"):
+    async def books(self, query: str, max_results: int = 0, page: int = 1, backend: str = "auto"):
         """
         Search the web for book results.
 
         Args:
             query: The book search query.
-            max_results: Maximum number of results to return. Defaults to 10.
+            max_results: Maximum number of results to return. 0 uses the configured default, which is also the upper limit.
             page: The page number of results to return. Defaults to 1.
             backend: The search engine backend to use. Defaults to 'auto'.
         """
