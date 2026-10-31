@@ -38,10 +38,8 @@ class Time(core.module.Module):
         }
     }
 
-    # self.config only sees the GLOBAL config, so module settings must be read
-    # through core.config.get() (which merges the user's own override from
-    # data/{username}/config.json over it), or per-user settings saved via the
-    # WebUI would be silently ignored
+    # module settings apply to the whole server. the per-user part of the time is
+    # the "local" timezone, which resolves to each user's browser-detected zone
     def _get_setting(self, key, default):
         return core.config.get("modules", "settings", self.name, key, default=default)
 

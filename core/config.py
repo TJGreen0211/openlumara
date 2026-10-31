@@ -1004,17 +1004,6 @@ def _merge_user_config_over(global_config, username):
             if key in user_config["core"]:
                 merged["core"][key] = user_config["core"][key]
 
-    if "modules" in user_config and isinstance(user_config["modules"], dict):
-        if "settings" in user_config["modules"] and isinstance(user_config["modules"]["settings"], dict):
-            if "modules" not in merged or not isinstance(merged["modules"], dict):
-                merged["modules"] = {}
-            if "settings" not in merged["modules"] or not isinstance(merged["modules"]["settings"], dict):
-                merged["modules"]["settings"] = {}
-            merged["modules"]["settings"] = _deep_merge(
-                merged["modules"]["settings"],
-                user_config["modules"]["settings"]
-            )
-
     return merged
 
 def load_user_config(username):
@@ -1239,10 +1228,6 @@ def migrate_to_multiuser():
         per_user_config["core"] = {
             k: v for k, v in core_cfg.items() if k != "data_folder"
         }
-
-    modules_cfg = dict(config).get("modules", {})
-    if modules_cfg and "settings" in modules_cfg:
-        per_user_config["modules"] = {"settings": modules_cfg["settings"]}
 
     if per_user_config:
         save_user_config(webui_username, per_user_config)

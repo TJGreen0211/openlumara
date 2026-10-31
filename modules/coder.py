@@ -274,24 +274,12 @@ class Coder(core.module.Module):
 
     def _migrate_legacy_config(self):
         """
-        swaps the old ~/coder default for the data folder sandbox in the global config
-        and in every user's config.json (which can override module settings).
+        swaps the old ~/coder default for the data folder sandbox in the config.
         paths are also swapped as they're resolved, this keeps the settings ui honest
         """
         paths = self.config.get("sandbox_paths") or []
         if any(self._replace_legacy_path(path) != path for path in paths):
             self.config.set("sandbox_paths", [self._replace_legacy_path(path) for path in paths])
-
-        data_root = core.get_data_path(user="")
-        for username in os.listdir(data_root):
-            if not os.path.isfile(os.path.join(data_root, username, "config.json")):
-                continue
-            user_config = core.config.load_user_config(username)
-            settings = user_config.get("modules", {}).get("settings", {}).get(self.name, {})
-            paths = settings.get("sandbox_paths")
-            if isinstance(paths, list) and any(self._replace_legacy_path(path) != path for path in paths):
-                settings["sandbox_paths"] = [self._replace_legacy_path(path) for path in paths]
-                core.config.save_user_config(username, user_config)
 
     def _migrate_legacy_sandbox(self, name: str, user: str, root: str):
         """

@@ -68,13 +68,13 @@ function buildSettingsStructure(originalData, moduleInfo = {}, isAdmin = true) {
         };
     }
 
-    for (const [topKey, topValue] of Object.entries(originalData)) {
+    for (let [topKey, topValue] of Object.entries(originalData)) {
         if (topKey.toLowerCase() === 'theme' || topKey.toLowerCase() === 'theme_mode') {
             continue;
         }
 
-        // global instance categories: only admins can manage channels
-        if (!isAdmin && (topKey === 'channels' || topKey === 'user_channels')) {
+        // global instance categories: only admins can manage channels and modules
+        if (!isAdmin && ['channels', 'user_channels', 'modules', 'user_modules'].includes(topKey)) {
             continue;
         }
 

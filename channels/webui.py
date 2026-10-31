@@ -1238,12 +1238,6 @@ async def create_fastapi(channel):
                             per_user_data.setdefault("core", {})[ck] = cv
                         else:
                             global_data.setdefault("core", {})[ck] = cv
-                elif key == "modules" and isinstance(value, dict):
-                    if "settings" in value:
-                        per_user_data.setdefault("modules", {})["settings"] = value["settings"]
-                    for mk, mv in value.items():
-                        if mk != "settings":
-                            global_data.setdefault("modules", {})[mk] = mv
                 else:
                     global_data[key] = value
 
@@ -1252,13 +1246,20 @@ async def create_fastapi(channel):
                 user_cfg = core.config._deep_merge(user_cfg, per_user_data)
                 core.config.save_user_config(username, user_cfg)
 
-            # only admins can persist global (instance-wide) settings;
-            # for non-admins, global_data is dropped (UX gating is in the frontend too)
-            if global_data and _require_admin(request):
-                core.config.config.load(global_data)
+            # only admins can persist global (instance-wide) settings, which includes all
+            # module settings; for non-admins, global_data is dropped (UX gating is in the
+            # frontend too)
+            if not _require_admin(request):
+                global_data = {}
+                changed_modules = []
+
+            if global_data:
+                # merged, not replaced: the payload doesn't hold everything in config.yml (per-user
+                # keys are split out above), and loading it as-is would wipe the rest
+                core.config.config.load(core.config._deep_merge(dict(core.config.config), global_data))
                 core.config.config.save()
         else:
-            result = core.config.config.load(data=data)
+            result = core.config.config.load(core.config._deep_merge(dict(core.config.config), data))
             core.config.config.save()
             if not result:
                 return api_result(success=False)

@@ -12,7 +12,6 @@ Run:  venv\\Scripts\\python tests\\test_site_media.py
 """
 import contextvars
 import importlib.util
-import json
 import os
 import shutil
 import sys
@@ -78,25 +77,6 @@ def _get_data_path(subpath=None, user=None):
 
 
 _core_mod.get_data_path = _get_data_path
-
-
-def _load_user_config(username):
-    path = _get_data_path("config.json", user=username)
-    if not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_user_config(username, config_dict):
-    with open(_get_data_path("config.json", user=username), "w", encoding="utf-8") as f:
-        json.dump(config_dict, f)
-
-
-_config_mod = types.ModuleType("core.config")
-_config_mod.load_user_config = _load_user_config
-_config_mod.save_user_config = _save_user_config
-_core_mod.config = _config_mod
 sys.modules["core"] = _core_mod
 
 _spec = importlib.util.spec_from_file_location(
@@ -280,22 +260,13 @@ class DataFolderSandboxTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(os.path.exists(os.path.join(self.data, "alice", "coder")))
 
     async def test_on_ready_replaces_the_old_default_path(self):
-        self.coder.name = "coder"
         self.coder.legacy_sandbox_path = "~/coder"
         self.coder.config.set("sandbox_paths", ["~/coder/", "/srv/projects"])
-        # a user's config.json can override module settings
-        _save_user_config("alice", {"api": {"url": "x"},
-                                    "modules": {"settings": {"coder": {"sandbox_paths": ["~/coder"]}}}})
-        _save_user_config("bob", {"api": {"url": "y"}})
-
         await self.coder.on_ready()
         self.assertEqual(self.coder.config.get("sandbox_paths"), ["coder", "/srv/projects"])
-        self.assertEqual(_load_user_config("alice"),
-                         {"api": {"url": "x"}, "modules": {"settings": {"coder": {"sandbox_paths": ["coder"]}}}})
-        self.assertEqual(_load_user_config("bob"), {"api": {"url": "y"}})
 
     async def test_old_default_path_resolves_to_the_data_folder(self):
-        # eg. a per-user override that still says ~/coder: it's migrated, not used as-is
+        # the old default is migrated, not used as-is, even if the config still says so
         self._write(os.path.join(self.legacy, "users", "alice", "index.html"), "alice")
         self.coder.legacy_sandbox_path = self.legacy
         self.coder.config.set("sandbox_paths", [self.legacy])
