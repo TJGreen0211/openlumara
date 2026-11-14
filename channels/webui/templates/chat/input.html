@@ -1,3 +1,4 @@
+{% from 'chat/meet_attendees.html' import people_button, attendee_field %}
 <!-- the composer: one rounded box holding attach, the text field and mic -->
 <div class="composer">
 <button id="upload" @click="$refs['file-input'].click()" title="Attach files or paste images (Ctrl+V)" aria-label="Attach files or paste images (Ctrl+V)" :disabled="$store.stream.state != 'idle'">
@@ -12,7 +13,9 @@
     x-model="$store.chat.user_input"
     placeholder="Message {{ config.get('title') or 'the assistant' }}…" 
     x-effect="
-        if ($store.stream.state === 'idle') {
+        // not while the meeting attendee field is open: the notes reply finishing
+        // would otherwise pull focus out of it mid-edit
+        if ($store.stream.state === 'idle' && !$store.meets.attendeesOpen) {
             $nextTick(() => $refs['user-input'].focus());
         }
     "
@@ -144,6 +147,7 @@ await simpleSocketSend({
                 @input="$store.meets.setSensitivity($event.target.value)"
                 :title="'Mic sensitivity ' + $store.meets.sensitivity + '/5 — higher for quiet/distant speakers'">
         </span>
+        {{ people_button("meet-btn") }}
         <template x-if="!$store.meets.paused">
             <button class="meet-btn" @click="await $store.meets.pause()" title="Pause recording">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
@@ -159,7 +163,8 @@ await simpleSocketSend({
             <span>Stop</span>
         </button>
     </div>
-    <div class="meet-strip">
+    {{ attendee_field() }}
+    <div class="meet-strip" x-show="!$store.meets.attendeesOpen">
         <span class="meet-strip-text"
             x-text="$store.meets.lastSegmentText || 'Listening…'"
             :style="$store.meets.stripKey % 2 === 1 ? 'animation: meetFadeA 0.25s ease' : 'animation: meetFadeB 0.25s ease'"></span>
@@ -173,7 +178,7 @@ await simpleSocketSend({
             <span>Meeting stopped. Finalizing transcript and saving recording&hellip;</span>
         </template>
         <template x-if="$store.meets.diarizing">
-            <span>Meeting stopped. Identifying speakers&hellip; (about 2 minutes per hour of audio)</span>
+            <span>Meeting stopped. Labelling speakers&hellip;</span>
         </template>
         <template x-if="!$store.meets.stopping">
             <span><span class="meet-card-check"></span>
@@ -185,11 +190,13 @@ await simpleSocketSend({
         <div class="meet-card-gaps"
             x-text="$store.meets.gaps.length + ($store.meets.gaps.length === 1 ? ' segment was ' : ' segments were ') + 'missed — audio kept locally in the recording'"></div>
     </template>
+    {{ attendee_field() }}
     <div class="meet-card-actions" x-show="!$store.meets.stopping">
         <button class="meet-card-btn primary" @click="await $store.meets.generateNotes()" x-show="$store.stream.state === 'idle'">Regenerate notes</button>
         <button class="meet-card-btn" @click="await $store.meets.startNewMeeting()" x-show="$store.stream.state === 'idle'">Start new meeting</button>
         <button class="meet-card-btn" @click="$store.meets.viewTranscript()">View transcript</button>
         <button class="meet-card-btn" @click="await $store.meets.downloadRecording()">Download recording</button>
+        {{ people_button("meet-card-btn") }}
         <button class="meet-card-btn meet-card-close" @click="$store.meets.dismissCard()" title="Dismiss">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
         </button>

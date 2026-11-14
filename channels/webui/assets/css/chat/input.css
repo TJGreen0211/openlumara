@@ -706,3 +706,89 @@ body.token-bar-hidden #chat-window #input {
     color: var(--text-muted);
 }
 
+
+/* meeting attendees: a count button in the recording bar and on the completion card,
+   and a one-line field that opens in place of the caption strip (or above the card's
+   buttons). nothing else is added, so the bar stays a single pill */
+#chat-window #meet-bar .meet-people,
+#chat-window #meet-card .meet-people {
+    gap: 4px;
+    width: auto;
+    min-width: 28px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+
+    &.is-open {
+        color: var(--accent);
+        border-color: var(--accent);
+    }
+}
+
+#chat-window #meet-card .meet-people {
+    padding: 6px 10px;
+}
+
+#chat-window .meet-attendees {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .meet-attendees-input {
+        flex: 1;
+        min-width: 0;
+        width: 360px;
+        max-width: 100%;
+        padding: 5px 14px;
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        outline: none;
+
+        &:focus {
+            border-color: var(--accent);
+        }
+    }
+
+    /* the bar styles .meet-btn itself; the card has no such style, so the save
+       button carries its own round look */
+    .meet-attendees-save {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        color: var(--text-primary);
+        cursor: pointer;
+
+        svg { width: 14px; height: 14px; }
+
+        &:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+    }
+}
+
+@media (max-width: 768px) {
+    /* the people button leads the right-hand transport group (people, pause, stop) */
+    #chat-window #meet-bar .meet-row .meet-btn.meet-people {
+        margin-left: auto;
+    }
+
+    #chat-window #meet-bar .meet-row .meet-people ~ .meet-btn {
+        margin-left: 0;
+    }
+
+    #chat-window .meet-attendees .meet-attendees-input {
+        width: auto;
+    }
+}

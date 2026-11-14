@@ -140,7 +140,7 @@ class Webui(core.channel.Channel):
         },
         "stt_diarize_meetings": {
             "default": False,
-            "description": "When a meeting stops, send the whole recording to the server above with diarize=true and replace the live transcript with one labelled by speaker. Needs a server that supports diarization (for example tj-server-tools at http://host:5003/v1/audio/transcriptions). If it fails, the live transcript is used."
+            "description": "Replace a meeting's live transcript with one labelled by speaker. The recording streams to the server above while the meeting runs (tj-server-tools meeting sessions, e.g. http://host:5003/v1/audio/transcriptions), so only the last few minutes are left to process when it stops; if streaming isn't available the whole recording is sent with diarize=true at the end. If both fail, the live transcript is used."
         },
         "stt_max_concurrent": {
             "type": "select",
@@ -1078,6 +1078,33 @@ async def create_fastapi(channel):
         except Exception as e:
             return api_result(str(e), success=False)
 
+    @app.post("/api/chat/meeting_attendees/{chat_id}")
+    async def chat_set_meeting_attendees(chat_id: str, request: fastapi.Request):
+        """Remembers who attends a meeting room, so its next meeting starts pre-filled"""
+        uctx, username = await _get_uctx(request)
+        try:
+            data = await request.json()
+            names = data.get("attendees") or []
+            if not isinstance(names, list):
+                return api_result("attendees must be a list of names", success=False)
+            names = [str(n).strip()[:100] for n in names if str(n).strip()][:50]
+
+            index = uctx.chat._find_index(chat_id)
+            if index is None:
+                return api_result("Chat not found", success=False)
+
+            uctx.chat.update_metadata("meeting_attendees", names, index=index)
+
+            await channel.websocket_manager.broadcast({
+                "type": "chat_metadata_updated",
+                "id": uctx.chat.data[index].get("id"),
+                "metadata": uctx.chat.data[index].get("metadata"),
+            }, username=username)
+
+            return api_result(success=True)
+        except Exception as e:
+            return api_result(str(e), success=False)
+
     @app.post("/api/chat/meeting/boundary/{chat_id}")
     async def chat_meeting_boundary(chat_id: str, request: fastapi.Request):
         """Appends a meeting boundary marker to a chat, isolating the new meeting's
@@ -1246,6 +1273,78 @@ async def create_fastapi(channel):
             return api_result(f"Diarization failed: {core.detail_error(e)}", success=False)
 
         return api_result({"segments": segments}, success=True)
+
+    # meeting sessions: the browser streams each recorder chunk through here while the
+    # meeting runs, so the speech server has transcribed all but the last window by the
+    # time it stops. the server's session id stays tied to the user who opened it.
+    meeting_owners = {}
+
+    def _meeting_owner_ok(request, session_id):
+        return session_id in meeting_owners and meeting_owners[session_id] == getattr(request.state, "username", None)
+
+    @app.post("/api/meeting/session/start")
+    async def meeting_session_start(request: fastapi.Request):
+        if not channel.config.get("stt_diarize_meetings", False):
+            return api_result("Meeting diarization is turned off (stt_diarize_meetings)", success=False)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            max_speakers = int((body or {}).get("max_speakers") or 0)
+        except (TypeError, ValueError):
+            max_speakers = 0
+        max_speakers = max_speakers if 2 <= max_speakers <= 32 else None
+        try:
+            session_id = await core.stt.meeting_session_start(max_speakers)
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        meeting_owners[session_id] = getattr(request.state, "username", None)
+        return api_result({"id": session_id}, success=True)
+
+    @app.post("/api/meeting/session/{session_id}/audio")
+    async def meeting_session_audio(session_id: str, request: fastapi.Request):
+        if not _meeting_owner_ok(request, session_id):
+            return api_result("Unknown meeting session", success=False)
+        form = await request.form()
+        try:
+            upload = form.get("file")
+            part = int(form.get("part") or 1)
+            seq = int(form["seq"]) if form.get("seq") not in (None, "") else None
+            if not hasattr(upload, "read"):
+                return api_result("No audio uploaded", success=False)
+            data = await upload.read()
+            name, ctype = upload.filename or "chunk.webm", upload.content_type or "application/octet-stream"
+        except ValueError:
+            return api_result("Invalid part or piece number", success=False)
+        finally:
+            await form.close()
+        try:
+            await core.stt.meeting_session_append(session_id, part, name, data, ctype, seq)
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        return api_result(True, success=True)
+
+    @app.post("/api/meeting/session/{session_id}/finish")
+    async def meeting_session_finish(session_id: str, request: fastapi.Request):
+        if not _meeting_owner_ok(request, session_id):
+            return api_result("Unknown meeting session", success=False)
+        meeting_owners.pop(session_id, None)
+        try:
+            segments = await core.stt.meeting_session_finish(session_id)
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        except Exception as e:
+            return api_result(f"Diarization failed: {core.detail_error(e)}", success=False)
+        return api_result({"segments": segments}, success=True)
+
+    @app.post("/api/meeting/session/{session_id}/discard")
+    async def meeting_session_discard(session_id: str, request: fastapi.Request):
+        if not _meeting_owner_ok(request, session_id):
+            return api_result("Unknown meeting session", success=False)
+        meeting_owners.pop(session_id, None)
+        await core.stt.meeting_session_discard(session_id)
+        return api_result(True, success=True)
 
     # -- POST
     @app.post("/api/settings/save")

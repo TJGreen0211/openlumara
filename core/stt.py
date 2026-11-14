@@ -612,6 +612,86 @@ async def transcribe_meeting(parts: list) -> list:
     except (ValueError, KeyError, TypeError):
         raise STTError("The speech server did not return segments; does it support diarize=true?")
 
+    return _clean_segments(segments)
+
+
+def _clean_segments(segments: list) -> list:
     for s in segments:
         s["text"] = clean_transcription(s.get("text", ""))
     return [s for s in segments if s["text"]]
+
+
+# ---------------------------------------------------------------------------
+# meeting sessions: the recording streams to the speech server while the
+# meeting runs, which transcribes it in windows, so stopping only leaves the
+# last window to process. the server exposes them next to its transcription
+# endpoint: <base>/audio/transcriptions -> <base>/meetings
+# ---------------------------------------------------------------------------
+
+def _meetings_url() -> str:
+    url = _server_url().rstrip("/")
+    suffix = "/audio/transcriptions"
+    if not url.endswith(suffix):
+        raise STTError("The speech server URL does not end in /audio/transcriptions, so it has no meeting sessions.")
+    return url[:-len(suffix)] + "/meetings"
+
+
+def _auth_headers() -> dict:
+    key = _api_key()
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+async def _meetings_call(method: str, path: str, timeout: httpx.Timeout, **kwargs):
+    url = _meetings_url() + path
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.request(method, url, headers=_auth_headers(), **kwargs)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise STTError(f"Speech server error {e.response.status_code}: {e.response.text[:200]}")
+    except httpx.HTTPError as e:
+        raise STTError(f"Could not reach the speech server ({url}): {e}")
+    except ValueError:
+        raise STTError("The speech server returned an invalid response for a meeting session.")
+
+
+async def meeting_session_start(max_speakers: int = None) -> str:
+    """Opens a meeting session on the speech server and returns its id.
+
+    max_speakers caps how many voices the server may find (e.g. the number of listed attendees)."""
+    fields = {"max_speakers": str(max_speakers)} if max_speakers else {}
+    data = await _meetings_call("POST", "", httpx.Timeout(10.0), data=fields)
+    return data["id"]
+
+
+async def meeting_session_append(session_id: str, part: int, filename: str, data: bytes, content_type: str,
+                                 seq: int = None):
+    """Sends the next piece of recorder part `part`. Pieces must be sent in order.
+
+    seq numbers the pieces of a part from 0, so the server ignores a retried piece it already has."""
+    fields = {"part": str(part)}
+    if seq is not None:
+        fields["seq"] = str(seq)
+    await _meetings_call(
+        "POST", f"/{session_id}/audio", httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=5.0),
+        data=fields, files={"file": (filename, data, content_type)}
+    )
+
+
+async def meeting_session_finish(session_id: str) -> list:
+    """Transcribes what's left of the meeting and returns its segments [{start, end, speaker, text}]."""
+    # normally just the last window, but a backlog (e.g. the server restarted its worker) can be longer
+    timeout = httpx.Timeout(connect=5.0, read=1800.0, write=30.0, pool=5.0)
+    data = await _meetings_call("POST", f"/{session_id}/finish", timeout, data={"response_format": "verbose_json"})
+    try:
+        return _clean_segments(data["segments"])
+    except (KeyError, TypeError):
+        raise STTError("The speech server did not return segments for the meeting.")
+
+
+async def meeting_session_discard(session_id: str):
+    try:
+        await _meetings_call("DELETE", f"/{session_id}", httpx.Timeout(10.0))
+    except STTError:
+        pass  # best effort: the server drops idle sessions on its own

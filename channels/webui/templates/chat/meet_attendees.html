@@ -1,0 +1,26 @@
+{# meeting attendees: the 👥 count button and the one-line field, shared by the live
+   recording bar and the completion card (imported as macros by chat/input.html) #}
+
+{% macro people_button(cls) %}
+<button class="{{ cls }} meet-people" @click="$store.meets.toggleAttendees()"
+    :class="{ 'is-open': $store.meets.attendeesOpen }"
+    :title="$store.meets.attendeeCount ? 'Attendees: ' + $store.meets.attendeeList().join(', ') : 'Who is in this meeting? (helps name the speakers in the notes)'">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    <span x-show="$store.meets.attendeeCount" x-text="$store.meets.attendeeCount"></span>
+</button>
+{% endmacro %}
+
+{% macro attendee_field() %}
+<div class="meet-attendees" x-show="$store.meets.attendeesOpen">
+    <input type="text" class="meet-attendees-input" maxlength="2000"
+        placeholder="Who's in this meeting? e.g. Ana, Marco, Luis"
+        x-model="$store.meets.attendees"
+        x-effect="$store.meets.attendeesOpen && $nextTick(() => $el.focus())"
+        @keydown.enter.prevent="$store.meets.saveAttendees()"
+        @keydown.escape.prevent="$store.meets.saveAttendees()"
+        @blur="($event.relatedTarget && $event.relatedTarget.closest('.meet-people, .meet-attendees')) || $store.meets.saveAttendees()">
+    <button class="meet-btn meet-attendees-save" @click="$store.meets.saveAttendees()" title="Save attendees">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+    </button>
+</div>
+{% endmacro %}

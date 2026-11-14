@@ -105,9 +105,12 @@ const VOICE_STORE = {
     _vad: null,
 
     targetRate: 16000,
-    previewWindowSec: 3,     // how much of the open segment the live preview covers
+    previewWindowSec: 7,     // how much of the open segment the live preview covers
     previewMinSec: 1.2,      // don't show a preview until the segment has this much audio
     previewIntervalMs: 1500,
+    // a dictation that was committed in pieces is re-transcribed in one pass once it
+    // ends (see _fullPass); longer dictations keep the pieced-together text
+    fullPassMaxSec: 600,
 
     // segment splitting: split after this much silence, but only once at least
     // minSpeechMs of speech has been heard. keep the silence long enough that a
@@ -702,6 +705,10 @@ const VOICE_STORE = {
         const rate = this._rate;
         const tailTsSec = ((this._totalSamples - this._pcmLength) + this._segStart) / rate;
         const pcm = this._pcmBuf ? this._pcmBuf.slice(this._segStart, this._pcmLength) : new Float32Array(0);
+        // dictation keeps its whole recording; if it was committed in more than one
+        // piece (_segStart > 0), keep a copy for the one-pass re-transcription
+        const fullPcm = (writeToInput && this.mode !== "meeting" && this._pcmBuf && this._segStart > 0
+            && this._pcmLength <= rate * this.fullPassMaxSec) ? this._pcmBuf.slice(0, this._pcmLength) : null;
 
         this._releaseAudio();
         this._pcmBuf = null;
@@ -714,6 +721,9 @@ const VOICE_STORE = {
                 this._committed = this.preview;
                 this.preview = "";
                 this._writeInput();
+            }
+            if (fullPcm) {
+                this._fullPass(fullPcm, rate, session);
             }
             return this._fullText();
         }
@@ -757,7 +767,32 @@ const VOICE_STORE = {
             this.transcribing = false;
         }
 
+        if (fullPcm) {
+            this._fullPass(fullPcm, rate, session);
+        }
         return this._fullText();
+    },
+
+    // a dictation with pauses was transcribed in pieces, each without the others as
+    // context. once the pieced-together text is in the input, transcribe the whole
+    // recording in one pass and quietly swap that in. the swap is skipped if the user
+    // already edited or sent the text (_writeInput checks), or started a new dictation
+    async _fullPass(pcm, rate, session) {
+        try {
+            const result = await simpleApiPost("/api/voice/transcribe", {
+                audio_data: pcmToWavBase64(pcm, rate, this.targetRate),
+                format: "wav",
+                purpose: "commit"
+            });
+            const text = (result && result.text) ? String(result.text).trim() : "";
+            if (!text || session !== this._session || this.recording) {
+                return;
+            }
+            this._committed = text;
+            this._writeInput();
+        } catch (err) {
+            // keep the pieced-together text
+        }
     },
 
     // stops dictation capture and writes the committed text into the input field
