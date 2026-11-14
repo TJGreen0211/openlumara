@@ -571,3 +571,47 @@ async def _route(audio_data: bytes, purpose: str, language: str,
     if has_openai:
         return await transcribe_openai(audio_data, language, prompt, audio_format)
     return await transcribe_local(audio_data, language, prompt, audio_format)
+
+
+# ---------------------------------------------------------------------------
+# meetings (whole recording, with speaker labels)
+# ---------------------------------------------------------------------------
+
+async def transcribe_meeting(parts: list) -> list:
+    """Sends a full meeting recording to the speech server with diarize=true.
+
+    parts: [(filename, bytes, content_type)], one per recorder session (a paused
+    meeting has several); the server joins them in order. Returns the server's
+    segments: [{"start", "end", "speaker", "text"}], times in seconds.
+    """
+    url = _server_url()
+    if not url:
+        raise STTError("Meeting diarization needs stt_whisper_server_url set in Settings -> Channels -> webui.")
+
+    headers = {}
+    key = _api_key()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    # the server takes roughly 2 minutes per hour of audio, so allow long meetings
+    timeout = httpx.Timeout(connect=5.0, read=1800.0, write=300.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                files=[("file", part) for part in parts],
+                data={"diarize": "true", "response_format": "verbose_json"},
+                headers=headers
+            )
+            resp.raise_for_status()
+            segments = resp.json()["segments"]
+    except httpx.HTTPStatusError as e:
+        raise STTError(f"Speech server error {e.response.status_code}: {e.response.text[:200]}")
+    except httpx.HTTPError as e:
+        raise STTError(f"Could not reach the speech server ({url}): {e}")
+    except (ValueError, KeyError, TypeError):
+        raise STTError("The speech server did not return segments; does it support diarize=true?")
+
+    for s in segments:
+        s["text"] = clean_transcription(s.get("text", ""))
+    return [s for s in segments if s["text"]]

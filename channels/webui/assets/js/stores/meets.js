@@ -34,10 +34,15 @@ const MEETS_STORE = {
     paused: false,
     dismissed: false,             // completion card dismissed (state kept till reload)
     durationSec: 0,
+    diarizing: false,             // the finished recording is being re-transcribed with speaker labels
+    diarized: false,              // segments came from the diarized recording (they carry .speaker)
 
     // --- private -------------------------------------------------------
     _rec: null,                   // the MediaRecorder (re-created on resume)
     _mime: "",                    // chosen recorder mime (reused on resume)
+    _recPart: 0,                  // recorder session number (1 + one per resume); tags each fragment
+    _recStartMs: 0,               // wall time the first recorder started
+    _preRollSec: 0,               // recording audio before the transcript clock started
     _stream: null,                // the shared MediaStream
     _source: null,                // "screen" | "mic" - where _stream came from (auto-picked)
     _stopping: false,             // latch while stopMeeting runs (onended re-entrancy guard)
@@ -59,6 +64,7 @@ const MEETS_STORE = {
     // (3 = the dictation default, so the slider's midpoint matches plain dictation)
     SENS: [0, 0.012, 0.008, 0.006, 0.0035, 0.002],
     MEETINGS_CATEGORY: "Meetings",
+    SPEAKERS_HINT: "Speakers are labelled by voice (Speaker 1, Speaker 2, ...). Where the conversation makes it clear who someone is, use their name instead.",
     NOTES_PROMPT: "Write meeting notes from the transcript in this chat. Structure: summary, decisions made, action items (name the owner if one was stated), open questions.",
 
     /* -------------------------- derived ----------------------------- */
@@ -189,10 +195,11 @@ const MEETS_STORE = {
         return "";
     },
 
-    _onRecorderChunk(e) {
+    _onRecorderChunk(e, part) {
         if (e && e.data && e.data.size && this.meetingId) {
             RecordingStore.saveFragment(this.meetingId, {
                 tsMs: Date.now(),
+                part,
                 blob: e.data,
                 codec: this._mime,
                 title: this.title
@@ -208,8 +215,14 @@ const MEETS_STORE = {
                 opts.mimeType = this._mime;
             }
             const self = this;
+            // timeslice chunks only play back joined to the rest of their session,
+            // so every chunk records which recorder session it belongs to
+            const part = ++this._recPart;
+            if (part === 1) {
+                this._recStartMs = Date.now();
+            }
             this._rec = new MediaRecorder(this._stream, opts);
-            this._rec.ondataavailable = (e) => self._onRecorderChunk(e);
+            this._rec.ondataavailable = (e) => self._onRecorderChunk(e, part);
             this._rec.start(15000);
         } catch (err) {
             console.warn("meeting MediaRecorder failed to start", err);
@@ -437,6 +450,8 @@ const MEETS_STORE = {
         this.dismissed = false;
         this.finished = false;
         this.durationSec = 0;
+        this.diarized = false;
+        this._recPart = 0;
         this.tick = 0;
         this.stripKey = 0;
         this._pausedWallMs = 0;
@@ -494,6 +509,7 @@ const MEETS_STORE = {
             return;
         }
 
+        this._preRollSec = (Date.now() - this._recStartMs) / 1000;
         this.active = true;
         this._tickTimer = setInterval(() => this._heartbeat(), 1000);
     },
@@ -601,7 +617,10 @@ const MEETS_STORE = {
             }
             this.durationSec = Math.round(voice.meetingElapsedSec());
 
-            // 3. send the transcript as its own user message into the meeting chat
+            // 3. optionally replace the live transcript with a speaker-labelled one
+            await this._diarize();
+
+            // 4. send the transcript as its own user message into the meeting chat
             await this._sendTranscript();
         } catch (err) {
             this.setError(`Failed to finish the meeting: ${err.message || err}`);
@@ -609,6 +628,72 @@ const MEETS_STORE = {
         } finally {
             this._stopping = false;
             this.stopping = false;
+        }
+    },
+
+    _diarizeEnabled() {
+        try {
+            const settings = Alpine.store("settings");
+            const webui = settings && settings.settings && settings.settings.channels
+                && settings.settings.channels.settings && settings.settings.channels.settings.webui;
+            return !!(webui && webui.stt_diarize_meetings);
+        } catch (err) {
+            return false;
+        }
+    },
+
+    // the saved recording as one blob per recorder session (a paused meeting has several)
+    async _recordingParts() {
+        let rec = null;
+        try {
+            rec = await RecordingStore.getMeeting(this.meetingId);
+        } catch (e) {}
+        const groups = [];
+        let last;
+        for (const f of (rec && rec.fragments) || []) {
+            if (!groups.length || f.part !== last) {
+                groups.push([]);
+                last = f.part;
+            }
+            groups[groups.length - 1].push(f.blob);
+        }
+        const codec = (rec && rec.codec) || "";
+        return { ext: codec.indexOf("mp4") !== -1 ? "mp4" : "webm", blobs: groups.map((g) => new Blob(g, { type: codec })) };
+    },
+
+    // send the full recording to the speech server for a transcript labelled by speaker.
+    // on failure the live transcript is kept, so the meeting is never lost
+    async _diarize() {
+        if (!this._diarizeEnabled() || !this.meetingId) {
+            return;
+        }
+        const { ext, blobs } = await this._recordingParts();
+        if (!blobs.length) {
+            return;
+        }
+        this.diarizing = true;
+        try {
+            const form = new FormData();
+            blobs.forEach((b, i) => form.append("file", b, `part${i + 1}.${ext}`));
+            const raw = await (await fetch("/api/meeting/diarize", { method: "POST", body: form })).json();
+            if (!raw.success) {
+                throw new Error(raw.data);
+            }
+            // SPEAKER_n -> "Speaker 1", "Speaker 2", ... in order of first appearance
+            const names = {};
+            this.segments = raw.data.segments.map((s) => {
+                if (!(s.speaker in names)) {
+                    names[s.speaker] = `Speaker ${Object.keys(names).length + 1}`;
+                }
+                return { tsSec: Math.max(0, s.start - this._preRollSec), text: s.text, speaker: names[s.speaker] };
+            });
+            this.gaps = [];             // the full recording covers live segments that failed
+            this.diarized = true;
+            this.wordCount = this._countWords();
+        } catch (err) {
+            this.setError(`Speaker labelling failed, sending the live transcript instead: ${err.message || err}`);
+        } finally {
+            this.diarizing = false;
         }
     },
 
@@ -622,7 +707,8 @@ const MEETS_STORE = {
 
         const events = [];
         for (const s of this.segments) {
-            events.push({ t: s.tsSec, line: `[${this._fmtClock3(s.tsSec)}] ${s.text}` });
+            const who = s.speaker ? `${s.speaker}: ` : "";
+            events.push({ t: s.tsSec, line: `[${this._fmtClock3(s.tsSec)}] ${who}${s.text}` });
         }
         for (const g of this.gaps) {
             events.push({ t: g.tsSec, line: `[${this._fmtClock3(g.tsSec)}] -- segment missing (transcription failed; audio preserved locally) --` });
@@ -639,6 +725,9 @@ const MEETS_STORE = {
             lines.push(e.line);
         }
         lines.push("", this.NOTES_PROMPT);
+        if (this.diarized) {
+            lines.push(this.SPEAKERS_HINT);
+        }
 
         // chat_id pins the transcript to the meeting chat even if the user
         // navigated to another chat meanwhile (the server switches + broadcasts).
@@ -685,26 +774,20 @@ const MEETS_STORE = {
         if (!this.meetingId) {
             return;
         }
-        let rec = null;
-        try {
-            rec = await RecordingStore.getMeeting(this.meetingId);
-        } catch (e) {}
-        if (!rec || !rec.fragments || !rec.fragments.length) {
+        const { ext, blobs } = await this._recordingParts();
+        if (!blobs.length) {
             this.setError("No saved recording found for this meeting.");
             return;
         }
-        const frags = rec.fragments;
-        const c = rec.codec || "";
-        const ext = c.indexOf("mp4") !== -1 ? "mp4" : "webm";
-        const single = frags.length === 1;
-        for (let i = 0; i < frags.length; i++) {
+        const single = blobs.length === 1;
+        for (let i = 0; i < blobs.length; i++) {
             // raw container segments don't concatenate cleanly, so multi-part
             // meetings download as N parts rather than one faked file
             const name = single
                 ? `meeting-${this._fmtStampFile()}.${ext}`
                 : `meeting-${this._fmtStampFile()}-part${i + 1}.${ext}`;
-            this._triggerDownload(frags[i].blob, name);
-            if (!single && i < frags.length - 1) {
+            this._triggerDownload(blobs[i], name);
+            if (!single && i < blobs.length - 1) {
                 await new Promise((r) => setTimeout(r, 500));
             }
         }

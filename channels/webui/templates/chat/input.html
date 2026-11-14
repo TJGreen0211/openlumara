@@ -169,8 +169,11 @@ await simpleSocketSend({
 <div id="meet-card" x-cloak
     x-show="$store.meets.finished && !$store.meets.dismissed">
     <div class="meet-card-title">
-        <template x-if="$store.meets.stopping">
+        <template x-if="$store.meets.stopping && !$store.meets.diarizing">
             <span>Meeting stopped. Finalizing transcript and saving recording&hellip;</span>
+        </template>
+        <template x-if="$store.meets.diarizing">
+            <span>Meeting stopped. Identifying speakers&hellip; (about 2 minutes per hour of audio)</span>
         </template>
         <template x-if="!$store.meets.stopping">
             <span><span class="meet-card-check"></span>

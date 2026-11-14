@@ -138,6 +138,10 @@ class Webui(core.channel.Channel):
             "default": "",
             "description": "Full URL of your whisper.cpp server's /inference endpoint (for example http://100.x.x.x:8080/inference). Used by the 'server' engine and for final commits with 'auto'. Leave empty to use the main API url instead."
         },
+        "stt_diarize_meetings": {
+            "default": False,
+            "description": "When a meeting stops, send the whole recording to the server above with diarize=true and replace the live transcript with one labelled by speaker. Needs a server that supports diarization (for example tj-server-tools at http://host:5003/v1/audio/transcriptions). If it fails, the live transcript is used."
+        },
         "stt_max_concurrent": {
             "type": "select",
             "options": {
@@ -1212,6 +1216,36 @@ async def create_fastapi(channel):
             return api_result(f"Transcription failed: {core.detail_error(e)}", success=False)
 
         return api_result({"text": text}, success=True)
+
+    @app.post("/api/meeting/diarize")
+    async def meeting_diarize(request: fastapi.Request):
+        """Transcribes a finished meeting recording with speaker labels.
+
+        Multipart form with one `file` per recorder session, in order. Returns segments
+        [{start, end, speaker, text}]."""
+        if not channel.config.get("stt_diarize_meetings", False):
+            return api_result("Meeting diarization is turned off (stt_diarize_meetings)", success=False)
+
+        form = await request.form()
+        try:
+            parts = []
+            for i, upload in enumerate(form.getlist("file")):
+                if hasattr(upload, "read"):
+                    parts.append((upload.filename or f"part{i}.webm", await upload.read(),
+                                  upload.content_type or "application/octet-stream"))
+        finally:
+            await form.close()
+        if not parts:
+            return api_result("No audio uploaded", success=False)
+
+        try:
+            segments = await core.stt.transcribe_meeting(parts)
+        except core.stt.STTError as e:
+            return api_result(str(e), success=False)
+        except Exception as e:
+            return api_result(f"Diarization failed: {core.detail_error(e)}", success=False)
+
+        return api_result({"segments": segments}, success=True)
 
     # -- POST
     @app.post("/api/settings/save")
