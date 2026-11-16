@@ -10,3 +10,4 @@ python-ulid
 requests
 httpx
 tzdata
+bcrypt
