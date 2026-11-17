@@ -138,6 +138,10 @@ class Webui(core.channel.Channel):
             "default": "",
             "description": "Full URL of your whisper.cpp server's /inference endpoint (for example http://100.x.x.x:8080/inference). Used by the 'server' engine and for final commits with 'auto'. Leave empty to use the main API url instead."
         },
+        "tts_server_url": {
+            "default": "",
+            "description": "Full URL of a text-to-speech endpoint that reads replies aloud (OpenAI-style /v1/audio/speech, for example tj-server-tools at http://host:5004/v1/audio/speech). Leave empty to turn reading aloud off for everyone. Each user picks off / button / auto in Settings -> Api -> voice_output."
+        },
         "stt_diarize_meetings": {
             "default": False,
             "description": "Replace a meeting's live transcript with one labelled by speaker. The recording streams to the server above while the meeting runs (tj-server-tools meeting sessions, e.g. http://host:5003/v1/audio/transcriptions), so only the last few minutes are left to process when it stops; if streaming isn't available the whole recording is sent with diarize=true at the end. If both fail, the live transcript is used."
@@ -645,9 +649,10 @@ class SelectiveGZipMiddleware:
 
     previewed site files and media are left alone: they're mostly images and
     video that are already compressed, and gzipping a ranged (206) video
-    response breaks seeking"""
+    response breaks seeking. streamed speech is left alone too: gzip holds bytes
+    back until it has enough to compress, which delays live audio"""
 
-    SKIP_PREFIXES = ("/api/artifact/", "/api/site-media", "/icon-", "/favicon")
+    SKIP_PREFIXES = ("/api/artifact/", "/api/site-media", "/icon-", "/favicon", "/api/voice/speak")
 
     def __init__(self, app):
         self.app = app
@@ -1243,6 +1248,41 @@ async def create_fastapi(channel):
             return api_result(f"Transcription failed: {core.detail_error(e)}", success=False)
 
         return api_result({"text": text}, success=True)
+
+    # -- reading replies aloud (text-to-speech): the browser asks for a plan (the reply
+    # cleaned for speech, split into pieces with their language), then fetches and plays
+    # the pieces in order, so playback starts after the first piece
+
+    @app.post("/api/voice/speech_plan")
+    async def voice_speech_plan(request: fastapi.Request):
+        if not core.tts.server_url():
+            return api_result("Reading aloud is not configured (tts_server_url)", success=False)
+        body = await request.json()
+        text = str(body.get("text") or "")[:100_000]
+        try:
+            pieces = core.tts.plan(text)
+        except Exception as e:
+            return api_result(f"Could not prepare the text for speech: {core.detail_error(e)}", success=False)
+        return api_result({"pieces": pieces}, success=True)
+
+    @app.post("/api/voice/speak")
+    async def voice_speak(request: fastapi.Request):
+        """Streams one piece of the plan as raw 16-bit mono PCM (rate in X-Sample-Rate), passed
+        through from the TTS server as it is generated, so the browser can start playing early."""
+        body = await request.json()
+        text = str(body.get("text") or "").strip()[:core.tts.MAX_PIECE_CHARS + 100]
+        if not text:
+            return api_result("No text to speak", success=False)
+        try:
+            sample_rate, chunks = await core.tts.open_speech(text, str(body.get("language") or ""))
+        except core.tts.TTSError as e:
+            return api_result(str(e), success=False)
+        except Exception as e:
+            return api_result(f"Speech failed: {core.detail_error(e)}", success=False)
+        return fastapi.responses.StreamingResponse(
+            chunks, media_type="audio/pcm",
+            headers={"X-Sample-Rate": str(sample_rate), "Cache-Control": "no-store"}
+        )
 
     @app.post("/api/meeting/diarize")
     async def meeting_diarize(request: fastapi.Request):

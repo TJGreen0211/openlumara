@@ -103,6 +103,21 @@ core_settings_schema = {
             "type": "text",
             "default": "",
             "description": "The URL of a whisper.cpp server endpoint (for example http://host:5002/inference) used for voice input. When set, transcriptions go to this server instead of the local engine or the AI's own /audio/transcriptions endpoint. The stt_whisper_server_url in Settings -> Channels -> webui takes priority when both are set."
+        },
+        "voice_output": {
+            "type": "select",
+            "default": "button",
+            "options": {
+                "off": 0,
+                "button": 1,
+                "auto": 2
+            },
+            "description": "Reading replies aloud (needs tts_server_url in Settings -> Channels -> webui). off: never. button: a speaker button on each reply reads it on demand. auto: also read a reply aloud automatically when you sent your message by voice."
+        },
+        "voice_output_voice": {
+            "type": "text",
+            "default": "default",
+            "description": "The voice replies are read in: 'default' for the TTS server's built-in voice, or the name of a voice cloned on the server."
         }
     },
     "model": {

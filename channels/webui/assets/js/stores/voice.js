@@ -64,6 +64,7 @@ const VOICE_STORE = {
     // visible in the caption strip while recording (never in the textarea)
     preview: "",
     _lastWritten: "",
+    _wroteInput: false,     // this dictation put text in the input (see isDictated)
 
     // the open segment starts at sample _segStart; _lastVoiced tracks the last voiced sample
     _segStart: 0,
@@ -247,6 +248,9 @@ const VOICE_STORE = {
         // alive here even though the getUserMedia dialog below will burn it
         this.primeAudio();
 
+        // a reply being read aloud would be picked up by the mic
+        try { Alpine.store("speech").stop(); } catch (e) {}
+
         const mode = (opts && opts.mode === "meeting") ? "meeting" : "dictation";
         this.mode = mode;
         // in dictation mode clear everything the meetings store may have set, so a
@@ -260,6 +264,7 @@ const VOICE_STORE = {
         const chat = Alpine.store("chat");
         this._prefix = chat ? (chat.user_input || "").trim() : "";
         this._lastWritten = chat ? (chat.user_input || "") : "";
+        this._wroteInput = false;
         this._committed = "";
         this.preview = "";
         this.previewKey = 0;
@@ -675,6 +680,16 @@ const VOICE_STORE = {
         const next = this._prefix ? `${this._prefix} ${text}`.trim() : text;
         chat.user_input = next;
         this._lastWritten = next;
+        this._wroteInput = this.mode !== "meeting" && !!text.trim();
+    },
+
+    // true when `text` (being sent) is exactly what the last dictation wrote into the
+    // input - i.e. the message was spoken, not typed or edited afterwards. called once
+    // per send: it uses the flag up, so a later typed message never counts as spoken
+    isDictated(text) {
+        const spoken = this._wroteInput && String(text || "").trim() === String(this._lastWritten || "").trim();
+        this._wroteInput = false;
+        return spoken;
     },
 
     // drains the session: stops capture, waits for any in-flight commit, commits

@@ -21,3 +21,4 @@ dev_run.sh
 .module_cache.json
 .tiktoken_cache/
 .requirements_hash
+.kilo/

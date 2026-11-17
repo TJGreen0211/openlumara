@@ -575,6 +575,8 @@ const MEETS_STORE = {
         // permission dialog that _acquireMeetingStream pops below burns the
         // gesture the moment it opens (see voice.primeAudio)
         voice.primeAudio();
+        // a reply being read aloud would end up in the meeting recording
+        try { Alpine.store("speech").stop(); } catch (e) {}
 
         // open the audio source once; the voice (PCM) and the MediaRecorder
         // (retention) share this single stream. the source is auto-picked:

@@ -499,6 +499,11 @@ CHAT_STORE = {
             return;
         }
 
+        // stop any reply being read aloud; if this message was dictated (and not edited
+        // since), its reply is read out automatically when it finishes (voice_output auto).
+        // still inside the send gesture, which also unlocks audio playback for later
+        Alpine.store("speech").noteSend(Alpine.store("voice").isDictated(text));
+
         Alpine.store("stream").state = "message_sending";
 
         // still inside the send click/keypress, so the browser allows the prompt.

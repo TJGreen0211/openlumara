@@ -29,6 +29,24 @@
         {% include 'svg/edit.svg' %}
     </button>
     {% endif %}
+    {% if buttons_role != 'user' %}
+    <!-- read the reply aloud (text-to-speech); click again to stop -->
+    <button x-show="$store.speech.available()"
+        @click="$store.speech.toggleTurn(turnIndex)"
+        :title="$store.speech.isPlaying(turnIndex) ? 'Stop reading' : ($store.speech.error || 'Read aloud')"
+        :class="{ 'speaking': $store.speech.isPlaying(turnIndex) }"
+        :disabled="$store.stream.state != 'idle' && !$store.speech.isPlaying(turnIndex)">
+        <template x-if="!$store.speech.isPlaying(turnIndex)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </template>
+        <template x-if="$store.speech.isPlaying(turnIndex) && $store.speech.loading">
+            <svg class="speech-loading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+        </template>
+        <template x-if="$store.speech.isPlaying(turnIndex) && !$store.speech.loading">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </template>
+    </button>
+    {% endif %}
     <button @click="$store.chat.regenerateMessage(turnIndex)" title="Regenerate" :disabled="$store.stream.state != 'idle'">
         {% include 'svg/regenerate.svg' %}
     </button>

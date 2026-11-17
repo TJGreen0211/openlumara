@@ -75,3 +75,24 @@
         opacity: 1;
     }
 }
+
+/* read aloud (text-to-speech): the button stays highlighted while its reply is
+   being read, with a spinner until the first piece of audio arrives */
+.message-buttons button.speaking {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.message-buttons .speech-loading {
+    animation: speechSpin 0.9s linear infinite;
+}
+
+@keyframes speechSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* keep the row visible while its reply is being read, so the stop button is
+   always there without hunting for the hover */
+.message-buttons:has(button.speaking) {
+    opacity: 1;
+}
