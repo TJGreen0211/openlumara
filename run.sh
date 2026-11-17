@@ -11,7 +11,7 @@ else
 fi
 
 # set up virtual environment
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     echo "setting up virtual environment with $PYTHON_BIN..."
     $PYTHON_BIN -m venv venv
     venv/bin/pip install --upgrade pip
