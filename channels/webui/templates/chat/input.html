@@ -73,13 +73,15 @@
 <button id="send" aria-label="Send message"
     @click="
         $event.preventDefault();
+        // while dictating, Send stops the dictation and sends what was said
+        if ($store.voice.recording && !$store.meets.active) { await $store.voice.stopAndSend(); return; }
         if (!$store.chat.user_input?.trim() && !$store.upload.files.length) { return; }
 
         await $store.chat.send($store.chat.user_input);
         $refs['user-input'].style.height = '48px';
     "
     x-show="$store.stream.state === 'idle'"
-    :disabled="!$store.chat.user_input?.trim() && !$store.upload.files.length"
+    :disabled="!$store.chat.user_input?.trim() && !$store.upload.files.length && !($store.voice.recording && !$store.meets.active)"
 >Send</button>
 
 <button id="stop" aria-label="Stop generation" x-show="$store.stream.state != 'idle'" x-cloak @click="
@@ -203,15 +205,14 @@ await simpleSocketSend({
     </div>
 </div>
 
-<!-- live voice preview: shown above the input bar while recording. the textarea
-     itself only receives committed segments, so this is where the live tail lives
-     (or just a listening timer when voice_preview_style is "off") -->
+<!-- live voice caption: what has been said so far, above the input bar while
+     dictating (or just a listening timer when voice_preview_style is "off"). the
+     textarea only receives the text once the dictation ends -->
 <p id="voice-live" x-cloak
     x-show="$store.stream.state === 'idle' && $store.settings.settings?.api?.voice_enabled && $store.voice.recording && !$store.meets.active">
     <template x-if="$store.settings.settings?.channels?.settings?.webui?.voice_preview_style !== 'off'">
         <span class="voice-live-text"
-            x-text="$store.voice.preview || 'listening…'"
-            :style="$store.voice.previewKey % 2 === 1 ? 'animation: voiceFadeInA 0.25s ease' : 'animation: voiceFadeInB 0.25s ease'"></span>
+            x-text="$store.voice.preview || 'listening…'"></span>
     </template>
     <template x-if="$store.settings.settings?.channels?.settings?.webui?.voice_preview_style === 'off'">
         <span>Listening&hellip; <span class="voice-live-timer" x-text="$store.voice.elapsedLabel()"></span></span>

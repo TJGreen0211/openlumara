@@ -78,11 +78,13 @@ step, no monorepo, no CI. Entrypoint: `main.py`.
 
 ## Audio / STT
 
-- `core/stt.py` powers the WebUI mic/voice/meetings features: settings key
-  `stt_engine` (auto|local|server) picks between three engine implementations —
-  local is a `whisper-cli` subprocess with binary+model auto-downloaded to
-  `data/stt/`, server posts to a whisper.cpp server, and the openai engine uses
-  the main API's `/audio/transcriptions` endpoint.
+- `core/stt.py` powers the WebUI mic/voice/meetings features. There is no on-device
+  engine: transcription goes to the speech server (`stt_whisper_server_url`, e.g.
+  tj-server-tools/Parakeet or a whisper.cpp server), or to the main API's
+  `/audio/transcriptions` when none is set.
+- Dictation (`js/stores/voice.js`) transcribes the whole recording so far for the live
+  caption, and reuses the last caption on stop when it covers everything said;
+  meetings still commit VAD segments.
 - Server URL resolution: the global channel key
   `channels.settings.webui.stt_whisper_server_url` wins over the per-user
   `api.voice_url` (see `_server_url()` in core/stt.py).

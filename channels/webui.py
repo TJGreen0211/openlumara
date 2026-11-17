@@ -113,30 +113,10 @@ class Webui(core.channel.Channel):
             "default": 30,
             "depends": "require_login"
         },
-        "stt_engine": {
-            "type": "select",
-            "options": {
-                "auto": "Local engine for live previews, whisper server (if configured) for final commits",
-                "local": "Built-in local engine (runs whisper.cpp in a subprocess; binary + model auto-download on first use)",
-                "server": "External whisper.cpp server only (URL below, or the main API url if it's an OpenAI-compatible STT endpoint)"
-            },
-            "default": "auto",
-            "description": "Which speech-to-text engine to use for microphone voice input."
-        },
-        "stt_model": {
-            "type": "select",
-            "options": {
-                "tiny": "Fastest, lightest (~75 MB download, ~0.5 GB RAM) - recommended for small hosts",
-                "base": "Better accuracy, still light (~142 MB download, ~1 GB RAM)",
-                "small": "Best accuracy of the local engines (~466 MB download, ~1.5 GB RAM)"
-            },
-            "default": "tiny",
-            "description": "Size of the local whisper model. Only used by the local / auto engines."
-        },
         "stt_whisper_server_url": {
             "type": "text",
             "default": "",
-            "description": "Full URL of your whisper.cpp server's /inference endpoint (for example http://100.x.x.x:8080/inference). Used by the 'server' engine and for final commits with 'auto'. Leave empty to use the main API url instead."
+            "description": "Full URL of the speech-to-text endpoint used for voice input and meetings: tj-server-tools (for example http://host:5003/v1/audio/transcriptions), a whisper.cpp server's /inference endpoint, or any OpenAI-style /audio/transcriptions URL. Leave empty to use the main API url's /audio/transcriptions instead."
         },
         "tts_server_url": {
             "default": "",
@@ -146,37 +126,15 @@ class Webui(core.channel.Channel):
             "default": False,
             "description": "Replace a meeting's live transcript with one labelled by speaker. The recording streams to the server above while the meeting runs (tj-server-tools meeting sessions, e.g. http://host:5003/v1/audio/transcriptions), so only the last few minutes are left to process when it stops; if streaming isn't available the whole recording is sent with diarize=true at the end. If both fail, the live transcript is used."
         },
-        "stt_max_concurrent": {
-            "type": "select",
-            "options": {
-                "1": "1 (safe on a single-core host)",
-                "2": "2",
-                "4": "4"
-            },
-            "default": "1",
-            "description": "How many local whisper jobs may run at once. Each job uses one whisper model worth of RAM plus a core's worth of CPU."
-        },
-        "stt_local_timeout": {
-            "type": "select",
-            "options": {
-                "60": "60s",
-                "120": "120s",
-                "300": "300s"
-            },
-            "default": "120",
-            "description": "Maximum time a single local transcription may take before it's killed. Increase this if you dictate long passages on a slow host."
-        },
         "voice_preview_style": {
             "type": "select",
             "options": {
-                "strip": "Live transcription shows in a caption strip above the input bar. "
-                         "The input field only receives finished segments",
-                "off": "No live transcription while recording - the input field only "
-                       "updates when a segment is committed"
+                "strip": "What you've said so far shows in a caption strip above the input bar while you talk",
+                "off": "No live caption while recording, just a timer; the text appears in the input when you stop"
             },
             "default": "strip",
-            "description": "How the live voice preview is displayed while recording. "
-                           "The input field itself never shows the flickering live tail either way."
+            "description": "How voice input looks while recording. Either way the input field only "
+                           "receives the text once you stop."
         }
     }
 
@@ -1225,7 +1183,6 @@ async def create_fastapi(channel):
         body = await request.json()
         audio_b64 = body.get("audio_data", "")
         audio_format = body.get("format", "wav")
-        purpose = body.get("purpose", "preview")
 
         if not audio_b64:
             return api_result("No audio data provided", success=False)
@@ -1237,7 +1194,6 @@ async def create_fastapi(channel):
         try:
             text = await core.stt.transcribe(
                 base64.b64decode(audio_b64),
-                purpose=purpose,
                 language=language,
                 prompt=hotwords or None,
                 audio_format=audio_format

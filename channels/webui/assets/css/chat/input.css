@@ -329,7 +329,7 @@ body.token-bar-hidden #chat-window #input {
     white-space: nowrap;
     /* cap to the input bar so the pill never bleeds off the screen on narrow
        phones (the text is nowrap and content-sized, so it must be bounded);
-       the span ellipsizes instead (mirrors #voice-live) */
+       the span ellipsizes instead) */
     max-width: calc(100% - 20px);
     overflow: hidden;
     z-index: 5;
@@ -351,10 +351,9 @@ body.token-bar-hidden #chat-window #input {
 /* ==========================================================================
  *  Live Voice Preview Strip (while recording)
  *
- *  sits where the native-dictation hint does: a pill above the input bar.
- *  renders the live preview tail (strip mode) or a listening timer (off
- *  mode). the textarea only ever receives committed segments, so the
- *  flickering live text lives here instead of in the field
+ *  sits where the native-dictation hint does, above the input bar. shows
+ *  what has been said so far (strip mode) or a listening timer (off mode).
+ *  the textarea only receives the text once the dictation ends
  * ========================================================================== */
 
 #chat-window #voice-live {
@@ -364,16 +363,21 @@ body.token-bar-hidden #chat-window #input {
     margin: 0;
     padding: 4px 12px;
     font-size: 12px;
+    line-height: 1.45;
     color: var(--text-muted);
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 999px;
+    border-radius: 12px;
     pointer-events: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     max-width: calc(100% - 36px);
     z-index: 5;
+    /* the caption is everything said so far: show its newest three lines, older
+       lines drop off the top (flex-end clips the overflow there) */
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    max-height: calc(3 * 1.45em + 8px);
+    overflow: hidden;
 
     .voice-live-text {
         font-style: italic;
@@ -382,19 +386,6 @@ body.token-bar-hidden #chat-window #input {
     .voice-live-timer {
         font-variant-numeric: tabular-nums;
     }
-}
-
-/* two identical fade-in animations so the template can alternate between
-   them to re-trigger the fade on every accepted preview update */
-
-@keyframes voiceFadeInA {
-    from { opacity: 0.35; transform: translateY(1px); }
-    to { opacity: 1; transform: none; }
-}
-
-@keyframes voiceFadeInB {
-    from { opacity: 0.35; transform: translateY(1px); }
-    to { opacity: 1; transform: none; }
 }
 
 /* ==========================================================================

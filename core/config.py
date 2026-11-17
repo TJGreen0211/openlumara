@@ -92,17 +92,24 @@ core_settings_schema = {
         "voice_language": {
             "type": "text",
             "default": "en",
-            "description": "The language to transcribe voice input in (for example en, es, de). Set to 'auto' to let the speech engine detect the language per recording."
+            "description": "The language to transcribe voice input in (for example en, es, de), or 'auto' to detect it per recording. Whisper servers use this; tj-server-tools (Parakeet) always detects the language itself."
         },
         "voice_hotwords": {
             "type": "text",
             "default": "",
-            "description": "Optional vocabulary hint for speech recognition - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
+            "description": "Whisper servers only (tj-server-tools/Parakeet ignores it): a vocabulary hint - names, technical terms, or phrases the engine often gets wrong. Leave empty for none."
         },
         "voice_url": {
             "type": "text",
             "default": "",
-            "description": "The URL of a whisper.cpp server endpoint (for example http://host:5002/inference) used for voice input. When set, transcriptions go to this server instead of the local engine or the AI's own /audio/transcriptions endpoint. The stt_whisper_server_url in Settings -> Channels -> webui takes priority when both are set."
+            "description": "The URL of a speech-to-text endpoint for voice input (tj-server-tools at http://host:5003/v1/audio/transcriptions, or a whisper.cpp server's /inference). When set, transcriptions go to this server instead of the AI's own /audio/transcriptions endpoint. The stt_whisper_server_url in Settings -> Channels -> webui takes priority when both are set."
+        },
+        "voice_auto_stop": {
+            "default": 3,
+            "min": 0,
+            "max": 10,
+            "step": 0.5,
+            "description": "Seconds of silence after you stop talking before voice input ends on its own. 0 turns it off (click the mic, or press Enter to stop and send)."
         },
         "voice_output": {
             "type": "select",

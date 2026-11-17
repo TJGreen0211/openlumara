@@ -16,6 +16,21 @@ import httpx
 import core
 import core.config
 
+# httpx builds a new SSL context (loading the whole CA bundle) for every client it
+# creates, which costs 0.5 s or more per request even for plain http. voice input sends
+# a request about once a second, so the context is built once and shared.
+_ssl_ctx = None
+
+
+def _ssl_context():
+    global _ssl_ctx
+    if _ssl_ctx is None:
+        _ssl_ctx = httpx.create_ssl_context()
+    return _ssl_ctx
+
+
+_REQUEST_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0)
+
 
 class TTSError(Exception):
     """Raised when text-to-speech isn't configured or the server fails"""
@@ -203,7 +218,7 @@ async def open_speech(text: str, language: str):
         language = default_language()
 
     payload = {"input": text, "language": language, "voice": voice(), "response_format": "pcm"}
-    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0))
+    client = httpx.AsyncClient(verify=_ssl_context(), timeout=_REQUEST_TIMEOUT)
     try:
         resp = await client.send(client.build_request("POST", url, json=payload), stream=True)
         if resp.status_code != 200:
