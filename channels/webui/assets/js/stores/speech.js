@@ -10,7 +10,10 @@
  * streamed from the TTS server as raw PCM and scheduled on the audio clock as it
  * arrives, every block starting exactly where the previous one ends - so playback
  * starts after the first generated chunk (well under a second) and has no gaps as
- * long as the server generates faster than real time.
+ * long as the server generates faster than real time. when it doesn't (a fast
+ * voice_output_speed outruns the TTS model), playback that runs dry waits for a
+ * couple of seconds of audio before going on: a few short pauses instead of a
+ * stutter every half second.
  *
  * playback goes through a Web Audio context that is unlocked during a user
  * gesture (sending, the mic button, the speaker button). that's what lets an
@@ -24,6 +27,7 @@ const SPEECH_STORE = {
     _ctx: null,              // the playback AudioContext
     _sources: new Set(),     // scheduled blocks not yet finished
     _cursor: 0,              // audio-clock time where the next block starts
+    _begun: false,           // this reading has scheduled audio (so running dry is a stall)
     _reader: null,           // the stream being read (cancelled by stop())
     _gen: 0,                 // bumps on every start/stop; stale loops check it and bail
     _autoPending: false,     // the message just sent was dictated: read its reply
@@ -129,6 +133,8 @@ const SPEECH_STORE = {
     LEAD_SEC: 0.15,
     // incoming bytes are scheduled in blocks of at least this much audio
     BLOCK_SEC: 0.1,
+    // after playback runs dry mid-reply, this much audio is gathered before it resumes
+    REBUFFER_SEC: 2.0,
 
     async speak(text, key) {
         this.stop();
@@ -186,8 +192,15 @@ const SPEECH_STORE = {
         this._reader = reader;
 
         const blockBytes = Math.max(2, Math.round(rate * this.BLOCK_SEC) * 2);
+        const rebufferBytes = Math.round(rate * this.REBUFFER_SEC) * 2;
         let pending = new Uint8Array(0);
         const flush = (all) => {
+            // ran dry mid-reply: the server is slower than playback, so gather a cushion
+            // first rather than playing each block the moment it arrives
+            const dry = this._begun && this._ctx && this._cursor - this._ctx.currentTime <= 0.02;
+            if (!all && dry && pending.length < rebufferBytes) {
+                return;
+            }
             // whole 16-bit samples only; an odd trailing byte waits for the next read
             const usable = all ? pending.length - (pending.length % 2) : Math.floor(pending.length / blockBytes) * blockBytes;
             if (usable <= 0) {
@@ -243,6 +256,7 @@ const SPEECH_STORE = {
         this._sources.add(source);
         source.start(start);
         this._cursor = start + buffer.duration;
+        this._begun = true;
         this.loading = false;
     },
 
@@ -273,6 +287,7 @@ const SPEECH_STORE = {
         }
         this._sources.clear();
         this._cursor = 0;
+        this._begun = false;
         this.playingKey = null;
         this.loading = false;
     }

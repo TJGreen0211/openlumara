@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 TTS_PATH = os.path.join(os.path.dirname(HERE), "core", "tts.py")
 
-_CFG = {"tts_server_url": "", "voice_output_voice": "default", "voice_language": "en"}
+_CFG = {"tts_server_url": "", "voice_output_voice": "default", "voice_language": "en", "voice_output_speed": 1.0}
 
 
 def _fake_get(*args, default=None):
@@ -172,6 +172,20 @@ class Streaming(unittest.TestCase):
         self.assertGreater(len(chunks), 1, "audio should arrive in pieces, not all at once")
         self.assertEqual(_Mock.received, {"input": "Hola a todos.", "language": "es", "voice": "ana",
                                           "response_format": "pcm"})
+
+    def test_speed_is_sent_only_when_changed(self):
+        _CFG["voice_output_speed"] = 1.5
+        try:
+            self.collect("Hello.", "en")
+            self.assertEqual(_Mock.received["speed"], 1.5)
+            _CFG["voice_output_speed"] = 9
+            self.collect("Hello.", "en")
+            self.assertEqual(_Mock.received["speed"], 4.0)
+            _CFG["voice_output_speed"] = "fast"
+            self.collect("Hello.", "en")
+            self.assertNotIn("speed", _Mock.received)
+        finally:
+            _CFG["voice_output_speed"] = 1.0
 
     def test_unsupported_language_falls_back(self):
         self.collect("Hello.", "xx")

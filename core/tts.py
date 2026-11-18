@@ -63,6 +63,16 @@ def voice() -> str:
     return str(core.config.get("api", "voice_output_voice", default="default") or "default").strip()
 
 
+def speed() -> float:
+    """How fast replies are read: 1 is the voice's own pace. The server changes the pace without
+    changing the pitch; it accepts 0.25-4 (the OpenAI range)."""
+    try:
+        value = float(core.config.get("api", "voice_output_speed", default=1.0) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return min(4.0, max(0.25, value)) if value == value else 1.0
+
+
 def default_language() -> str:
     """The user's voice language when the TTS model speaks it, else English."""
     lang = str(core.config.get("api", "voice_language", default="en") or "en").strip().lower()
@@ -218,6 +228,8 @@ async def open_speech(text: str, language: str):
         language = default_language()
 
     payload = {"input": text, "language": language, "voice": voice(), "response_format": "pcm"}
+    if speed() != 1.0:
+        payload["speed"] = speed()
     client = httpx.AsyncClient(verify=_ssl_context(), timeout=_REQUEST_TIMEOUT)
     try:
         resp = await client.send(client.build_request("POST", url, json=payload), stream=True)

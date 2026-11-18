@@ -125,6 +125,13 @@ core_settings_schema = {
             "type": "text",
             "default": "default",
             "description": "The voice replies are read in: 'default' for the TTS server's built-in voice, or the name of a voice cloned on the server."
+        },
+        "voice_output_speed": {
+            "default": 1.0,
+            "min": 0.5,
+            "max": 2.5,
+            "step": 0.05,
+            "description": "How fast replies are read aloud: 1 is the voice's normal pace, 1.5 is half again as fast. The pitch stays the same. Speech stays clear up to about 2; at 2.5 words start to blur."
         }
     },
     "model": {
