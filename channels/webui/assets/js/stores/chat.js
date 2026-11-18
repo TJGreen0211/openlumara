@@ -739,6 +739,18 @@ CHAT_STORE = {
         this.editingMessageIndex = null;
         this.editContent = '';
         this.editAttached = [];
+
+        // editing a user message re-runs the reply from it; the server handles
+        // commands in order, so the regenerate sees the edited content.
+        // assistant edits are just corrections and keep the history as-is
+        if (msg?.role === 'user') {
+            Alpine.store('stream').userMsg = null;
+            await simpleSocketSend({
+                "type": "message_regenerate",
+                "index": index
+            });
+            Alpine.store('stream').state = 'message_sending';
+        }
     },
 
     /* ----------------------
