@@ -59,8 +59,32 @@ def server_url() -> str:
     return str(_ch_cfg("tts_server_url", default="") or "").strip()
 
 
+def voices() -> dict:
+    """The voices users may pick from, as {name: description}, in the admin's order.
+
+    Comes from the webui channel's tts_voices list, where each entry is "name" or
+    "name: description" (the name is what the TTS server knows the voice as). Empty when
+    the admin hasn't listed any, in which case users type a voice name freely."""
+    entries = _ch_cfg("tts_voices", default=[]) or []
+    if isinstance(entries, str):
+        entries = [entries]
+    out = {}
+    for entry in entries if isinstance(entries, list) else []:
+        name, _, description = str(entry).partition(":")
+        name = name.strip()
+        if name and name not in out:
+            out[name] = description.strip()
+    return out
+
+
 def voice() -> str:
-    return str(core.config.get("api", "voice_output_voice", default="default") or "default").strip()
+    """The voice to read replies in: the user's pick, or the first listed voice if the admin
+    has a list and the pick isn't on it (any more)."""
+    chosen = str(core.config.get("api", "voice_output_voice", default="default") or "default").strip()
+    allowed = voices()
+    if allowed and chosen not in allowed:
+        return next(iter(allowed))
+    return chosen
 
 
 def speed() -> float:

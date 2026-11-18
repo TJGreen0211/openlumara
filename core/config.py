@@ -124,7 +124,7 @@ core_settings_schema = {
         "voice_output_voice": {
             "type": "text",
             "default": "default",
-            "description": "The voice replies are read in: 'default' for the TTS server's built-in voice, or the name of a voice cloned on the server."
+            "description": "The voice replies are read in. Pick from the voices your admin listed (tts_voices in Settings -> Channels -> webui); without a list, type 'default' for the TTS server's built-in voice or the name of a voice cloned on the server."
         },
         "voice_output_speed": {
             "default": 1.0,

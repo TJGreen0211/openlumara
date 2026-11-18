@@ -107,6 +107,32 @@ class Plan(unittest.TestCase):
         self.assertEqual(tts.plan("---\n\n***", "en"), [])
 
 
+class Voices(unittest.TestCase):
+    def tearDown(self):
+        _CFG.pop("tts_voices", None)
+        _CFG["voice_output_voice"] = "default"
+
+    def test_list_entries_parse_to_names_and_descriptions(self):
+        _CFG["tts_voices"] = ["default: Built-in", " ana : Warm Spanish voice ", "max", "", "ana: duplicate"]
+        self.assertEqual(tts.voices(), {"default": "Built-in", "ana": "Warm Spanish voice", "max": ""})
+
+    def test_pick_from_the_list_is_used(self):
+        _CFG["tts_voices"] = ["default", "ana"]
+        _CFG["voice_output_voice"] = "ana"
+        self.assertEqual(tts.voice(), "ana")
+
+    def test_pick_not_on_the_list_falls_back_to_the_first(self):
+        _CFG["tts_voices"] = ["ana: Spanish", "default"]
+        _CFG["voice_output_voice"] = "removed_voice"
+        self.assertEqual(tts.voice(), "ana")
+
+    def test_without_a_list_any_name_goes(self):
+        _CFG["tts_voices"] = []
+        _CFG["voice_output_voice"] = "my_clone"
+        self.assertEqual(tts.voices(), {})
+        self.assertEqual(tts.voice(), "my_clone")
+
+
 class _Mock(BaseHTTPRequestHandler):
     status = 200
     chunks = [b"\x01\x00" * 100, b"\x02\x00" * 100, b"\x03\x00" * 50]
