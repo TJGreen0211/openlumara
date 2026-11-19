@@ -8,7 +8,9 @@ split into runs of one language - then streams each run's audio and plays it as
 it arrives, so playback starts after the first chunk is generated.
 """
 import re
+import time
 import unicodedata
+from urllib.parse import urlsplit, urlunsplit
 
 import anyio
 import httpx
@@ -59,32 +61,88 @@ def server_url() -> str:
     return str(_ch_cfg("tts_server_url", default="") or "").strip()
 
 
-def voices() -> dict:
-    """The voices users may pick from, as {name: description}, in the admin's order.
-
-    Comes from the webui channel's tts_voices list, where each entry is "name" or
-    "name: description" (the name is what the TTS server knows the voice as). Empty when
-    the admin hasn't listed any, in which case users type a voice name freely."""
-    entries = _ch_cfg("tts_voices", default=[]) or []
-    if isinstance(entries, str):
-        entries = [entries]
-    out = {}
-    for entry in entries if isinstance(entries, list) else []:
-        name, _, description = str(entry).partition(":")
-        name = name.strip()
-        if name and name not in out:
-            out[name] = description.strip()
-    return out
+def voices_url() -> str:
+    """Where the TTS server lists its voices: GET /v1/voices next to /v1/audio/speech."""
+    url = server_url()
+    if not url:
+        return ""
+    base = url.rstrip("/")
+    if base.endswith("/audio/speech"):
+        return base[: -len("/audio/speech")] + "/voices"
+    parts = urlsplit(base)
+    return urlunsplit((parts.scheme, parts.netloc, "/v1/voices", "", ""))
 
 
-def voice() -> str:
-    """The voice to read replies in: the user's pick, or the first listed voice if the admin
-    has a list and the pick isn't on it (any more)."""
-    chosen = str(core.config.get("api", "voice_output_voice", default="default") or "default").strip()
-    allowed = voices()
-    if allowed and chosen not in allowed:
-        return next(iter(allowed))
-    return chosen
+# the server's voice list, fetched at most once a minute (a failed fetch is retried sooner)
+VOICES_TTL_SEC = 60.0
+VOICES_RETRY_SEC = 10.0
+_voices_cache = {"url": None, "at": 0.0, "ok": False, "data": {"voices": [], "default": ""}}
+
+
+def _parse_voices(body) -> dict:
+    """{"voices": [{"name", "description"}], "default": name} from the server's GET /v1/voices.
+    Uses `details` (name + description) when the server sends it, else the plain name list."""
+    if not isinstance(body, dict):
+        return {"voices": [], "default": ""}
+    entries = body.get("details")
+    if not isinstance(entries, list):
+        entries = [{"name": n} for n in body.get("voices") or [] if isinstance(n, str)]
+    out, seen = [], set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append({"name": name, "description": str(entry.get("description") or "").strip()})
+    default = str(body.get("default") or "").strip()
+    if default not in seen:
+        default = out[0]["name"] if out else ""
+    return {"voices": out, "default": default}
+
+
+async def fetch_voices(force: bool = False) -> dict:
+    """The voices the TTS server offers: {"voices": [{"name", "description"}], "default": name}.
+
+    Users can only pick from these; the list is the server's, not something configured here.
+    Empty when TTS isn't configured or the server can't be reached (and never reached before)."""
+    url = voices_url()
+    cache = _voices_cache
+    if not url:
+        return {"voices": [], "default": ""}
+    age = time.monotonic() - cache["at"]
+    if not force and cache["url"] == url and age < (VOICES_TTL_SEC if cache["ok"] else VOICES_RETRY_SEC):
+        return cache["data"]
+    try:
+        async with httpx.AsyncClient(verify=_ssl_context(), timeout=httpx.Timeout(5.0)) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = _parse_voices(resp.json())
+        ok = True
+    except (httpx.HTTPError, ValueError) as e:
+        core.log("tts", f"could not list voices from {url}: {e}")
+        # keep the last good list for this server rather than emptying the picker on a blip
+        data = cache["data"] if cache["url"] == url else {"voices": [], "default": ""}
+        ok = False
+    cache.update(url=url, at=time.monotonic(), ok=ok, data=data)
+    return data
+
+
+def chosen_voice() -> str:
+    """The voice the user picked in Settings -> Api -> voice_output_voice ("" = the server's default)."""
+    return str(core.config.get("api", "voice_output_voice", default="") or "").strip()
+
+
+async def voice() -> str:
+    """The voice to read replies in: the user's pick if the server offers it, else the server's
+    default voice. When the server's list can't be had, the pick is sent as-is (the server falls
+    back to its default voice for names it doesn't know)."""
+    chosen = chosen_voice()
+    offered = await fetch_voices()
+    names = [v["name"] for v in offered["voices"]]
+    if not names:
+        return chosen or "default"
+    return chosen if chosen in names else offered["default"]
 
 
 def speed() -> float:
@@ -251,7 +309,7 @@ async def open_speech(text: str, language: str):
     if language not in SUPPORTED_LANGUAGES:
         language = default_language()
 
-    payload = {"input": text, "language": language, "voice": voice(), "response_format": "pcm"}
+    payload = {"input": text, "language": language, "voice": await voice(), "response_format": "pcm"}
     if speed() != 1.0:
         payload["speed"] = speed()
     client = httpx.AsyncClient(verify=_ssl_context(), timeout=_REQUEST_TIMEOUT)

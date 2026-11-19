@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 TTS_PATH = os.path.join(os.path.dirname(HERE), "core", "tts.py")
 
-_CFG = {"tts_server_url": "", "voice_output_voice": "default", "voice_language": "en", "voice_output_speed": 1.0}
+_CFG = {"tts_server_url": "", "voice_output_voice": "", "voice_language": "en", "voice_output_speed": 1.0}
 
 
 def _fake_get(*args, default=None):
@@ -107,38 +107,27 @@ class Plan(unittest.TestCase):
         self.assertEqual(tts.plan("---\n\n***", "en"), [])
 
 
-class Voices(unittest.TestCase):
-    def tearDown(self):
-        _CFG.pop("tts_voices", None)
-        _CFG["voice_output_voice"] = "default"
-
-    def test_list_entries_parse_to_names_and_descriptions(self):
-        _CFG["tts_voices"] = ["default: Built-in", " ana : Warm Spanish voice ", "max", "", "ana: duplicate"]
-        self.assertEqual(tts.voices(), {"default": "Built-in", "ana": "Warm Spanish voice", "max": ""})
-
-    def test_pick_from_the_list_is_used(self):
-        _CFG["tts_voices"] = ["default", "ana"]
-        _CFG["voice_output_voice"] = "ana"
-        self.assertEqual(tts.voice(), "ana")
-
-    def test_pick_not_on_the_list_falls_back_to_the_first(self):
-        _CFG["tts_voices"] = ["ana: Spanish", "default"]
-        _CFG["voice_output_voice"] = "removed_voice"
-        self.assertEqual(tts.voice(), "ana")
-
-    def test_without_a_list_any_name_goes(self):
-        _CFG["tts_voices"] = []
-        _CFG["voice_output_voice"] = "my_clone"
-        self.assertEqual(tts.voices(), {})
-        self.assertEqual(tts.voice(), "my_clone")
-
-
 class _Mock(BaseHTTPRequestHandler):
     status = 200
     chunks = [b"\x01\x00" * 100, b"\x02\x00" * 100, b"\x03\x00" * 50]
     content_type = "audio/pcm"
     received = None
     finished = None
+    voices = {"voices": ["female", "male", "ana"], "default": "female",
+              "details": [{"name": "female", "description": "Female (default)", "transcript": True},
+                          {"name": "male", "description": "Male", "transcript": True},
+                          {"name": "ana", "description": "Spanish", "transcript": False}]}
+    voices_status = 200
+    voice_lists = 0       # GET /v1/voices requests served
+
+    def do_GET(self):
+        _Mock.voice_lists += 1
+        body = json.dumps(_Mock.voices).encode() if self.path == "/v1/voices" else b"{}"
+        self.send_response(_Mock.voices_status if self.path == "/v1/voices" else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         _Mock.received = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -167,7 +156,7 @@ class _Mock(BaseHTTPRequestHandler):
         pass
 
 
-class Streaming(unittest.TestCase):
+class _WithMockServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _Mock)
@@ -180,7 +169,58 @@ class Streaming(unittest.TestCase):
 
     def setUp(self):
         _CFG["tts_server_url"] = self.url
+        _CFG["voice_output_voice"] = ""
         _Mock.status, _Mock.content_type, _Mock.finished = 200, "audio/pcm", None
+        _Mock.voices_status, _Mock.voice_lists = 200, 0
+        tts._voices_cache.update(url=None, at=0.0, ok=False, data={"voices": [], "default": ""})
+
+
+class Voices(_WithMockServer):
+    def test_voices_url_sits_next_to_the_speech_endpoint(self):
+        _CFG["tts_server_url"] = "http://h:5004/v1/audio/speech"
+        self.assertEqual(tts.voices_url(), "http://h:5004/v1/voices")
+        _CFG["tts_server_url"] = "https://h/tts/"
+        self.assertEqual(tts.voices_url(), "https://h/v1/voices")
+        _CFG["tts_server_url"] = ""
+        self.assertEqual(tts.voices_url(), "")
+
+    def test_parse_uses_details_or_plain_names(self):
+        self.assertEqual(tts._parse_voices(_Mock.voices)["voices"][1], {"name": "male", "description": "Male"})
+        self.assertEqual(tts._parse_voices({"voices": ["a", "b", "a"], "default": "gone"}),
+                         {"voices": [{"name": "a", "description": ""}, {"name": "b", "description": ""}],
+                          "default": "a"})
+        self.assertEqual(tts._parse_voices("junk"), {"voices": [], "default": ""})
+
+    def test_lists_the_servers_voices_and_caches_them(self):
+        offered = asyncio.run(tts.fetch_voices())
+        self.assertEqual([v["name"] for v in offered["voices"]], ["female", "male", "ana"])
+        self.assertEqual(offered["default"], "female")
+        asyncio.run(tts.fetch_voices())
+        self.assertEqual(_Mock.voice_lists, 1)
+        asyncio.run(tts.fetch_voices(force=True))
+        self.assertEqual(_Mock.voice_lists, 2)
+
+    def test_offered_pick_is_used_anything_else_gets_the_default(self):
+        _CFG["voice_output_voice"] = "male"
+        self.assertEqual(asyncio.run(tts.voice()), "male")
+        for pick in ("", "default", "removed_voice"):
+            _CFG["voice_output_voice"] = pick
+            self.assertEqual(asyncio.run(tts.voice()), "female")
+
+    def test_unreachable_server_keeps_the_last_list_then_sends_the_pick(self):
+        asyncio.run(tts.fetch_voices())
+        _Mock.voices_status = 500
+        stale = asyncio.run(tts.fetch_voices(force=True))
+        self.assertEqual(len(stale["voices"]), 3)
+        tts._voices_cache.update(url=None)
+        self.assertEqual(asyncio.run(tts.fetch_voices()), {"voices": [], "default": ""})
+        _CFG["voice_output_voice"] = "my_clone"
+        self.assertEqual(asyncio.run(tts.voice()), "my_clone")
+        _CFG["tts_server_url"] = ""
+        self.assertEqual(asyncio.run(tts.fetch_voices()), {"voices": [], "default": ""})
+
+
+class Streaming(_WithMockServer):
 
     @staticmethod
     def collect(text, language):
@@ -192,7 +232,6 @@ class Streaming(unittest.TestCase):
     def test_streams_pcm_with_text_language_and_voice(self):
         _CFG["voice_output_voice"] = "ana"
         rate, chunks = self.collect("Hola a todos.", "es")
-        _CFG["voice_output_voice"] = "default"
         self.assertEqual(rate, 24000)
         self.assertEqual(b"".join(chunks), b"".join(_Mock.chunks))
         self.assertGreater(len(chunks), 1, "audio should arrive in pieces, not all at once")

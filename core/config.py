@@ -122,9 +122,10 @@ core_settings_schema = {
             "description": "Reading replies aloud (needs tts_server_url in Settings -> Channels -> webui). off: never. button: a speaker button on each reply reads it on demand. auto: also read a reply aloud automatically when you sent your message by voice."
         },
         "voice_output_voice": {
-            "type": "text",
-            "default": "default",
-            "description": "The voice replies are read in. Pick from the voices your admin listed (tts_voices in Settings -> Channels -> webui); without a list, type 'default' for the TTS server's built-in voice or the name of a voice cloned on the server."
+            "type": "select",
+            "default": "",
+            "options": {},
+            "description": "The voice replies are read in, from the voices the TTS server offers. Until you pick one, replies use the server's default voice."
         },
         "voice_output_speed": {
             "default": 1.0,

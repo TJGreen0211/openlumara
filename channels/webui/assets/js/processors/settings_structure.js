@@ -153,12 +153,20 @@ function buildFieldSettings(obj, schema, prefix = '') {
         if (hasSchemaDefinition) {
             // Schema defines the field - use schema for metadata, value for current value
             const schemaValue = fieldSchema.default !== undefined ? fieldSchema.default : value;
+            // a select whose stored value isn't one of its options (e.g. a voice the TTS server no
+            // longer offers) shows the default option, which is what the backend falls back to,
+            // instead of a blank dropdown
+            let shownValue = value;
+            const optionKeys = fieldSchema.type === 'select' ? Object.keys(fieldSchema.options || {}) : [];
+            if (optionKeys.length && !optionKeys.includes(String(value))) {
+                shownValue = optionKeys.includes(String(fieldSchema.default)) ? fieldSchema.default : optionKeys[0];
+            }
             settings[key] = {
                 title: formatLabel(key),
                 type: fieldSchema.type === 'long_text' ? 'textarea' : (fieldSchema.type || detectFieldType(schemaValue, fullKey)),
                 description: fieldSchema.description || null,
                 unsafe: fieldSchema.unsafe || false,
-                value: value,
+                value: shownValue,
                 options: fieldSchema.options || null,
                 min: fieldSchema.min,
                 max: fieldSchema.max,

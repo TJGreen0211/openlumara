@@ -122,11 +122,6 @@ class Webui(core.channel.Channel):
             "default": "",
             "description": "Full URL of a text-to-speech endpoint that reads replies aloud (OpenAI-style /v1/audio/speech, for example tj-server-tools at http://host:5004/v1/audio/speech). Leave empty to turn reading aloud off for everyone. Each user picks off / button / auto in Settings -> Api -> voice_output."
         },
-        "tts_voices": {
-            "type": "list",
-            "default": ["default: The TTS server's built-in voice"],
-            "description": "The voices users can pick from for reading replies aloud (Settings -> Api -> voice_output_voice). One per entry, as `name` or `name: description`, where name is the voice's name on the TTS server (built-in or cloned) and the description is shown to users. The first entry is used for anyone whose pick isn't on the list. Leave the list empty to let users type any voice name."
-        },
         "stt_diarize_meetings": {
             "default": False,
             "description": "Replace a meeting's live transcript with one labelled by speaker. The recording streams to the server above while the meeting runs (tj-server-tools meeting sessions, e.g. http://host:5003/v1/audio/transcriptions), so only the last few minutes are left to process when it stops; if streaming isn't available the whole recording is sent with diarize=true at the end. If both fail, the live transcript is used."
@@ -1163,14 +1158,18 @@ async def create_fastapi(channel):
                     "settings_schema": section_data.get("settings", {})
                 }
 
-        # the voice picker's options are the admin's tts_voices list, so they're only known
-        # at runtime: turn the free-text field into a dropdown when there is a list
-        tts_voices = core.tts.voices()
+        # the voice picker offers exactly the voices the TTS server advertises (GET /v1/voices),
+        # so its options are only known at runtime. a copy, so the shared schema isn't changed
         voice_schema = module_info.get("api", {}).get("settings_schema", {}).get("voice_output_voice")
-        if tts_voices and voice_schema is not None:
+        if voice_schema is not None:
+            voice_schema = module_info["api"]["settings_schema"]["voice_output_voice"] = dict(voice_schema)
+            offered = await core.tts.fetch_voices()
             voice_schema["type"] = "select"
-            voice_schema["options"] = tts_voices
-            voice_schema["default"] = next(iter(tts_voices))
+            voice_schema["options"] = {v["name"]: v["description"] for v in offered["voices"]}
+            voice_schema["default"] = offered["default"]
+            if not offered["voices"]:
+                voice_schema["description"] += (" No voices are listed because the TTS server isn't set up"
+                                                 " (tts_server_url) or can't be reached.")
 
         return api_result(module_info)
 
